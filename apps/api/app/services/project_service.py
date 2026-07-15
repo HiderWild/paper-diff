@@ -73,9 +73,130 @@ class ProjectService:
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
         self._safe_extract_zip(base_zip, ws.base_dir)
         self._safe_extract_zip(revised_zip, ws.revised_dir)
-        # init merged from base
-        ws.copy_tree(ws.base_dir, ws.merged_dir)
+        return self._finalize_versions(
+            ws,
+            base_meta={"source": "upload"},
+            revised_meta={"source": "upload"},
+        )
 
+    def import_from_git(
+        self,
+        project_id: str,
+        repo_url: str,
+        base_ref: str,
+        revised_ref: str,
+        subdir: str | None = None,
+    ) -> dict:
+        """Materialize base/revised via `git archive` of two refs.
+
+        Local path repos are preferred. Remote URLs are cloned to a temp dir first.
+        """
+        import subprocess
+        import tarfile
+        import tempfile
+
+        ws = self._ws(project_id)
+        if not ws.project_dir.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        if not shutil.which("git"):
+            raise AppError("GIT_UNAVAILABLE", "git not found on PATH", status_code=503)
+
+        sub = (subdir or "").replace("\\", "/").strip("/")
+        if sub and (".." in sub.split("/") or sub.startswith("/")):
+            raise AppError("PATH_TRAVERSAL", "invalid subdir", status_code=400)
+
+        def extract_tar_to(dest: Path, data: bytes) -> None:
+            if dest.exists():
+                shutil.rmtree(dest)
+            dest.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+                for member in tar.getmembers():
+                    if not member.isfile():
+                        continue
+                    name = member.name.replace("\\", "/")
+                    if sub and name.startswith(sub + "/"):
+                        name = name[len(sub) + 1 :]
+                    elif sub and name == sub:
+                        continue
+                    parts = [p for p in name.split("/") if p and p != "."]
+                    if not parts or any(p == ".." for p in parts):
+                        continue
+                    target = dest.joinpath(*parts)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    f = tar.extractfile(member)
+                    if f:
+                        target.write_bytes(f.read())
+
+        def archive_from(repo_cwd: Path, ref: str) -> bytes:
+            cmd = ["git", "archive", "--format=tar", ref]
+            if sub:
+                cmd.append(f"{sub}/")
+            proc = subprocess.run(cmd, cwd=str(repo_cwd), capture_output=True, check=False)
+            if proc.returncode != 0:
+                err = (proc.stderr or b"").decode("utf-8", errors="replace")
+                raise AppError("GIT_ERROR", f"git archive {ref}: {err}", status_code=400)
+            return proc.stdout
+
+        local = Path(repo_url)
+        if local.exists():
+            extract_tar_to(ws.base_dir, archive_from(local, base_ref))
+            extract_tar_to(ws.revised_dir, archive_from(local, revised_ref))
+        else:
+            with tempfile.TemporaryDirectory() as tmp:
+                clone = Path(tmp) / "repo"
+                c = subprocess.run(
+                    [
+                        "git",
+                        "clone",
+                        "--filter=blob:none",
+                        "--no-checkout",
+                        repo_url,
+                        str(clone),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if c.returncode != 0:
+                    raise AppError(
+                        "GIT_ERROR",
+                        f"clone failed: {c.stderr or c.stdout}",
+                        status_code=400,
+                    )
+                # Need full objects for arbitrary SHAs — fetch refs
+                subprocess.run(
+                    ["git", "fetch", "origin", base_ref, revised_ref],
+                    cwd=clone,
+                    capture_output=True,
+                    check=False,
+                )
+                extract_tar_to(ws.base_dir, archive_from(clone, base_ref))
+                extract_tar_to(ws.revised_dir, archive_from(clone, revised_ref))
+
+        return self._finalize_versions(
+            ws,
+            base_meta={
+                "source": "git",
+                "ref": base_ref,
+                "repo": repo_url,
+                "subdir": sub or None,
+            },
+            revised_meta={
+                "source": "git",
+                "ref": revised_ref,
+                "repo": repo_url,
+                "subdir": sub or None,
+            },
+        )
+
+
+    def _finalize_versions(
+        self,
+        ws: Workspace,
+        base_meta: dict,
+        revised_meta: dict,
+    ) -> dict:
+        ws.copy_tree(ws.base_dir, ws.merged_dir)
         base_files = ws.list_files("base")
         revised_files = ws.list_files("revised")
         alignment = align_paths(base_files, revised_files)
@@ -86,9 +207,10 @@ class ProjectService:
         root = detect_root(base_files, read_base) or detect_root(
             revised_files, lambda p: ws.read_text("revised", p)
         )
-
         revisions = {p: 0 for p in ws.list_files("merged") if is_text_path(p)}
         meta = ws.load_meta()
+        base_info = {**base_meta, "file_count": len(base_files)}
+        revised_info = {**revised_meta, "file_count": len(revised_files)}
         meta.update(
             {
                 "status": "ready",
@@ -97,15 +219,16 @@ class ProjectService:
                 "revisions": revisions,
                 "accept_log": [],
                 "versions": {
-                    "base": {"source": "upload", "file_count": len(base_files)},
-                    "revised": {"source": "upload", "file_count": len(revised_files)},
+                    "base": base_info,
+                    "revised": revised_info,
                     "merged": {"initialized_from": "base", "dirty": False},
                 },
                 "alignment": alignment,
             }
         )
         ws.save_meta(meta)
-        return self.get_project(project_id)
+        return self.get_project(ws.project_id)
+
 
     def get_project(self, project_id: str) -> dict:
         ws = self._ws(project_id)

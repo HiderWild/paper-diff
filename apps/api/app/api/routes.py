@@ -5,7 +5,13 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
-from app.schemas.dto import AcceptAllRequest, AcceptRequest, CompileRequest, UndoRequest
+from app.schemas.dto import (
+    AcceptAllRequest,
+    AcceptRequest,
+    CompileRequest,
+    GitImportRequest,
+    UndoRequest,
+)
 from app.services.compile_service import CompileService
 from app.services.project_service import ProjectService
 
@@ -43,6 +49,22 @@ async def upload_versions(
     if len(base_bytes) > max_b or len(revised_bytes) > max_b:
         raise AppError("UPLOAD_TOO_LARGE", "zip too large", status_code=413)
     return svc.upload_versions(project_id, base_bytes, revised_bytes)
+
+
+@router.post("/projects/{project_id}/versions/git")
+def import_git(
+    project_id: str,
+    body: GitImportRequest,
+    svc: ProjectService = Depends(projects),
+):
+    return svc.import_from_git(
+        project_id,
+        repo_url=body.repo_url,
+        base_ref=body.base_ref,
+        revised_ref=body.revised_ref,
+        subdir=body.subdir,
+    )
+
 
 
 @router.get("/projects/{project_id}/tree")
@@ -106,7 +128,14 @@ def compile_status(project_id: str, job_id: str, svc: CompileService = Depends(c
     return svc.get_job(project_id, job_id)
 
 
+@router.get("/projects/{project_id}/compile/{job_id}/log")
+def compile_log(project_id: str, job_id: str, svc: CompileService = Depends(compiler)):
+    text = svc.get_log_text(project_id, job_id)
+    return Response(content=text, media_type="text/plain; charset=utf-8")
+
+
 @router.get("/projects/{project_id}/artifacts/pdf")
 def get_pdf(project_id: str, job_id: str | None = None, svc: CompileService = Depends(compiler)):
     data = svc.get_pdf_bytes(project_id, job_id)
     return Response(content=data, media_type="application/pdf")
+
