@@ -84,11 +84,16 @@ export default {
     editor: "编辑器",
     pdf: "PDF 预览",
     word: "Word 预览",
+    output: "输出",
     empty: "空",
     close: "关闭",
     dropHint: "将目录树中的文件拖到此处，或从顶部工具栏打开{tool}",
     unsupportedFile:
       "本{tool}不支持查看/修改「{file}」，请更换其他文件。目标窗口未改动。",
+  },
+  workbench: {
+    dragColumn: "拖动空白标签栏区域可移动整栏",
+    emptyColumn: "此栏为空",
   },
   import: {
     addFiles: "向项目添加文件",
