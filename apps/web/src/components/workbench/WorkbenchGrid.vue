@@ -8,7 +8,7 @@ import {
 import WorkbenchColumn from "./WorkbenchColumn.vue";
 
 const emit = defineEmits<{
-  fileDrop: [tabId: string, path: string];
+  fileDrop: [tabId: string, path: string, side?: "work" | "zone"];
   invalidDrop: [message: string];
 }>();
 
@@ -257,7 +257,9 @@ function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
             <WorkbenchColumn
               :column="columns[colId]"
               :highlight="highlightFor(colId)"
-              @file-drop="(tabId, path) => emit('fileDrop', tabId, path)"
+              @file-drop="
+                (tabId, path, side) => emit('fileDrop', tabId, path, side)
+              "
               @invalid-drop="(msg) => emit('invalidDrop', msg)"
             />
           </div>

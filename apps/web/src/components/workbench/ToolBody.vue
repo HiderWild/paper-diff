@@ -173,11 +173,13 @@ watch(
       project.activeZoneId,
       props.active,
       targetTick.value,
+      compareTarget.session,
+      compareTarget.memory,
     ] as const,
   ([path]) => {
     void loadBoundPath(path);
   },
-  { immediate: true }
+  { immediate: true, deep: true }
 );
 
 function onTargetChanged(_t: CompareTarget) {

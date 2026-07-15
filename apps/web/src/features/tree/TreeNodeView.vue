@@ -1,24 +1,29 @@
 <script setup lang="ts">
 import type { TreeNode } from "./buildTree";
 
-defineProps<{
-  node: TreeNode;
-  depth: number;
-  currentPath: string | null;
-  expanded: Record<string, boolean>;
-  busy?: boolean;
-  statusLabel: (s?: string) => string;
-  fileActions: (
-    s?: string
-  ) => Array<{ label: string; action: "add" | "delete" | "replace_all" }>;
-  tCompare: string;
-}>();
+withDefaults(
+  defineProps<{
+    node: TreeNode;
+    depth: number;
+    currentPath: string | null;
+    expanded: Record<string, boolean>;
+    busy?: boolean;
+    statusLabel: (s?: string) => string;
+    fileActions: (
+      s?: string
+    ) => Array<{ label: string; action: "add" | "delete" | "replace_all" }>;
+    tCompare: string;
+    fileSource?: "work" | "zone";
+  }>(),
+  { fileSource: "work" }
+);
 
 const emit = defineEmits<{
   toggle: [path: string];
   open: [path: string];
   action: [path: string, action: "add" | "delete" | "replace_all"];
   compareDir: [path: string];
+  fileContext: [path: string, e: MouseEvent];
 }>();
 </script>
 
@@ -55,10 +60,12 @@ const emit = defineEmits<{
         :status-label="statusLabel"
         :file-actions="fileActions"
         :t-compare="tCompare"
+        :file-source="fileSource"
         @toggle="emit('toggle', $event)"
         @open="emit('open', $event)"
         @action="(p, a) => emit('action', p, a)"
         @compare-dir="emit('compareDir', $event)"
+        @file-context="(p, e) => emit('fileContext', p, e)"
       />
     </template>
   </div>
@@ -71,11 +78,19 @@ const emit = defineEmits<{
       :style="{ paddingLeft: `${6 + depth * 12}px` }"
       :title="node.path"
       draggable="true"
+      data-allow-context-menu="1"
       @click="emit('open', node.path)"
+      @contextmenu.prevent.stop="
+        emit('fileContext', node.path, $event as MouseEvent)
+      "
       @dragstart="
         ($event as DragEvent).dataTransfer?.setData(
           'application/x-paper-diff-path',
           node.path
+        );
+        ($event as DragEvent).dataTransfer?.setData(
+          'application/x-paper-diff-side',
+          fileSource || 'work'
         );
         ($event as DragEvent).dataTransfer?.setData('text/plain', node.path);
         if (($event as DragEvent).dataTransfer)

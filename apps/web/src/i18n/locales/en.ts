@@ -245,6 +245,7 @@ export default {
       "Saved as project default and remembered for this file. Opening other files uses the default source with the current path.",
     rememberedFile: "Remembered for this file",
     rememberedProject: "Project default",
+    needActiveZone: "Activate a compare zone before dropping a zone-side file.",
   },
   gutter: {
     pullLine: "Pull this line (compare → project)",
@@ -258,6 +259,7 @@ export default {
     compareDir: "Compare this folder (dot dirs skipped by default)",
     collapseAll: "Collapse all",
     expandTop: "Expand top level",
+    newCompare: "New compare",
   },
   store: {
     ready: "Ready",
