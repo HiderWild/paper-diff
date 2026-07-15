@@ -34,7 +34,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const store = useProjectStore();
 const targets = useCompareTargetStore();
-const { sidesSwapped, activeZoneId, zones, busy, pair, projectId, gitCommits } =
+const { sidesSwapped, zones, busy, pair, projectId, gitCommits } =
   storeToRefs(store);
 
 const targetKind = ref<"zone" | "git">("zone");
@@ -45,10 +45,10 @@ const gitPath = ref(props.path || "");
 const pickerOpen = ref(false);
 
 watch(
-  () => [props.path, projectId.value, activeZoneId.value, zones.value] as const,
+  () => [props.path, projectId.value, zones.value] as const,
   ([path]) => {
     const workPath = path || "";
-    // Prefer per-work-path memory; fall back to project default with path=work
+    // Prefer per-work-path memory; no global active zone fallback.
     const mem = workPath
       ? targets.resolveForWork(projectId.value, workPath)
       : targets.getForProject(projectId.value);
@@ -64,7 +64,7 @@ watch(
       }
     } else {
       targetKind.value = "zone";
-      zoneId.value = activeZoneId.value || zones.value[0]?.id || "";
+      zoneId.value = zones.value[0]?.id || "";
       zonePath.value = workPath;
       gitPath.value = workPath;
     }

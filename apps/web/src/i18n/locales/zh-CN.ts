@@ -179,7 +179,6 @@ export default {
   },
   zones: {
     empty: "尚无比较区",
-    active: "当前",
     rename: "重命名",
     delete: "删除",
     fromWork: "从当前项目快照",
@@ -188,14 +187,10 @@ export default {
     namePrompt: "比较区名称",
     deleteConfirm: "删除此比较区？",
     fileCount: "{n} 个文件",
-    activated: "已激活比较区：{name}",
-    deactivated: "已清除比较区",
     snapshotOk: "已创建快照：{name}",
     importOk: "已导入比较区 {name}（{n} 个文件）",
     treeEmpty: "此比较区暂无文件",
     toggleTree: "展开/折叠文件树",
-    setActive: "设为当前",
-    activateOnly: "仅激活比较区，不折叠/展开",
   },
   fileActions: {
     add: "添加→项目",
@@ -249,7 +244,8 @@ export default {
       "将记为项目默认，并为本文件单独记忆。打开其他文件时使用项目默认源、路径随当前文件。",
     rememberedFile: "已记住 · 本文件",
     rememberedProject: "已记住 · 项目默认",
-    needActiveZone: "请先激活一个比较区，才能将文件放到对照侧。",
+    needActiveZone: "请从比较区树拖入或右键加入文件到对照侧。",
+    needZoneId: "请从具体比较区的文件树中选择文件（每个比较区是独立快照）。",
     needBothSides:
       "请设置两侧比较对象：左侧为项目文件，右侧通过「对照…」或拖入比较区/Git 文件。两侧齐全后显示差异与采纳。",
     dropWork: "拖入项目区文件，或从文件树右键「加入比较」",

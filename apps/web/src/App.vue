@@ -49,7 +49,7 @@ const {
   gitInfo,
   gitStatusText,
   zones,
-  activeZoneId,
+  
   gitCommits,
   compareBaseRef,
   compareRevisedRef,
@@ -280,11 +280,6 @@ const rootOptions = computed(() => {
   return [...paths].sort();
 });
 
-const activeZoneName = computed(() => {
-  const z = zones.value.find((x) => x.id === activeZoneId.value);
-  return z?.name || "";
-});
-
 const comparerTitle = computed(() => {
   if (gitPreviewPair.value) {
     return t("panels.diffHeaderPreview", {
@@ -292,20 +287,7 @@ const comparerTitle = computed(() => {
       revised: gitPreviewPair.value.revisedRef.slice(0, 7),
     });
   }
-  const hasContent = !!(
-    pair.value ||
-    imagePreview.value ||
-    wordPreview.value ||
-    binaryPreview.value
-  );
-  if (!hasContent) return t("panels.comparer");
-  const proj = t("panels.sideProject");
-  const zoneLabel = activeZoneName.value
-    ? `${t("panels.sideZone")}「${activeZoneName.value}」`
-    : t("panels.sideZone");
-  const left = sidesSwapped.value ? zoneLabel : proj;
-  const right = sidesSwapped.value ? proj : zoneLabel;
-  return t("panels.diffHeaderWith", { left, right });
+  return t("panels.comparer");
 });
 
 const pdfPaneTitle = computed(() => {
@@ -721,24 +703,15 @@ function openZoneImport() {
 }
 
 function onZoneOpenFile(zoneId: string, path: string) {
-  // Soft-activate for context; open as compare-side binding
-  if (store.activeZoneId !== zoneId) {
-    void store.doActivateZone(zoneId, { silent: true });
-  }
+  // Zones are isolated — open binds compare side only (no activate).
   onTreeAddToCompare(path, "zone", zoneId);
 }
 
 function onZoneAddToCompare(zoneId: string, path: string) {
-  if (store.activeZoneId !== zoneId) {
-    void store.doActivateZone(zoneId, { silent: true });
-  }
   onTreeAddToCompare(path, "zone", zoneId);
 }
 
 function onZoneNewCompare(zoneId: string, path: string) {
-  if (store.activeZoneId !== zoneId) {
-    void store.doActivateZone(zoneId, { silent: true });
-  }
   onTreeNewCompare(path, "zone", zoneId);
 }
 
@@ -873,14 +846,13 @@ function onTreeNewCompare(
   }
   workbench.focusTab(tab.id);
   if (source === "zone") {
-    const zid = zoneId || store.activeZoneId;
-    if (!zid) {
-      workbench.toast(t("comparer.needActiveZone"), "warn");
+    if (!zoneId) {
+      workbench.toast(t("comparer.needZoneId"), "warn");
       return;
     }
     compareTarget.setForProject(store.projectId, {
       kind: "zone",
-      zoneId: zid,
+      zoneId,
       path,
     });
     return;
@@ -926,14 +898,13 @@ function onTreeAddToCompare(
   }
 
   if (source === "zone") {
-    const zid = zoneId || store.activeZoneId;
-    if (!zid) {
-      workbench.toast(t("comparer.needActiveZone"), "warn");
+    if (!zoneId) {
+      workbench.toast(t("comparer.needZoneId"), "warn");
       return;
     }
     compareTarget.setForProject(
       store.projectId,
-      { kind: "zone", zoneId: zid, path },
+      { kind: "zone", zoneId, path },
       tab.path || undefined
     );
     workbench.focusTab(tab.id);
@@ -964,18 +935,13 @@ function onWorkbenchFileDrop(
   if (tab.kind === "comparer") {
     const origin = side || "work";
     if (origin === "zone") {
-      const zid = zoneId || store.activeZoneId;
-      if (!zid) {
-        workbench.toast(t("comparer.needActiveZone"), "warn");
+      if (!zoneId) {
+        workbench.toast(t("comparer.needZoneId"), "warn");
         return;
-      }
-      // Make this the active zone for subsequent UX consistency
-      if (store.activeZoneId !== zid) {
-        void store.doActivateZone(zid, { silent: true });
       }
       compareTarget.setForProject(
         store.projectId,
-        { kind: "zone", zoneId: zid, path },
+        { kind: "zone", zoneId, path },
         tab.path || undefined
       );
       workbench.focusTab(tab.id);
@@ -1132,10 +1098,6 @@ function formatCommitDate(iso?: string) {
       </span>
       <span class="status">
         {{ status }}
-        <template v-if="activeZoneName"> · {{ activeZoneName }}</template>
-        <template v-if="compareSummary">
-          · {{ compareSummary.ready }}/{{ compareSummary.total }}
-        </template>
       </span>
     </header>
     <div
@@ -1226,8 +1188,6 @@ function formatCommitDate(iso?: string) {
             file-source="work"
             @update:show-dot-files="showDotFiles = $event"
             @open="onTreeOpen($event)"
-            @action="(p, a) => store.doAcceptFile(p, a)"
-            @compare-dir="store.doEnqueueDir($event)"
             @add-to-compare="(p) => onTreeAddToCompare(p, 'work')"
             @new-compare="(p) => onTreeNewCompare(p, 'work')"
             @hide="layout.toggleFiles()"
@@ -1252,12 +1212,10 @@ function formatCommitDate(iso?: string) {
           <ZoneExplorer
             :project-id="projectId"
             :zones="zones"
-            :active-zone-id="activeZoneId"
             :busy="busy"
             :show-dot-files="showDotFiles"
             :current-path="currentPath"
             @update:show-dot-files="showDotFiles = $event"
-            @activate="(id) => store.doActivateZone(id)"
             @rename="onRenameZone"
             @delete="onDeleteZone"
             @import-zone="openZoneImport"

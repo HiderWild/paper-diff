@@ -38,7 +38,11 @@ class CompareService:
         return Workspace(self.settings.workspace_root, project_id)
 
     def _sides(self, ws: Workspace, meta: dict | None = None) -> tuple[set[str], set[str], set[str], str | None]:
-        """Return (work, right, merged, zone_id)."""
+        """Return (work, right, merged, zone_id).
+
+        Zones are isolated; no global active zone is used for auto-compare.
+        Right side is only legacy dual-zip revised if present.
+        """
         if meta is None:
             meta = ws.load_meta()
         work = set(ws.list_files("work"))
@@ -46,12 +50,8 @@ class CompareService:
             work = set(ws.list_files("base"))
         if not work:
             work = set(ws.list_files("merged"))
-        zid = meta.get("active_zone_id")
-        if zid and ws.zone_root(zid).exists():
-            right = set(ws.list_files_in(ws.zone_dir(zid)))
-        else:
-            right = set(ws.list_files("revised")) if ws.revised_dir.exists() else set()
-        return work, right, work, zid
+        right = set(ws.list_files("revised")) if ws.revised_dir.exists() else set()
+        return work, right, work, None
 
     def get_states(self, project_id: str) -> dict[str, dict]:
         ws = self._ws(project_id)
@@ -200,8 +200,9 @@ class CompareService:
 
     def _compare_path(self, ws: Workspace, path: str) -> dict:
         kind = "text" if is_text_path(path) else "binary"
-        meta = ws.load_meta()
-        zid = meta.get("active_zone_id")
+        # Explicit zone compares are client-driven; server queue is work-only /
+        # legacy revised dual-zip.
+        zid = None
 
         work_p = ws.resolve_under(ws.work_dir, path)
         in_w = work_p.is_file()
@@ -214,12 +215,8 @@ class CompareService:
         else:
             work_side = "work"
 
-        if zid and ws.zone_root(zid).exists():
-            rev_p = ws.resolve_under(ws.zone_dir(zid), path)
-            rev_side = f"zone:{zid}"
-        else:
-            rev_p = ws.resolve_under(ws.revised_dir, path)
-            rev_side = "revised"
+        rev_p = ws.resolve_under(ws.revised_dir, path)
+        rev_side = "revised"
         in_r = rev_p.is_file()
 
         merged_p = ws.resolve_under(ws.merged_dir, path)
@@ -227,8 +224,8 @@ class CompareService:
 
         w_sha = z_sha = m_sha = None
         status: str
-        if not zid and not in_r and in_w:
-            # no active zone — work only
+        if not in_r and in_w:
+            # work only (no dual-zip revised companion)
             if kind == "text":
                 wc = ws.read_text(work_side, path)
                 w_sha = ws.file_sha256(wc)

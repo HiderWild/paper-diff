@@ -134,41 +134,8 @@ function iconFor(node: TreeNode) {
         >{{ iconFor(node).label }}</span
       >
       <span class="tree-name">{{ node.name }}</span>
-      <span
-        v-if="node.file?.status && node.file.status !== 'unknown' && node.file.status !== 'same'"
-        class="badge status-badge"
-        :class="node.file.status"
-        :title="statusLabel(node.file.status)"
-      >
-        {{ statusLabel(node.file.status) }}
-      </span>
-      <span
-        v-else-if="
-          node.file?.compare_state &&
-          !['ready', 'same', 'unknown'].includes(node.file.compare_state)
-        "
-        class="badge status-badge"
-        :class="node.file.compare_state"
-        :title="statusLabel(node.file.compare_state)"
-      >
-        {{ statusLabel(node.file.compare_state) }}
-      </span>
-    </div>
-    <div
-      v-if="!hideFileActions && fileActions(node.file?.status).length"
-      class="file-ops"
-      :style="{ paddingLeft: `${28 + depth * 12}px` }"
-    >
-      <button
-        v-for="a in fileActions(node.file?.status)"
-        :key="a.action"
-        class="secondary mini"
-        type="button"
-        :disabled="busy"
-        @click.stop="emit('action', node.path, a.action)"
-      >
-        {{ a.label }}
-      </button>
+      <!-- Diff/accept badges and inline accept buttons removed:
+           project tree is the work body; zone comparison is user-initiated only. -->
     </div>
   </div>
 </template>

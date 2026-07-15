@@ -673,19 +673,21 @@ class ProjectService:
         return self.get_project(project_id)
 
     def _left_right_sets(self, ws: Workspace, meta: dict) -> tuple[set[str], set[str], set[str]]:
-        """Return (work, right/zone, merged=work) path sets."""
+        """Return (work, right, merged=work) path sets.
+
+        Zones are isolated snapshots; they are NOT merged into the explorer tree.
+        Tree / diff-index only list project work. Per-file compare vs a zone/git
+        path is always user-initiated (no global active zone).
+        Optional legacy dual-zip still exposes revised paths when present (compat).
+        """
         work = set(ws.list_files("work"))
         # legacy fallback if work empty but base/merged present
         if not work and ws.base_dir.exists():
             work = set(ws.list_files("base"))
         if not work:
             work = set(ws.list_files("merged"))
-        zid = meta.get("active_zone_id")
-        if zid and ws.zone_root(zid).exists():
-            right = set(ws.list_files_in(ws.zone_dir(zid)))
-        else:
-            # legacy revised if present
-            right = set(ws.list_files("revised")) if ws.revised_dir.exists() else set()
+        # Compat only: dual-zip revised tree (not zone activate).
+        right = set(ws.list_files("revised")) if ws.revised_dir.exists() else set()
         return work, right, work
 
     def tree(self, project_id: str) -> dict:

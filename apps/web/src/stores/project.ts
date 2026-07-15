@@ -4,7 +4,6 @@ import {
   acceptAll,
   acceptFile,
   acceptOps,
-  activateZone,
   agentAnalyze,
   agentApply,
   agentChat,
@@ -249,7 +248,8 @@ export const useProjectStore = defineStore("project", () => {
     rootRecommended.value = detail.root_recommended ?? null;
     rootCandidates.value = detail.root_candidates || [];
     gitInfo.value = detail.git ?? null;
-    activeZoneId.value = detail.active_zone_id ?? null;
+    // Zones are isolated; never drive UI from server active_zone_id.
+    activeZoneId.value = null;
     if (detail.zones) zones.value = detail.zones;
   }
 
@@ -264,7 +264,7 @@ export const useProjectStore = defineStore("project", () => {
     try {
       const res = await listZones(projectId.value);
       zones.value = res.zones || [];
-      activeZoneId.value = res.active_zone_id ?? null;
+      activeZoneId.value = null;
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
     }
@@ -352,11 +352,8 @@ export const useProjectStore = defineStore("project", () => {
       pair.value = null;
       wordPreview.value = null;
       const workUrl = workFileRawUrl(projectId.value, path);
-      let zoneUrl: string | null = null;
-      if (activeZoneId.value) {
-        zoneUrl = zoneFileRawUrl(projectId.value, activeZoneId.value, path);
-      }
-      imagePreview.value = { path, workUrl, zoneUrl };
+      // No active-zone dual image preview — zones are isolated.
+      imagePreview.value = { path, workUrl, zoneUrl: null };
       binaryPreview.value = null;
       status.value = path;
       return;
@@ -523,11 +520,12 @@ export const useProjectStore = defineStore("project", () => {
         uploadProgress.value = pct;
       });
       uploadProgress.value = 100;
-      await activateZone(id, z.id);
+      // Zones are isolated snapshots — do not activate / auto-compare.
       await refreshZones();
-      await refreshIndex();
-      if (currentPath.value) await openFile(currentPath.value);
-      status.value = t("zones.activated", { name: z.name });
+      status.value = t("zones.importOk", {
+        name: z.name,
+        n: (z as { file_count?: number }).file_count ?? "?",
+      });
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -569,10 +567,8 @@ export const useProjectStore = defineStore("project", () => {
         filesArr,
         clean
       )) as Zone & { written?: number; file_count?: number };
-      await activateZone(id, z.id);
+      // Zones are isolated — no activate / no auto-compare into work tree.
       await refreshZones();
-      await refreshIndex();
-      if (currentPath.value) await openFile(currentPath.value);
       const written =
         typeof result.written === "number"
           ? result.written
@@ -604,35 +600,16 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
+  /**
+   * Deprecated: zones no longer "activate". Kept as a no-op-ish local marker
+   * so older call sites compile; does not drive tree compare or file status.
+   */
   async function doActivateZone(
-    zoneId: string | null,
-    opts?: { silent?: boolean }
+    _zoneId: string | null,
+    _opts?: { silent?: boolean }
   ) {
-    if (!projectId.value) return;
-    const silent = !!opts?.silent;
-    // Activating enqueues full compare on the server — keep UI responsive unless user
-    // explicitly chose "set active" and we want status feedback.
-    if (!silent) busy.value = true;
-    try {
-      const res = await activateZone(projectId.value, zoneId);
-      zones.value = res.zones || [];
-      activeZoneId.value = res.active_zone_id ?? null;
-      // Refresh index in background so zone tree stays interactive
-      void refreshIndex().then(() => {
-        if (currentPath.value) return openFile(currentPath.value);
-      });
-      if (!silent) {
-        status.value = zoneId
-          ? t("zones.activated", {
-              name: zones.value.find((z) => z.id === zoneId)?.name || zoneId,
-            })
-          : t("zones.deactivated");
-      }
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
-    } finally {
-      if (!silent) busy.value = false;
-    }
+    // Intentionally no network / no compare enqueue.
+    activeZoneId.value = null;
   }
 
   async function doDeleteZone(zoneId: string) {
@@ -687,29 +664,22 @@ export const useProjectStore = defineStore("project", () => {
   }
 
   /**
-   * Whether accept must use client-side apply (visible compare buffers)
-   * instead of backend active-zone accept.
+   * Whether accept must use client-side apply (visible compare buffers).
+   * Always true when an explicit zone/git target is set (no global active zone).
    */
   function needsClientApply(
     workPath: string,
     target?: CompareTarget | null
   ): boolean {
     const cmp = useCompareTargetStore();
-    // Prefer workPath-scoped memory so file A/B targets differ (M1)
     const t0 =
       target ??
       (projectId.value
         ? cmp.resolveForWork(projectId.value, workPath)
         : cmp.getForProject(projectId.value));
-    if (!t0) {
-      // no explicit target: backend active zone / revised — only safe if path matches
-      return false;
-    }
-    if (t0.kind === "git") return true;
-    // zone target: client apply if not active zone or path differs from work
-    if (t0.zoneId !== activeZoneId.value) return true;
-    if ((t0.path || workPath) !== workPath) return true;
-    return false;
+    if (!t0) return false;
+    // Any explicit zone/git target is true-source client apply.
+    return true;
   }
 
   /**
@@ -1314,11 +1284,9 @@ export const useProjectStore = defineStore("project", () => {
     try {
       const z = await gitZoneFromCommit(projectId.value, ref, name);
       if (!z?.id) throw new Error("zone-from-commit returned no zone id");
-      await activateZone(projectId.value, z.id);
       gitPreviewPair.value = null;
+      // Zone is isolated — user picks files into comparer explicitly.
       await refreshZones();
-      await refreshIndex();
-      if (currentPath.value) await openFile(currentPath.value);
       status.value = t("git.zoneFromCommitOk", {
         name: z.name || ref.slice(0, 7),
       });
@@ -1426,7 +1394,7 @@ export const useProjectStore = defineStore("project", () => {
           id: u.id,
           granularity: u.granularity,
         })),
-        zone_id: activeZoneId.value,
+        zone_id: null,
       });
       agentResult.value = res;
       noteAgentProvider(res.provider);
@@ -1469,7 +1437,8 @@ export const useProjectStore = defineStore("project", () => {
           id: u.id,
           granularity: u.granularity,
         })),
-        zone_id: activeZoneId.value,
+        // No global active zone; agent uses explicit buffers only.
+        zone_id: null,
         instruction,
       });
       agentProposal.value = res;
@@ -1558,7 +1527,7 @@ export const useProjectStore = defineStore("project", () => {
           message: msg,
           path: currentPath.value || undefined,
           selection,
-          zone_id: activeZoneId.value,
+          zone_id: null,
         },
         {
           onToken: (tok) => {
@@ -1570,7 +1539,7 @@ export const useProjectStore = defineStore("project", () => {
           message: msg,
           path: currentPath.value || undefined,
           selection,
-          zone_id: activeZoneId.value,
+          zone_id: null,
         });
       });
       noteAgentProvider(res.provider);

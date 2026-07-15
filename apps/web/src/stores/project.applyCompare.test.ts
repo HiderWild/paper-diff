@@ -136,18 +136,16 @@ describe("applyCompareUnit / doAccept client path", () => {
     const { useCompareTargetStore } = await import("./compareTarget");
     const p = useProjectStore();
     p.projectId = "p1";
-    p.activeZoneId = "zone-a";
     const cmp = useCompareTargetStore();
     cmp.setForProject("p1", { kind: "git", ref: "abc123", path: "a.tex" });
     expect(p.needsClientApply("a.tex")).toBe(true);
   });
 
-  it("needsClientApply true for non-active zone", async () => {
+  it("needsClientApply true for any explicit zone target", async () => {
     const { useProjectStore } = await import("./project");
     const { useCompareTargetStore } = await import("./compareTarget");
     const p = useProjectStore();
     p.projectId = "p1";
-    p.activeZoneId = "zone-a";
     const cmp = useCompareTargetStore();
     cmp.setForProject("p1", {
       kind: "zone",
@@ -157,18 +155,10 @@ describe("applyCompareUnit / doAccept client path", () => {
     expect(p.needsClientApply("a.tex")).toBe(true);
   });
 
-  it("needsClientApply false for active zone same path", async () => {
+  it("needsClientApply false without explicit target", async () => {
     const { useProjectStore } = await import("./project");
-    const { useCompareTargetStore } = await import("./compareTarget");
     const p = useProjectStore();
     p.projectId = "p1";
-    p.activeZoneId = "zone-a";
-    const cmp = useCompareTargetStore();
-    cmp.setForProject("p1", {
-      kind: "zone",
-      zoneId: "zone-a",
-      path: "a.tex",
-    });
     expect(p.needsClientApply("a.tex")).toBe(false);
   });
 

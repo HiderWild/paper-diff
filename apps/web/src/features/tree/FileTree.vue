@@ -99,15 +99,8 @@ function statusLabel(s: string | undefined) {
   return s;
 }
 
-function fileActions(status: string | undefined) {
-  if (status === "added")
-    return [{ label: t("fileActions.add"), action: "add" as const }];
-  if (status === "removed")
-    return [{ label: t("fileActions.delete"), action: "delete" as const }];
-  if (status === "modified")
-    return [
-      { label: t("fileActions.replaceAll"), action: "replace_all" as const },
-    ];
+/** Explorer is no longer a work↔zone accept surface; no inline row actions. */
+function fileActions(_status: string | undefined) {
   return [] as Array<{
     label: string;
     action: "add" | "delete" | "replace_all";
@@ -259,8 +252,8 @@ onBeforeUnmount(() => {
         :t-compare="t('tree.compareDir')"
         :file-source="fileSource"
         :zone-id="zoneId"
-        :hide-file-actions="fileSource === 'zone'"
-        :hide-compare-dir="fileSource === 'zone'"
+        :hide-file-actions="true"
+        :hide-compare-dir="true"
         @toggle="toggle"
         @open="emit('open', $event)"
         @action="onAction"
