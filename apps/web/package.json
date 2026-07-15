@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "docx-preview": "^0.3.6",
     "monaco-editor": "^0.52.2",
     "pdfjs-dist": "^4.10.38",
     "pinia": "^2.3.0",

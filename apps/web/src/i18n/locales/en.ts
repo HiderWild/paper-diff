@@ -73,6 +73,22 @@ export default {
     binaryNotText: "Binary / non-text file — cannot show in editor",
     workImage: "Project (work)",
     zoneImage: "Compare zone",
+    loading: "Loading…",
+    docLegacyUnsupported:
+      "Legacy .doc is not previewable here — re-save as .docx in Word. .docx is rendered in-browser and may differ slightly from desktop Word.",
+  },
+  import: {
+    addFiles: "Add files to project",
+    conflictTitle: "File conflicts",
+    conflictSummary:
+      "{total} files: {conflicts} conflict with existing paths, {fresh} new.",
+    defaultAction: "Default for conflicts",
+    overwrite: "Overwrite",
+    skip: "Skip",
+    rename: "Rename",
+    applyAll: "Apply to all conflicts",
+    cancelAll: "Cancel import",
+    continueImport: "Continue import",
   },
   agent: {
     title: "Agent",
@@ -191,6 +207,7 @@ export default {
     zoneActivated: "Compare zone activated",
     zoneCleared: "Compare zone cleared",
     zoneDeleted: "Compare zone deleted",
+    supplementOk: "Added {n} file(s) to project",
   },
   git: {
     commitMsg: "Message",

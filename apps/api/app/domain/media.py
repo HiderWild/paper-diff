@@ -57,8 +57,10 @@ PREVIEW_IMAGE_EXTS = {
     ".tiff",
 }
 
-# Raw binary preview via object URL / pdf.js (includes pdf)
-RAW_PREVIEW_EXTS = PREVIEW_IMAGE_EXTS | {".pdf"}
+# Raw binary for client-side preview (pdf.js, docx-preview, images)
+RAW_PREVIEW_EXTS = PREVIEW_IMAGE_EXTS | {".pdf", ".docx", ".doc"}
+
+WORD_EXTS = {".doc", ".docx"}
 
 
 def is_text_path(path: str) -> bool:

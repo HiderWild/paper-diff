@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import MonacoDiff from "./features/diff/MonacoDiff.vue";
+import ConflictImportModal from "./features/import/ConflictImportModal.vue";
+import DocxPreview from "./features/preview/DocxPreview.vue";
 import ImagePreview from "./features/preview/ImagePreview.vue";
 import PdfPane from "./features/preview/PdfPane.vue";
 import FileTree from "./features/tree/FileTree.vue";
@@ -45,6 +47,7 @@ const {
   agentProvider,
   binaryPreview,
   imagePreview,
+  wordPreview,
   csvPreviewResult,
   uploadProgress,
   sidesSwapped,
@@ -79,7 +82,16 @@ const baseInput = ref<HTMLInputElement | null>(null);
 const revisedInput = ref<HTMLInputElement | null>(null);
 const zoneZipInput = ref<HTMLInputElement | null>(null);
 const zoneFolderInput = ref<HTMLInputElement | null>(null);
+const supplementInput = ref<HTMLInputElement | null>(null);
 const showAdvanced = ref(false);
+const conflictOpen = ref(false);
+const pendingSupplement = ref<{
+  files: File[];
+  paths: string[];
+} | null>(null);
+const dryRunResult = ref<import("./shared/api").DryRunImportResult | null>(
+  null
+);
 const gitRepo = ref("");
 const gitBaseRef = ref("");
 const gitRevisedRef = ref("");
@@ -207,7 +219,12 @@ const comparerTitle = computed(() => {
       revised: gitPreviewPair.value.revisedRef.slice(0, 7),
     });
   }
-  const hasContent = !!(pair.value || imagePreview.value || binaryPreview.value);
+  const hasContent = !!(
+    pair.value ||
+    imagePreview.value ||
+    wordPreview.value ||
+    binaryPreview.value
+  );
   if (!hasContent) return t("panels.comparer");
   const proj = t("panels.sideProject");
   const zoneLabel = activeZoneName.value
@@ -562,6 +579,59 @@ async function onDeleteZone(zoneId: string) {
   await store.doDeleteZone(zoneId);
 }
 
+async function onSupplementFilesSelected(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const list = input.files;
+  if (!list?.length || !projectId.value) {
+    input.value = "";
+    return;
+  }
+  const files = Array.from(list);
+  const paths = files.map(
+    (f) =>
+      (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
+  );
+  const dry = await store.dryRunSupplement(paths);
+  if (!dry) {
+    input.value = "";
+    return;
+  }
+  if (!dry.conflict) {
+    await store.doSupplementFiles(files, {
+      paths,
+      on_conflict: "overwrite",
+    });
+    input.value = "";
+    return;
+  }
+  pendingSupplement.value = { files, paths };
+  dryRunResult.value = dry;
+  conflictOpen.value = true;
+  input.value = "";
+}
+
+async function onConflictConfirm(payload: {
+  on_conflict: "overwrite" | "skip" | "rename";
+  resolutions: Record<string, string>;
+}) {
+  const pending = pendingSupplement.value;
+  conflictOpen.value = false;
+  if (!pending) return;
+  await store.doSupplementFiles(pending.files, {
+    paths: pending.paths,
+    on_conflict: payload.on_conflict,
+    resolutions: payload.resolutions,
+  });
+  pendingSupplement.value = null;
+  dryRunResult.value = null;
+}
+
+function onConflictCancel() {
+  conflictOpen.value = false;
+  pendingSupplement.value = null;
+  dryRunResult.value = null;
+}
+
 function formatCommitDate(iso?: string) {
   if (!iso) return "";
   try {
@@ -668,6 +738,21 @@ function formatCommitDate(iso?: string) {
       </button>
       <button class="secondary" :disabled="!projectId" @click="onExport">
         {{ t("toolbar.exportWork") }}
+      </button>
+      <input
+        ref="supplementInput"
+        type="file"
+        multiple
+        hidden
+        @change="onSupplementFilesSelected"
+      />
+      <button
+        class="secondary"
+        type="button"
+        :disabled="busy || !projectId"
+        @click="supplementInput?.click()"
+      >
+        {{ t("import.addFiles") }}
       </button>
       <select
         class="preset-select"
@@ -1409,7 +1494,7 @@ function formatCommitDate(iso?: string) {
           <p v-else class="muted">{{ t("csv.empty") }}</p>
         </div>
         <MonacoDiff
-          v-if="pair && !binaryPreview && !imagePreview"
+          v-if="pair && !binaryPreview && !imagePreview && !wordPreview"
           ref="diffRef"
           :key="
             (currentPath || 'x') +
@@ -1434,6 +1519,11 @@ function formatCommitDate(iso?: string) {
               ? imagePreview.workUrl
               : imagePreview.zoneUrl
           "
+        />
+        <DocxPreview
+          v-else-if="wordPreview"
+          :url="wordPreview.url"
+          :legacy-doc="wordPreview.legacyDoc"
         />
         <div v-else-if="binaryPreview" class="empty-editor binary-preview">
           <p class="muted">{{ binaryPreview.path }}</p>
@@ -1517,6 +1607,15 @@ function formatCommitDate(iso?: string) {
         {{ logText || t("panels.compileLog") }}
       </div>
     </div>
+
+    <ConflictImportModal
+      :open="conflictOpen"
+      :dry-run="dryRunResult"
+      :file-count="pendingSupplement?.files.length || 0"
+      @close="onConflictCancel"
+      @cancel="onConflictCancel"
+      @confirm="onConflictConfirm"
+    />
 
     <div
       v-if="commandOpen"

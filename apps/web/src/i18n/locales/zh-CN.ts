@@ -73,6 +73,22 @@ export default {
     binaryNotText: "二进制/非文本文件 — 无法在编辑器中显示",
     workImage: "项目 (work)",
     zoneImage: "比较区",
+    loading: "加载中…",
+    docLegacyUnsupported:
+      "暂不支持预览旧版 .doc（请在 Word 中另存为 .docx 后重试）。.docx 使用浏览器还原渲染，复杂版式可能与 Word 桌面版略有差异。",
+  },
+  import: {
+    addFiles: "向项目添加文件",
+    conflictTitle: "文件冲突",
+    conflictSummary:
+      "共 {total} 个文件：{conflicts} 个与现有路径冲突，{fresh} 个为新增。",
+    defaultAction: "冲突默认策略",
+    overwrite: "覆盖",
+    skip: "跳过",
+    rename: "重命名",
+    applyAll: "应用到全部冲突",
+    cancelAll: "取消本次导入",
+    continueImport: "继续导入",
   },
   agent: {
     title: "智能体",
@@ -191,6 +207,7 @@ export default {
     zoneActivated: "已激活比较区",
     zoneCleared: "已清除比较区",
     zoneDeleted: "已删除比较区",
+    supplementOk: "已补充导入 {n} 个文件",
   },
   git: {
     commitMsg: "提交说明",

@@ -33,6 +33,7 @@ import {
   gitStatus,
   gitZoneFromCommit,
   importGit,
+  dryRunWorkImport,
   importWorkZip,
   importZoneFiles,
   importZoneZip,
@@ -41,6 +42,7 @@ import {
   pdfUrl,
   renameZone,
   setRoot,
+  supplementWorkFiles,
   undo,
   uploadVersions,
   workFileRawUrl,
@@ -50,6 +52,7 @@ import {
   type AgentProposeResult,
   type CsvPreviewResult,
   type DiffIndexFile,
+  type DryRunImportResult,
   type FilePair,
   type GitCommit,
   type GitDiffFile,
@@ -132,6 +135,14 @@ export const useProjectStore = defineStore("project", () => {
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
   const CSV_EXT = /\.(csv|tsv)$/i;
   const PDF_EXT = /\.pdf$/i;
+  const DOCX_EXT = /\.docx$/i;
+  const DOC_EXT = /\.doc$/i;
+
+  const wordPreview = ref<{
+    path: string;
+    url: string;
+    legacyDoc: boolean;
+  } | null>(null);
 
   function isImagePath(path: string) {
     return IMAGE_EXT.test(path);
@@ -143,6 +154,14 @@ export const useProjectStore = defineStore("project", () => {
 
   function isPdfPath(path: string) {
     return PDF_EXT.test(path);
+  }
+
+  function isDocxPath(path: string) {
+    return DOCX_EXT.test(path);
+  }
+
+  function isDocPath(path: string) {
+    return DOC_EXT.test(path) && !DOCX_EXT.test(path);
   }
 
   function pairLeftContent(p: FilePair): string {
@@ -254,6 +273,7 @@ export const useProjectStore = defineStore("project", () => {
     units.value = [];
     binaryPreview.value = null;
     imagePreview.value = null;
+    wordPreview.value = null;
     csvPreviewResult.value = null;
     // Non-destructive git two-commit preview takes priority when active
     if (gitPreviewPair.value && gitPreviewPair.value.path === path) {
@@ -285,6 +305,7 @@ export const useProjectStore = defineStore("project", () => {
       pair.value = null;
       imagePreview.value = null;
       binaryPreview.value = null;
+      wordPreview.value = null;
       // Open this project PDF in the PDF pane (not necessarily compile artifact)
       pdfSource.value = "file";
       pdfPath.value = path;
@@ -293,8 +314,21 @@ export const useProjectStore = defineStore("project", () => {
       status.value = path;
       return;
     }
+    if (isDocxPath(path) || isDocPath(path)) {
+      pair.value = null;
+      imagePreview.value = null;
+      binaryPreview.value = null;
+      wordPreview.value = {
+        path,
+        url: bustUrl(workFileRawUrl(projectId.value, path)),
+        legacyDoc: isDocPath(path),
+      };
+      status.value = path;
+      return;
+    }
     if (isImagePath(path)) {
       pair.value = null;
+      wordPreview.value = null;
       const workUrl = workFileRawUrl(projectId.value, path);
       let zoneUrl: string | null = null;
       if (activeZoneId.value) {
@@ -1195,6 +1229,46 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
+  async function dryRunSupplement(paths: string[]): Promise<DryRunImportResult | null> {
+    if (!projectId.value) return null;
+    return dryRunWorkImport(projectId.value, paths);
+  }
+
+  async function doSupplementFiles(
+    files: File[],
+    opts: {
+      paths?: string[];
+      on_conflict?: "overwrite" | "skip" | "cancel" | "rename";
+      resolutions?: Record<string, string>;
+    }
+  ) {
+    if (!projectId.value) await ensureProject();
+    const id = projectId.value!;
+    error.value = "";
+    busy.value = true;
+    uploadProgress.value = 0;
+    try {
+      const res = await supplementWorkFiles(id, files, {
+        ...opts,
+        onProgress: (pct) => {
+          uploadProgress.value = pct;
+        },
+      });
+      uploadProgress.value = 100;
+      status.value = t("store.supplementOk", {
+        n: (res.written || []).length,
+      });
+      await afterImport(res);
+      return res;
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+      return null;
+    } finally {
+      busy.value = false;
+      uploadProgress.value = null;
+    }
+  }
+
   return {
     projectId,
     files,
@@ -1227,6 +1301,7 @@ export const useProjectStore = defineStore("project", () => {
     agentProvider,
     binaryPreview,
     imagePreview,
+    wordPreview,
     csvPreviewResult,
     uploadProgress,
     sidesSwapped,
@@ -1282,6 +1357,10 @@ export const useProjectStore = defineStore("project", () => {
     doAgentChat,
     doCsvPreview,
     refreshAgentProvider,
+    dryRunSupplement,
+    doSupplementFiles,
+    isDocxPath,
+    isDocPath,
     startPolling,
     stopPolling,
   };

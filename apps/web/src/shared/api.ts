@@ -915,6 +915,62 @@ export function zoneFileRawUrl(
   return `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/file-raw?${q}`;
 }
 
+export type DryRunImportResult = {
+  project_id: string;
+  conflict: boolean;
+  conflicts: Array<{ path: string; existing_size?: number | null }>;
+  new_files: Array<{ path: string }>;
+  invalid: Array<{ path: string; reason: string }>;
+  existing_count: number;
+};
+
+export async function dryRunWorkImport(
+  projectId: string,
+  paths: string[]
+): Promise<DryRunImportResult> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/import/dry-run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    })
+  );
+}
+
+export type SupplementImportResult = ProjectDetail & {
+  written?: string[];
+  skipped?: Array<{ path: string; reason: string }>;
+  renamed?: Array<{ from: string; to: string }>;
+  overwritten?: string[];
+  mode?: string;
+};
+
+export async function supplementWorkFiles(
+  projectId: string,
+  files: File[],
+  opts: {
+    paths?: string[];
+    on_conflict?: "overwrite" | "skip" | "cancel" | "rename";
+    resolutions?: Record<string, string>;
+    onProgress?: (pct: number) => void;
+  } = {}
+): Promise<SupplementImportResult> {
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+  if (opts.paths?.length) fd.append("paths", JSON.stringify(opts.paths));
+  fd.append("mode", "supplement");
+  fd.append("on_conflict", opts.on_conflict || "overwrite");
+  if (opts.resolutions && Object.keys(opts.resolutions).length) {
+    fd.append("resolutions", JSON.stringify(opts.resolutions));
+  }
+  fd.append("finalize", "false");
+  const url = `${BASE()}/api/v1/projects/${projectId}/work/import/files`;
+  if (opts.onProgress) {
+    return xhrUpload<SupplementImportResult>(url, fd, opts.onProgress);
+  }
+  return parse(await fetch(url, { method: "POST", body: fd }));
+}
+
 export async function getHealth(): Promise<{
   ok?: boolean;
   status?: string;
