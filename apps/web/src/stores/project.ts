@@ -5,6 +5,9 @@ import {
   acceptFile,
   acceptOps,
   activateZone,
+  agentAnalyze,
+  agentApply,
+  agentPropose,
   compareFile,
   compileLatexdiff,
   compileProject,
@@ -19,9 +22,12 @@ import {
   getFilePair,
   getProject,
   gitCommit,
+  gitDiff,
   gitLog,
   gitRestore,
+  gitShow,
   gitStatus,
+  gitZoneFromCommit,
   importGit,
   importWorkZip,
   importZoneFiles,
@@ -33,9 +39,12 @@ import {
   undo,
   uploadVersions,
   zoneFromWork,
+  type AgentAnalyzeResult,
+  type AgentProposeResult,
   type DiffIndexFile,
   type FilePair,
   type GitCommit,
+  type GitDiffFile,
   type LineColRange,
   type ProjectDetail,
   type RootCandidate,
@@ -79,8 +88,27 @@ export const useProjectStore = defineStore("project", () => {
   const zones = ref<Zone[]>([]);
   const activeZoneId = ref<string | null>(null);
   const gitCommits = ref<GitCommit[]>([]);
+  const compareBaseRef = ref<string | null>(null);
+  const compareRevisedRef = ref<string | null>(null);
+  const gitDiffFiles = ref<GitDiffFile[]>([]);
+  const gitPreviewPair = ref<{
+    left: string;
+    right: string;
+    path: string;
+    baseRef: string;
+    revisedRef: string;
+  } | null>(null);
+  const agentResult = ref<AgentAnalyzeResult | null>(null);
+  const agentProposal = ref<AgentProposeResult | null>(null);
+  const binaryPreview = ref<{ path: string; message: string } | null>(null);
   let compileDebounce: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+  function isImagePath(path: string) {
+    return IMAGE_EXT.test(path);
+  }
 
   const modifiedCount = computed(
     () => files.value.filter((f) => f.status === "modified").length
@@ -157,14 +185,68 @@ export const useProjectStore = defineStore("project", () => {
     if (!projectId.value) return;
     currentPath.value = path;
     units.value = [];
+    binaryPreview.value = null;
+    // Non-destructive git two-commit preview takes priority when active
+    if (gitPreviewPair.value && gitPreviewPair.value.path === path) {
+      pair.value = {
+        path,
+        encoding: "utf-8",
+        base: {
+          content: gitPreviewPair.value.left,
+          sha256: "",
+        },
+        revised: {
+          content: gitPreviewPair.value.right,
+          sha256: "",
+        },
+        merged: {
+          content: gitPreviewPair.value.left,
+          sha256: "",
+          revision: 0,
+        },
+      };
+      status.value = `${path} · ${gitPreviewPair.value.baseRef}…${gitPreviewPair.value.revisedRef}`;
+      return;
+    }
+    // Opening a different tree path leaves commit preview
+    if (gitPreviewPair.value && gitPreviewPair.value.path !== path) {
+      gitPreviewPair.value = null;
+    }
+    if (isImagePath(path)) {
+      pair.value = null;
+      binaryPreview.value = {
+        path,
+        message: t("preview.binaryImage"),
+      };
+      status.value = path;
+      return;
+    }
     try {
       void compareFile(projectId.value, path).catch(() => undefined);
       pair.value = await getFilePair(projectId.value, path);
       status.value = path;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? e.message : String(e);
+      // binary / non-text soft landing
+      if (/binary|not text|encoding|utf/i.test(msg) || isImagePath(path)) {
+        pair.value = null;
+        binaryPreview.value = {
+          path,
+          message: t("preview.binaryNotText"),
+        };
+        status.value = path;
+        error.value = "";
+        return;
+      }
+      error.value = msg;
       pair.value = null;
     }
+  }
+
+  function clearGitPreview() {
+    const path = gitPreviewPair.value?.path || currentPath.value;
+    gitPreviewPair.value = null;
+    if (path) void openFile(path);
   }
 
   async function afterImport(detail: ProjectDetail) {
@@ -635,6 +717,235 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
+  function setCompareBaseRef(ref: string | null) {
+    compareBaseRef.value = ref;
+  }
+
+  function setCompareRevisedRef(ref: string | null) {
+    compareRevisedRef.value = ref;
+  }
+
+  async function doGitZoneFromCommit(ref: string, name?: string) {
+    if (!projectId.value || !ref) return;
+    busy.value = true;
+    error.value = "";
+    try {
+      const z = await gitZoneFromCommit(projectId.value, ref, name);
+      if (!z?.id) throw new Error("zone-from-commit returned no zone id");
+      await activateZone(projectId.value, z.id);
+      gitPreviewPair.value = null;
+      await refreshZones();
+      await refreshIndex();
+      if (currentPath.value) await openFile(currentPath.value);
+      status.value = t("git.zoneFromCommitOk", {
+        name: z.name || ref.slice(0, 7),
+      });
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doGitDiff(base?: string | null, revised?: string | null) {
+    if (!projectId.value) return;
+    const b = base ?? compareBaseRef.value;
+    const r = revised ?? compareRevisedRef.value;
+    if (!b || !r) {
+      error.value = t("git.needTwoRefs");
+      return;
+    }
+    busy.value = true;
+    error.value = "";
+    try {
+      compareBaseRef.value = b;
+      compareRevisedRef.value = r;
+      const res = await gitDiff(projectId.value, b, r);
+      gitDiffFiles.value = res.files || [];
+      status.value = t("git.compareOk", {
+        n: gitDiffFiles.value.length,
+        base: b.slice(0, 7),
+        revised: r.slice(0, 7),
+      });
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+      gitDiffFiles.value = [];
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doOpenGitShow(path: string) {
+    if (!projectId.value) return;
+    const b = compareBaseRef.value;
+    const r = compareRevisedRef.value;
+    if (!b || !r) {
+      error.value = t("git.needTwoRefs");
+      return;
+    }
+    busy.value = true;
+    error.value = "";
+    try {
+      const [leftRes, rightRes] = await Promise.all([
+        gitShow(projectId.value, b, path).catch(() => null),
+        gitShow(projectId.value, r, path).catch(() => null),
+      ]);
+      if (leftRes?.binary || rightRes?.binary) {
+        pair.value = null;
+        gitPreviewPair.value = null;
+        binaryPreview.value = {
+          path,
+          message: t("preview.binaryNotText"),
+        };
+        currentPath.value = path;
+        status.value = path;
+        return;
+      }
+      const left = leftRes?.content ?? "";
+      const right = rightRes?.content ?? "";
+      gitPreviewPair.value = {
+        left,
+        right,
+        path,
+        baseRef: b,
+        revisedRef: r,
+      };
+      currentPath.value = path;
+      units.value = [];
+      binaryPreview.value = null;
+      pair.value = {
+        path,
+        encoding: "utf-8",
+        base: { content: left, sha256: "" },
+        revised: { content: right, sha256: "" },
+        merged: { content: left, sha256: "", revision: 0 },
+      };
+      status.value = `${path} · ${b.slice(0, 7)}…${r.slice(0, 7)}`;
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doAgentAnalyze() {
+    if (!projectId.value || !pair.value || !currentPath.value) {
+      error.value = t("agent.needFile");
+      return;
+    }
+    busy.value = true;
+    error.value = "";
+    try {
+      const res = await agentAnalyze(projectId.value, {
+        path: currentPath.value,
+        left_text: pair.value.merged.content,
+        right_text: pair.value.revised.content,
+        units: units.value.map((u) => ({
+          id: u.id,
+          granularity: u.granularity,
+        })),
+        zone_id: activeZoneId.value,
+      });
+      agentResult.value = res;
+      if (res.status === "not_configured") {
+        status.value = t("agent.notConfigured");
+      } else {
+        status.value = t("agent.analyzeOk");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/404|not found|not configured/i.test(msg)) {
+        agentResult.value = {
+          status: "not_configured",
+          message: msg,
+        };
+        status.value = t("agent.notConfigured");
+      } else {
+        error.value = msg;
+      }
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doAgentPropose(instruction = "") {
+    if (!projectId.value || !pair.value || !currentPath.value) {
+      error.value = t("agent.needFile");
+      return;
+    }
+    busy.value = true;
+    error.value = "";
+    try {
+      const res = await agentPropose(projectId.value, {
+        path: currentPath.value,
+        left_text: pair.value.merged.content,
+        right_text: pair.value.revised.content,
+        units: units.value.map((u) => ({
+          id: u.id,
+          granularity: u.granularity,
+        })),
+        zone_id: activeZoneId.value,
+        instruction,
+      });
+      agentProposal.value = res;
+      if (res.status === "not_configured") {
+        status.value = t("agent.notConfigured");
+      } else {
+        status.value = t("agent.proposeOk");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/404|not found|not configured/i.test(msg)) {
+        agentProposal.value = {
+          status: "not_configured",
+          message: msg,
+        };
+        status.value = t("agent.notConfigured");
+      } else {
+        error.value = msg;
+      }
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doAgentApply() {
+    if (
+      !projectId.value ||
+      !currentPath.value ||
+      !agentProposal.value?.proposed_content
+    ) {
+      error.value = t("agent.needProposal");
+      return;
+    }
+    busy.value = true;
+    error.value = "";
+    try {
+      const rev = pair.value?.merged.revision ?? 0;
+      const res = await agentApply(projectId.value, {
+        path: currentPath.value,
+        content: agentProposal.value.proposed_content,
+        expected_revision: rev,
+      });
+      if (res.status === "not_configured") {
+        status.value = t("agent.notConfigured");
+        return;
+      }
+      clearGitPreview();
+      await refreshIndex();
+      await openFile(currentPath.value);
+      status.value = t("agent.applyOk", {
+        revision: res.revision ?? "",
+      });
+      agentProposal.value = null;
+      scheduleAutoCompile();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
   return {
     projectId,
     files,
@@ -657,12 +968,20 @@ export const useProjectStore = defineStore("project", () => {
     zones,
     activeZoneId,
     gitCommits,
+    compareBaseRef,
+    compareRevisedRef,
+    gitDiffFiles,
+    gitPreviewPair,
+    agentResult,
+    agentProposal,
+    binaryPreview,
     modifiedCount,
     ensureProject,
     refreshIndex,
     refreshProjectMeta,
     refreshZones,
     openFile,
+    clearGitPreview,
     doImportWork,
     doUpload,
     doGitImport,
@@ -687,6 +1006,14 @@ export const useProjectStore = defineStore("project", () => {
     refreshGitLog,
     doGitCommit,
     doGitDiscard,
+    setCompareBaseRef,
+    setCompareRevisedRef,
+    doGitZoneFromCommit,
+    doGitDiff,
+    doOpenGitShow,
+    doAgentAnalyze,
+    doAgentPropose,
+    doAgentApply,
     startPolling,
     stopPolling,
   };

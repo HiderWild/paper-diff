@@ -195,6 +195,90 @@ def test_local_git_commit_log(client: TestClient):
 
 def test_agent_stub(client: TestClient):
     pid = client.post("/api/v1/projects").json()["id"]
-    r = client.post(f"/api/v1/projects/{pid}/agent/analyze")
+    r = client.post(
+        f"/api/v1/projects/{pid}/agent/analyze",
+        json={"path": "main.tex", "left_text": "a", "right_text": "ab"},
+    )
     assert r.status_code == 200
-    assert r.json()["status"] == "not_configured"
+    body = r.json()
+    # default provider is stub → structured analysis
+    assert body["status"] == "ok"
+    assert body.get("provider") == "stub"
+    assert "summary" in body
+    assert "left_strengths" in body
+
+
+def test_git_diff_show_zone_from_commit_restore(client: TestClient):
+    pid = client.post("/api/v1/projects").json()["id"]
+    work = _zip_bytes({"main.tex": "v1\n", "a.txt": "keep\n"})
+    assert (
+        client.post(
+            f"/api/v1/projects/{pid}/work/import/zip",
+            files={"work": ("w.zip", work, "application/zip")},
+        ).status_code
+        == 200
+    )
+    # second commit
+    client.put(
+        f"/api/v1/projects/{pid}/work/file",
+        params={"path": "main.tex"},
+        json={"content": "v2\n"},
+    )
+    client.post(
+        f"/api/v1/projects/{pid}/git/commit",
+        json={"message": "bump main", "sync_from_merged": True},
+    )
+    log = client.get(f"/api/v1/projects/{pid}/git/log").json()["commits"]
+    assert len(log) >= 2
+    head = log[0]["sha"]
+    base = log[1]["sha"]
+
+    diff = client.get(
+        f"/api/v1/projects/{pid}/git/diff",
+        params={"base_ref": base, "revised_ref": head},
+    )
+    assert diff.status_code == 200, diff.text
+    paths = [f["path"] for f in diff.json()["files"]]
+    assert any(p == "main.tex" or p.endswith("main.tex") for p in paths)
+
+    shown = client.get(
+        f"/api/v1/projects/{pid}/git/show",
+        params={"ref": base, "path": "main.tex"},
+    )
+    assert shown.status_code == 200, shown.text
+    assert "v1" in (shown.json().get("content") or "")
+
+    z = client.post(
+        f"/api/v1/projects/{pid}/git/zone-from-commit",
+        json={"ref": base, "name": "from-base"},
+    )
+    assert z.status_code == 200, z.text
+    zbody = z.json()
+    assert zbody.get("zone_id") or zbody.get("zone", {}).get("id")
+
+    # dirty then discard
+    client.put(
+        f"/api/v1/projects/{pid}/work/file",
+        params={"path": "main.tex"},
+        json={"content": "dirty\n"},
+    )
+    res = client.post(
+        f"/api/v1/projects/{pid}/git/restore",
+        json={"mode": "discard"},
+    )
+    assert res.status_code == 200, res.text
+    pair = client.get(
+        f"/api/v1/projects/{pid}/file-pair", params={"path": "main.tex"}
+    ).json()
+    assert "dirty" not in pair["merged"]["content"]
+
+
+def test_csv_preview(client: TestClient):
+    pid = client.post("/api/v1/projects").json()["id"]
+    r = client.post(
+        f"/api/v1/projects/{pid}/diff/csv-preview",
+        json={"left": "a,b\n1,2\n", "right": "a,b\n1,3\n", "max_rows": 50},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["changed_rows"] >= 1

@@ -32,9 +32,11 @@
 - Root candidates: `apps/api/app/domain/root_detect.py` + `POST /projects/{id}/root`
 - Git facade (project-local + external): `apps/api/app/services/git_service.py` — status/log/commit/restore/zone-from-commit
 - Compile async/SSE/latexdiff: `apps/api/app/services/compile_service.py` (target **work**, requires user-selected root)
-- Agent stubs: `POST /projects/{id}/agent/{analyze,propose,apply}` → not_configured
+- Agent (stub default): `POST /projects/{id}/agent/{analyze,propose,apply,chat}`；env `PAPER_DIFF_AGENT_PROVIDER=stub|off|http`
+- Git timeline: `GET .../git/{status,log,diff,show}` · `POST .../git/{commit,restore,zone-from-commit}` · push → 501
 - Single work import: `POST /projects/{id}/work/import/zip`
 - Zones API: `/projects/{id}/zones` CRUD + activate + import
+- Media sniff: `apps/api/app/domain/media.py` · CSV: `POST .../diff/csv-preview`
 - Sentence mapper: `apps/web/src/features/diff/sentenceMapper.ts`
 - File tree: `apps/web/src/features/tree/`
 - Layout store (resizable panes): `apps/web/src/stores/layout.ts`

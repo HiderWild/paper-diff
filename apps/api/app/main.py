@@ -62,7 +62,7 @@ async def lifespan(_app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="paper-diff API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="paper-diff API", version="0.2.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -97,7 +97,13 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"ok": True}
+        settings = get_settings()
+        return {
+            "ok": True,
+            "status": "ok",
+            "version": settings.api_version,
+            "model": "v2",
+        }
 
     return app
 

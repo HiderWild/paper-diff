@@ -12,7 +12,7 @@ export type LayoutState = {
   showPdf: boolean;
   showBottom: boolean;
   showDotFiles: boolean;
-  activity: "explorer" | "zones" | "git" | "compile";
+  activity: "explorer" | "zones" | "git" | "compile" | "agent";
 };
 
 /** Recommended default: files (~240) + editor (flex) + PDF (~420) */
@@ -38,7 +38,7 @@ function load(): LayoutState {
     parsed.bottomHeight = Math.min(320, Math.max(72, Number(parsed.bottomHeight) || 120));
     parsed.showFiles = parsed.showFiles !== false;
     parsed.showPdf = parsed.showPdf !== false;
-    const acts = new Set(["explorer", "zones", "git", "compile"]);
+    const acts = new Set(["explorer", "zones", "git", "compile", "agent"]);
     if (!acts.has(parsed.activity)) parsed.activity = "explorer";
     return parsed;
   } catch {

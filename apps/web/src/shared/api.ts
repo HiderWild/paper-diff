@@ -521,3 +521,197 @@ export async function gitCommit(
     })
   );
 }
+
+export type GitDiffFile = {
+  path: string;
+  status?: string;
+  git_status?: string;
+  xy?: string;
+  old_path?: string | null;
+};
+
+export async function gitDiff(
+  projectId: string,
+  baseRef: string,
+  revisedRef: string
+): Promise<{
+  base_ref: string;
+  revised_ref: string;
+  files: GitDiffFile[];
+  mode?: string;
+}> {
+  const q = new URLSearchParams({
+    base_ref: baseRef,
+    revised_ref: revisedRef,
+  });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/diff?${q}`)
+  );
+}
+
+export async function gitShow(
+  projectId: string,
+  ref: string,
+  path: string
+): Promise<{
+  path: string;
+  ref: string;
+  content: string | null;
+  encoding?: string | null;
+  binary?: boolean;
+  size?: number;
+}> {
+  const q = new URLSearchParams({ ref, path });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/show?${q}`)
+  );
+}
+
+export async function gitZoneFromCommit(
+  projectId: string,
+  ref: string,
+  name?: string
+): Promise<Zone> {
+  const raw = await parse<{
+    zone?: Zone;
+    zone_id?: string;
+    name?: string;
+    file_count?: number;
+    id?: string;
+  }>(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/git/zone-from-commit`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ref, name: name || undefined }),
+      }
+    )
+  );
+  if (raw.zone?.id) return raw.zone;
+  return {
+    id: raw.zone_id || raw.id || "",
+    name: raw.name || raw.zone?.name || ref.slice(0, 12),
+    file_count: raw.file_count,
+    source: "git_commit",
+  };
+}
+
+export type AgentAnalyzeResult = {
+  status: string;
+  provider?: string;
+  project_id?: string;
+  path?: string | null;
+  zone_id?: string | null;
+  summary?: string;
+  left_strengths?: string[];
+  right_strengths?: string[];
+  risks?: string[];
+  recommendations?: string[];
+  stats?: { units?: number; left_chars?: number; right_chars?: number };
+  message?: string;
+  error?: string;
+};
+
+export type AgentProposeResult = {
+  status: string;
+  provider?: string;
+  draft_id?: string;
+  path?: string | null;
+  proposed_content?: string;
+  rationale?: string;
+  zone_id?: string | null;
+  project_id?: string;
+  message?: string;
+};
+
+export type AgentApplyResult = {
+  status: string;
+  provider?: string;
+  project_id?: string;
+  path?: string;
+  revision?: number;
+  sha256?: string;
+  message?: string;
+};
+
+export type AgentChatResult = {
+  status: string;
+  provider?: string;
+  project_id?: string;
+  reply?: string;
+  suggested_patch?: { path?: string; note?: string } | null;
+  message?: string;
+};
+
+async function agentPost<T>(
+  projectId: string,
+  action: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  const res = await fetch(
+    `${BASE()}/api/v1/projects/${projectId}/agent/${action}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  if (res.status === 404) {
+    return {
+      status: "not_configured",
+      message: "Agent endpoint not available",
+    } as T;
+  }
+  return parse(res);
+}
+
+export async function agentAnalyze(
+  projectId: string,
+  body: {
+    path?: string;
+    left_text?: string;
+    right_text?: string;
+    units?: unknown[];
+    zone_id?: string | null;
+  } = {}
+): Promise<AgentAnalyzeResult> {
+  return agentPost(projectId, "analyze", body);
+}
+
+export async function agentPropose(
+  projectId: string,
+  body: {
+    path?: string;
+    left_text?: string;
+    right_text?: string;
+    units?: unknown[];
+    zone_id?: string | null;
+    instruction?: string;
+  } = {}
+): Promise<AgentProposeResult> {
+  return agentPost(projectId, "propose", body);
+}
+
+export async function agentApply(
+  projectId: string,
+  body: {
+    path: string;
+    content: string;
+    expected_revision?: number;
+  }
+): Promise<AgentApplyResult> {
+  return agentPost(projectId, "apply", body);
+}
+
+export async function agentChat(
+  projectId: string,
+  body: {
+    message: string;
+    path?: string;
+    selection?: string;
+    zone_id?: string | null;
+  }
+): Promise<AgentChatResult> {
+  return agentPost(projectId, "chat", body);
+}

@@ -367,32 +367,174 @@ class GitService:
 
         return {"restored": restored, "ref": ref, "mode": mode, "repo_mode": repo_mode}
 
+    def diff(
+        self,
+        project_id: str,
+        base_ref: str,
+        revised_ref: str,
+    ) -> dict:
+        """name-status between two refs. Local repos strip work/ prefix from paths."""
+        if not base_ref or not revised_ref:
+            raise AppError(
+                "VALIDATION_ERROR", "base_ref and revised_ref required", status_code=422
+            )
+        repo, subdir, mode = self._resolve_repo(project_id)
+        rows = self.name_status(repo, base_ref, revised_ref, subdir)
+        if mode == "local":
+            for row in rows:
+                p = row.get("path") or ""
+                if p.startswith("work/"):
+                    row["path"] = p[5:]
+        return {
+            "base_ref": base_ref,
+            "revised_ref": revised_ref,
+            "files": rows,
+            "mode": mode,
+        }
+
+    def show(
+        self,
+        project_id: str,
+        ref: str,
+        path: str,
+    ) -> dict:
+        """Show file content at ref. Local mode prefers work/<path>."""
+        if not ref:
+            raise AppError("VALIDATION_ERROR", "ref required", status_code=422)
+        if not path:
+            raise AppError("VALIDATION_ERROR", "path required", status_code=422)
+        repo, subdir, mode = self._resolve_repo(project_id)
+        rel = path.replace("\\", "/").lstrip("/")
+        candidates: list[str] = []
+        if mode == "local":
+            if rel.startswith("work/"):
+                candidates.append(rel)
+            else:
+                candidates.append(f"work/{rel}")
+                candidates.append(rel)
+        elif subdir:
+            candidates.append(f"{subdir.rstrip('/')}/{rel}")
+            candidates.append(rel)
+        else:
+            candidates.append(rel)
+
+        raw: bytes | None = None
+        used_path = rel
+        for cand in candidates:
+            proc = subprocess.run(
+                ["git", "show", f"{ref}:{cand}"],
+                cwd=str(repo),
+                capture_output=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                raw = proc.stdout
+                used_path = cand
+                break
+        if raw is None:
+            raise AppError(
+                "FILE_NOT_FOUND",
+                f"path not found at {ref}: {path}",
+                status_code=404,
+            )
+
+        display = used_path
+        if mode == "local" and display.startswith("work/"):
+            display = display[5:]
+
+        binary = b"\x00" in raw[:8192]
+        if binary:
+            return {
+                "path": display,
+                "ref": ref,
+                "content": None,
+                "encoding": None,
+                "binary": True,
+                "size": len(raw),
+            }
+        content = None
+        encoding = "utf-8"
+        for enc in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
+            try:
+                content = raw.decode(enc)
+                encoding = enc
+                break
+            except UnicodeDecodeError:
+                continue
+        if content is None:
+            content = raw.decode("utf-8", errors="replace")
+        return {
+            "path": display,
+            "ref": ref,
+            "content": content,
+            "encoding": encoding,
+            "binary": False,
+        }
+
+    def push(self, project_id: str) -> dict:
+        raise AppError(
+            "NOT_IMPLEMENTED",
+            "remote git push is not implemented",
+            status_code=501,
+        )
+
     def zone_from_commit(
         self,
         project_id: str,
         ref: str,
         name: str | None = None,
     ) -> dict:
-        """Archive commit into a new compare zone."""
+        """Archive commit into a new compare zone.
+
+        Local repos prefer `git archive ref work` then strip the work/ prefix.
+        Fallback: full archive + strip work/ or hoist single top-level dir.
+        """
         from app.services.zone_service import ZoneService
 
         ws = self._ws(project_id)
         if not ws.meta_path.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        repo, subdir, _mode = self._resolve_repo(project_id)
+        repo, subdir, mode = self._resolve_repo(project_id)
         if not ref:
             raise AppError("VALIDATION_ERROR", "ref required", status_code=422)
 
-        cmd = ["git", "archive", "--format=tar", ref]
-        if subdir:
-            cmd.append(f"{subdir}/")
-        proc = subprocess.run(cmd, cwd=str(repo), capture_output=True, check=False)
-        if proc.returncode != 0:
-            raise AppError(
-                "GIT_ERROR",
-                (proc.stderr or b"").decode("utf-8", errors="replace"),
-                status_code=400,
-            )
+        archive_bytes: bytes | None = None
+        strip_prefix: str | None = None
+
+        if mode == "local":
+            cmd = ["git", "archive", "--format=tar", ref, "work"]
+            proc = subprocess.run(cmd, cwd=str(repo), capture_output=True, check=False)
+            if proc.returncode == 0 and proc.stdout:
+                archive_bytes = proc.stdout
+                strip_prefix = "work/"
+            else:
+                proc2 = subprocess.run(
+                    ["git", "archive", "--format=tar", ref],
+                    cwd=str(repo),
+                    capture_output=True,
+                    check=False,
+                )
+                if proc2.returncode != 0:
+                    raise AppError(
+                        "GIT_ERROR",
+                        (proc2.stderr or b"").decode("utf-8", errors="replace"),
+                        status_code=400,
+                    )
+                archive_bytes = proc2.stdout
+                strip_prefix = "work/"
+        else:
+            cmd = ["git", "archive", "--format=tar", ref]
+            if subdir:
+                cmd.append(f"{subdir}/")
+                strip_prefix = subdir.rstrip("/") + "/"
+            proc = subprocess.run(cmd, cwd=str(repo), capture_output=True, check=False)
+            if proc.returncode != 0:
+                raise AppError(
+                    "GIT_ERROR",
+                    (proc.stderr or b"").decode("utf-8", errors="replace"),
+                    status_code=400,
+                )
+            archive_bytes = proc.stdout
 
         zs = ZoneService(self.settings)
         zmeta = zs.create_zone(
@@ -405,34 +547,52 @@ class GitService:
         if dest.exists():
             shutil.rmtree(dest)
         dest.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tar:
+
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as tar:
             for member in tar.getmembers():
                 if not member.isfile():
                     continue
                 n = member.name.replace("\\", "/")
-                if subdir and n.startswith(subdir.rstrip("/") + "/"):
-                    n = n[len(subdir.rstrip("/")) + 1 :]
+                if strip_prefix and n.startswith(strip_prefix):
+                    n = n[len(strip_prefix) :]
+                elif mode == "local" and n.startswith("work/"):
+                    n = n[5:]
+                if mode == "local" and n.split("/")[0] in (
+                    "base",
+                    "revised",
+                    "zones",
+                    "snapshots",
+                    "artifacts",
+                    "jobs",
+                    "latexdiff_work",
+                    ".git",
+                ):
+                    continue
                 parts = [p for p in n.split("/") if p and p != "."]
                 if not parts or any(p == ".." for p in parts):
+                    continue
+                if parts[0] == ".gitignore" and len(parts) == 1 and mode == "local":
                     continue
                 target = dest.joinpath(*parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 f = tar.extractfile(member)
                 if f:
                     target.write_bytes(f.read())
-        # hoist single top-level
-        children = list(dest.iterdir())
+
+        children = [c for c in dest.iterdir() if c.name != "__MACOSX"]
         if len(children) == 1 and children[0].is_dir():
             only = children[0]
-            tmp = dest.parent / f".hoist_{dest.name}"
-            if tmp.exists():
-                shutil.rmtree(tmp)
-            only.rename(tmp)
-            shutil.rmtree(dest)
-            tmp.rename(dest)
+            if only.name == "work" or list(only.iterdir()):
+                tmp = dest.parent / f".hoist_{dest.name}"
+                if tmp.exists():
+                    shutil.rmtree(tmp)
+                only.rename(tmp)
+                shutil.rmtree(dest)
+                tmp.rename(dest)
 
         files = ws.list_files_in(dest)
         return {
+            "zone": {**zmeta, "file_count": len(files)},
             "zone_id": zid,
             "ref": ref,
             "name": zmeta["name"],

@@ -34,6 +34,13 @@ const {
   zones,
   activeZoneId,
   gitCommits,
+  compareBaseRef,
+  compareRevisedRef,
+  gitDiffFiles,
+  gitPreviewPair,
+  agentResult,
+  agentProposal,
+  binaryPreview,
 } = storeToRefs(store);
 
 const {
@@ -64,6 +71,7 @@ const gitBaseRef = ref("");
 const gitRevisedRef = ref("");
 const gitSubdir = ref("");
 const gitCommitMsg = ref("");
+const agentInstruction = ref("");
 const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
 
 const rootOptions = computed(() => {
@@ -233,7 +241,9 @@ async function onGitDiscard() {
   await store.doGitDiscard();
 }
 
-function openActivity(a: "explorer" | "zones" | "git" | "compile") {
+function openActivity(
+  a: "explorer" | "zones" | "git" | "compile" | "agent"
+) {
   activity.value = a;
   showFiles.value = true;
   if (a === "git") {
@@ -241,6 +251,40 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
     void store.refreshGitLog();
   }
   if (a === "zones") void store.refreshZones();
+}
+
+async function onZoneFromCommit(ref: string) {
+  await store.doGitZoneFromCommit(ref);
+}
+
+function onSelectBase(ref: string) {
+  store.setCompareBaseRef(ref);
+}
+
+function onSelectRevised(ref: string) {
+  store.setCompareRevisedRef(ref);
+}
+
+async function onGitCompare() {
+  await store.doGitDiff();
+}
+
+async function onOpenGitDiffFile(path: string) {
+  await store.doOpenGitShow(path);
+}
+
+async function onAgentAnalyze() {
+  await store.doAgentAnalyze();
+}
+
+async function onAgentPropose() {
+  await store.doAgentPropose(agentInstruction.value);
+}
+
+async function onAgentApply() {
+  if (!confirm(t("agent.applyConfirm"))) return;
+  await store.doAgentApply();
+  if (pair.value) diffRef.value?.setLeftContent(pair.value.merged.content);
 }
 
 async function onZoneZipSelected(e: Event) {
@@ -468,6 +512,14 @@ function formatCommitDate(iso?: string) {
         >
           ⚙
         </button>
+        <button
+          type="button"
+          :class="{ active: activity === 'agent' && showFiles }"
+          :title="t('panels.agent')"
+          @click="openActivity('agent')"
+        >
+          ✨
+        </button>
       </nav>
 
       <aside
@@ -660,15 +712,218 @@ function formatCommitDate(iso?: string) {
             >
               {{ t("git.commitBtn") }}
             </button>
+            <div class="compare-refs muted">
+              <span
+                >{{ t("git.baseLabel") }}:
+                <code>{{ compareBaseRef?.slice(0, 7) || "—" }}</code></span
+              >
+              <span
+                >{{ t("git.revisedLabel") }}:
+                <code>{{ compareRevisedRef?.slice(0, 7) || "—" }}</code></span
+              >
+              <button
+                type="button"
+                class="mini"
+                :disabled="busy || !compareBaseRef || !compareRevisedRef"
+                @click="onGitCompare"
+              >
+                {{ t("git.compare") }}
+              </button>
+              <button
+                v-if="gitPreviewPair"
+                type="button"
+                class="mini secondary"
+                @click="store.clearGitPreview()"
+              >
+                {{ t("git.clearPreview") }}
+              </button>
+            </div>
             <div class="panel-header zone-subhead">{{ t("git.log") }}</div>
             <ul v-if="gitCommits.length" class="commit-list">
               <li v-for="c in gitCommits" :key="c.sha" class="commit-item">
                 <code class="commit-sha">{{ c.short }}</code>
                 <span class="commit-subj">{{ c.subject }}</span>
                 <span class="commit-date">{{ formatCommitDate(c.date) }}</span>
+                <div class="commit-ops">
+                  <button
+                    type="button"
+                    class="mini secondary"
+                    :disabled="busy || !projectId"
+                    :title="t('git.zoneFromCommit')"
+                    @click="onZoneFromCommit(c.sha)"
+                  >
+                    {{ t("git.zoneFromCommit") }}
+                  </button>
+                  <button
+                    type="button"
+                    class="mini secondary"
+                    :class="{ 'active-toggle': compareBaseRef === c.sha }"
+                    :title="t('git.setBase')"
+                    @click="onSelectBase(c.sha)"
+                  >
+                    {{ t("git.selectA") }}
+                  </button>
+                  <button
+                    type="button"
+                    class="mini secondary"
+                    :class="{ 'active-toggle': compareRevisedRef === c.sha }"
+                    :title="t('git.setRevised')"
+                    @click="onSelectRevised(c.sha)"
+                  >
+                    {{ t("git.selectB") }}
+                  </button>
+                </div>
               </li>
             </ul>
             <p v-else class="muted">—</p>
+            <template v-if="gitDiffFiles.length">
+              <div class="panel-header zone-subhead">
+                {{ t("git.compareFiles") }}
+              </div>
+              <ul class="git-diff-list">
+                <li v-for="f in gitDiffFiles" :key="f.path">
+                  <button
+                    type="button"
+                    class="git-diff-item"
+                    :disabled="busy"
+                    @click="onOpenGitDiffFile(f.path)"
+                  >
+                    <span class="badge" :class="(f.status || '').toLowerCase()">{{
+                      f.status || f.xy || "?"
+                    }}</span>
+                    <span class="git-diff-path">{{ f.path }}</span>
+                  </button>
+                </li>
+              </ul>
+            </template>
+          </div>
+        </template>
+
+        <template v-else-if="activity === 'agent'">
+          <div class="panel-header side-header">
+            <span>{{ t("panels.agent") }}</span>
+            <button
+              type="button"
+              class="header-hide"
+              :title="t('toolbar.toggleFiles')"
+              @click="layout.toggleFiles()"
+            >
+              ◀
+            </button>
+          </div>
+          <div class="side-body">
+            <p v-if="!currentPath || !pair" class="muted">
+              {{ t("agent.empty") }}
+            </p>
+            <template v-else>
+              <p class="muted">{{ currentPath }}</p>
+              <div class="zone-actions">
+                <button
+                  type="button"
+                  class="mini"
+                  :disabled="busy"
+                  @click="onAgentAnalyze"
+                >
+                  {{ t("agent.analyze") }}
+                </button>
+                <button
+                  type="button"
+                  class="mini secondary"
+                  :disabled="busy"
+                  @click="onAgentPropose"
+                >
+                  {{ t("agent.propose") }}
+                </button>
+                <button
+                  type="button"
+                  class="mini secondary"
+                  :disabled="busy || !agentProposal?.proposed_content"
+                  @click="onAgentApply"
+                >
+                  {{ t("agent.apply") }}
+                </button>
+              </div>
+              <label class="block-label">
+                {{ t("agent.instruction") }}
+                <input
+                  v-model="agentInstruction"
+                  :placeholder="t('agent.instructionPlaceholder')"
+                />
+              </label>
+            </template>
+            <div v-if="agentResult" class="agent-block">
+              <p v-if="agentResult.status === 'not_configured'" class="muted">
+                {{ agentResult.message || t("agent.notConfigured") }}
+              </p>
+              <template v-else>
+                <div class="panel-header zone-subhead">
+                  {{ t("agent.summary") }}
+                </div>
+                <p class="agent-text">{{ agentResult.summary }}</p>
+                <div v-if="agentResult.left_strengths?.length">
+                  <div class="panel-header zone-subhead">
+                    {{ t("agent.leftStrengths") }}
+                  </div>
+                  <ul class="agent-list">
+                    <li
+                      v-for="(s, i) in agentResult.left_strengths"
+                      :key="'l' + i"
+                    >
+                      {{ s }}
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="agentResult.right_strengths?.length">
+                  <div class="panel-header zone-subhead">
+                    {{ t("agent.rightStrengths") }}
+                  </div>
+                  <ul class="agent-list">
+                    <li
+                      v-for="(s, i) in agentResult.right_strengths"
+                      :key="'r' + i"
+                    >
+                      {{ s }}
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="agentResult.risks?.length">
+                  <div class="panel-header zone-subhead">
+                    {{ t("agent.risks") }}
+                  </div>
+                  <ul class="agent-list">
+                    <li v-for="(s, i) in agentResult.risks" :key="'k' + i">
+                      {{ s }}
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="agentResult.recommendations?.length">
+                  <div class="panel-header zone-subhead">
+                    {{ t("agent.recommendations") }}
+                  </div>
+                  <ul class="agent-list">
+                    <li
+                      v-for="(s, i) in agentResult.recommendations"
+                      :key="'c' + i"
+                    >
+                      {{ s }}
+                    </li>
+                  </ul>
+                </div>
+              </template>
+            </div>
+            <div v-if="agentProposal?.proposed_content" class="agent-block">
+              <div class="panel-header zone-subhead">
+                {{ t("agent.rationale") }}
+              </div>
+              <p class="agent-text">
+                {{ agentProposal.rationale || "—" }}
+              </p>
+              <pre class="agent-draft">{{
+                agentProposal.proposed_content.slice(0, 1200)
+              }}{{
+                agentProposal.proposed_content.length > 1200 ? "…" : ""
+              }}</pre>
+            </div>
           </div>
         </template>
 
@@ -716,8 +971,14 @@ function formatCommitDate(iso?: string) {
 
       <!-- Editor (always grows) -->
       <section class="pane editor-pane">
-        <div class="panel-header">{{ t("panels.diffHeader") }}</div>
-        <div class="unit-bar">
+        <div class="panel-header">
+          {{
+            gitPreviewPair
+              ? t("panels.diffHeaderPreview")
+              : t("panels.diffHeader")
+          }}
+        </div>
+        <div v-if="pair && !binaryPreview" class="unit-bar">
           <button
             v-for="u in visibleUnits"
             :key="u.id"
@@ -725,7 +986,7 @@ function formatCommitDate(iso?: string) {
             :class="u.granularity"
             type="button"
             :title="`${u.leftText} → ${u.rightText}`"
-            :disabled="busy"
+            :disabled="busy || !!gitPreviewPair"
             @click="onAccept(u)"
           >
             {{
@@ -737,16 +998,28 @@ function formatCommitDate(iso?: string) {
           <span v-if="!visibleUnits.length" class="muted-inline">
             {{ t("units.empty") }}
           </span>
+          <button
+            v-if="gitPreviewPair"
+            type="button"
+            class="mini secondary"
+            @click="store.clearGitPreview()"
+          >
+            {{ t("git.clearPreview") }}
+          </button>
         </div>
         <MonacoDiff
-          v-if="pair"
+          v-if="pair && !binaryPreview"
           ref="diffRef"
-          :key="currentPath || 'x'"
+          :key="(currentPath || 'x') + (gitPreviewPair ? '-gp' : '')"
           :path="currentPath || ''"
           :left="pair.merged.content"
           :right="pair.revised.content"
           @units="store.units = $event"
         />
+        <div v-else-if="binaryPreview" class="empty-editor binary-preview">
+          <p class="muted">{{ binaryPreview.path }}</p>
+          <p>{{ binaryPreview.message }}</p>
+        </div>
         <div v-else class="empty-editor">{{ t("tree.empty") }}</div>
       </section>
 
@@ -1074,7 +1347,7 @@ function formatCommitDate(iso?: string) {
 .commit-item {
   display: grid;
   grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto;
   gap: 0.1rem 0.4rem;
   font-size: 0.75rem;
   padding: 0.3rem 0;
@@ -1094,5 +1367,87 @@ function formatCommitDate(iso?: string) {
   grid-column: 1 / -1;
   color: var(--muted);
   font-size: 0.68rem;
+}
+.commit-ops {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+.compare-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+}
+.compare-refs code {
+  color: var(--accent);
+}
+.git-diff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.git-diff-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 4px;
+  padding: 0.2rem 0.25rem;
+  font-size: 0.75rem;
+}
+.git-diff-item:hover {
+  background: #243044;
+}
+.git-diff-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.agent-text {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.agent-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.agent-draft {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 0.7rem;
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem;
+  white-space: pre-wrap;
+  color: var(--muted);
+}
+.binary-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: flex-start;
 }
 </style>
