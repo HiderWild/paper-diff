@@ -112,19 +112,33 @@ onBeforeUnmount(() => {
     @pointerleave="emit('pointerLeave')"
     @wheel.stop
   >
-    <div class="card-title">
-      <span class="mode-badge" :class="mode">{{
-        mode === "insert"
-          ? t("hoverAccept.badgeInsert")
-          : mode === "delete"
-            ? t("hoverAccept.badgeDelete")
-            : t("hoverAccept.badgeReplace")
-      }}</span>
-      <!-- insert/delete: badge alone is enough; replace keeps kind title -->
-      <span v-if="mode === 'replace'">{{ titleForKind() }}</span>
+    <div class="card-head">
+      <div class="card-title">
+        <span class="mode-badge" :class="mode">{{
+          mode === "insert"
+            ? t("hoverAccept.badgeInsert")
+            : mode === "delete"
+              ? t("hoverAccept.badgeDelete")
+              : t("hoverAccept.badgeReplace")
+        }}</span>
+        <!-- insert/delete: badge alone is enough; replace keeps kind title -->
+        <span v-if="mode === 'replace'" class="kind-title">{{
+          titleForKind()
+        }}</span>
+      </div>
+      <button
+        ref="applyBtn"
+        type="button"
+        class="mini primary apply-btn"
+        :class="{ danger: mode === 'delete' }"
+        :title="applyLabel() + ' (Enter)'"
+        @click="emit('apply')"
+      >
+        {{ applyLabel() }}
+      </button>
     </div>
 
-    <!-- Insert / delete: one-line caption + snippet (no repeated lead/hint) -->
+    <!-- Insert / delete: one-line caption + snippet -->
     <template v-if="mode === 'insert'">
       <p class="one-line">
         {{ t("hoverAccept.insertBrief") }}
@@ -164,21 +178,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
-
-    <div class="actions">
-      <button type="button" class="secondary mini" @click="emit('dismiss')">
-        {{ t("hoverAccept.dismiss") }}
-      </button>
-      <button
-        ref="applyBtn"
-        type="button"
-        class="mini primary"
-        :class="{ danger: mode === 'delete' }"
-        @click="emit('apply')"
-      >
-        {{ applyLabel() }}
-      </button>
-    </div>
   </div>
 </template>
 
@@ -186,11 +185,10 @@ onBeforeUnmount(() => {
 .word-hover-card {
   position: fixed;
   z-index: 220;
-  /* Fit short phrases; allow up to ~3× previous 22rem cap before forced wrap */
   width: max-content;
-  min-width: 12rem;
+  min-width: 11rem;
   max-width: min(66rem, 92vw);
-  padding: 0.55rem 0.65rem 0.5rem;
+  padding: 0.4rem 0.5rem 0.45rem;
   border-radius: 8px;
   background: var(--panel, #1a2332);
   color: var(--text, #e7ecf3);
@@ -199,15 +197,36 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
   transform: translate(-50%, 8px);
 }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.3rem;
+  min-height: 1.45rem;
+}
 .card-title {
   font-weight: 600;
-  font-size: 0.8rem;
-  margin-bottom: 0.4rem;
+  font-size: 0.78rem;
   color: var(--muted);
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.35rem;
   flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.kind-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.apply-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0.18rem 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
 }
 .mode-badge {
   font-size: 0.65rem;
@@ -244,9 +263,10 @@ onBeforeUnmount(() => {
 .one-line {
   margin: 0;
   font-size: 0.78rem;
-  line-height: 1.4;
+  line-height: 1.35;
   color: var(--muted);
   max-width: 36rem;
+  padding-right: 0.1rem;
 }
 .inline-snip {
   display: inline;
@@ -302,15 +322,12 @@ onBeforeUnmount(() => {
   font-size: 1rem;
   padding-top: 0.9rem;
 }
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.35rem;
-  margin-top: 0.45rem;
-}
 .primary {
   background: var(--accent);
   color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
 }
 .primary.danger {
   background: var(--danger, #ef4444);
