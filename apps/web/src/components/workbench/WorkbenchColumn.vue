@@ -332,10 +332,10 @@ const edgeHint = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  /* ~25% wider than previous 10rem max */
-  max-width: 12.5rem;
-  min-width: 4.5rem;
-  padding: 0.25rem 0.5rem 0.25rem 0.7rem;
+  /* another +25% vs 12.5rem → ~15.6rem */
+  max-width: 15.625rem;
+  min-width: 5.625rem;
+  padding: 0.25rem 0.55rem 0.25rem 0.75rem;
   background: transparent;
   color: var(--muted);
   border: none;

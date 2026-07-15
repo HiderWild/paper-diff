@@ -417,6 +417,45 @@ function onAfterMutation(content: string | null) {
       />
       <div v-if="loading" class="empty">{{ t("preview.loading") }}</div>
       <div v-else-if="error" class="empty error">{{ error }}</div>
+      <!-- Comparer ready: dual side headers + full MonacoDiff (no joined title) -->
+      <div
+        v-else-if="tab.kind === 'comparer' && compareReady"
+        class="comparer-ready"
+        :class="{ swapped: sidesSwapped }"
+      >
+        <div class="side-headers">
+          <div class="side-label" :title="projectSideLabel">
+            {{ projectSideLabel }}
+          </div>
+          <div class="side-label" :title="compareSideLabel">
+            {{ compareSideLabel }}
+          </div>
+        </div>
+        <MonacoDiff
+          ref="diffRef"
+          :key="
+            tab.id +
+            (tab.path || '') +
+            (sidesSwapped ? '-s' : '') +
+            '-t' +
+            targetTick +
+            '-r'
+          "
+          :path="tab.path || ''"
+          :left="displayLeft"
+          :right="displayRight"
+          :editable-left="effectiveEditable"
+          :single-pane="false"
+          :monaco-theme="monacoTheme"
+          :word-wrap="wordWrap"
+          :show-gutter-actions="true"
+          :sides-swapped="sidesSwapped"
+          :enable-word-hover="wordHoverAccept"
+          @units="onUnits"
+          @left-change="onLeftChange"
+          @pull-unit="onPullUnit"
+        />
+      </div>
       <!-- Comparer empty / one-sided shells -->
       <div
         v-else-if="tab.kind === 'comparer' && !compareReady"
@@ -555,31 +594,19 @@ function onAfterMutation(content: string | null) {
           :zone-url="imageUrls.zone"
         />
         <MonacoDiff
-          v-else-if="tab.kind === 'comparer' || tab.kind === 'editor'"
+          v-else-if="tab.kind === 'editor'"
           ref="diffRef"
-          :key="
-            tab.id +
-            (tab.path || '') +
-            (sidesSwapped ? '-s' : '') +
-            '-t' +
-            targetTick +
-            (compareReady ? '-r' : '-w')
-          "
+          :key="tab.id + (tab.path || '') + '-t' + targetTick + '-ed'"
           :path="tab.path || ''"
           :left="displayLeft"
           :right="displayRight"
           :editable-left="effectiveEditable"
-          :single-pane="singlePane"
+          :single-pane="true"
           :monaco-theme="monacoTheme"
           :word-wrap="wordWrap"
-          :show-gutter-actions="tab.kind === 'comparer' && compareReady"
-          :sides-swapped="tab.kind === 'comparer' && sidesSwapped"
-          :enable-word-hover="
-            tab.kind === 'comparer' && compareReady && wordHoverAccept
-          "
+          :show-gutter-actions="false"
           @units="onUnits"
           @left-change="onLeftChange"
-          @pull-unit="onPullUnit"
         />
       </template>
     </template>
@@ -615,6 +642,41 @@ function onAfterMutation(content: string | null) {
   border-top: none;
 }
 /* One-sided / empty comparer: project | compare columns (swap flips order) */
+.comparer-ready {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.side-headers {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.comparer-ready.swapped .side-headers {
+  flex-direction: row-reverse;
+}
+.side-headers .side-label {
+  flex: 1 1 50%;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  border-bottom: none;
+}
+.side-headers .side-label:last-child {
+  border-right: none;
+}
+.comparer-ready.swapped .side-headers .side-label:first-child {
+  border-right: none;
+}
+.comparer-ready.swapped .side-headers .side-label:last-child {
+  border-right: 1px solid var(--border);
+}
+.comparer-ready :deep(.diff-wrap) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .one-sided {
   flex: 1 1 auto;
   min-height: 0;
