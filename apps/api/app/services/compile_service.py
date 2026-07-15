@@ -85,7 +85,18 @@ class CompileService:
 
         root = root_file or meta.get("root_file")
         if not root:
-            raise AppError("ROOT_NOT_FOUND", "cannot detect root file", status_code=400)
+            rec = meta.get("root_recommended")
+            cands = meta.get("root_candidates") or []
+            raise AppError(
+                "ROOT_REQUIRED",
+                "select a main .tex entry before compile"
+                + (f" (recommended: {rec})" if rec else ""),
+                status_code=400,
+                details={
+                    "root_recommended": rec,
+                    "root_candidates": [c.get("path") for c in cands],
+                },
+            )
 
         job_id = uuid.uuid4().hex[:10]
         job = {

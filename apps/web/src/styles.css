@@ -49,25 +49,26 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.layout {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  height: 100%;
+button.mini {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
 }
+
+/* App root layout is flex in App.vue scoped styles */
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.4rem;
   align-items: center;
-  padding: 0.6rem 0.8rem;
+  padding: 0.5rem 0.7rem;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
 
 .toolbar .title {
   font-weight: 700;
-  margin-right: 0.75rem;
+  margin-right: 0.5rem;
 }
 
 .toolbar .status {
@@ -76,9 +77,12 @@ button:disabled {
   margin-left: auto;
 }
 
+.toolbar input[type="file"] {
+  max-width: 8rem;
+  font-size: 0.75rem;
+}
+
 .main {
-  display: grid;
-  grid-template-columns: 240px 1fr 1fr;
   min-height: 0;
 }
 
@@ -87,6 +91,7 @@ button:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg);
 }
 
 .panel:last-child {
@@ -94,39 +99,14 @@ button:disabled {
 }
 
 .panel-header {
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
   background: #121a24;
-}
-
-.file-list {
-  overflow: auto;
-  padding: 0.25rem;
-}
-
-.file-item {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  color: var(--text);
-  border-radius: 4px;
-  padding: 0.35rem 0.5rem;
-  font-size: 0.85rem;
-}
-
-.file-item:hover {
-  background: #243044;
-}
-
-.file-item.active {
-  background: #1e3a5f;
+  flex-shrink: 0;
 }
 
 .badge {
@@ -135,6 +115,7 @@ button:disabled {
   border-radius: 3px;
   background: #334155;
   color: var(--muted);
+  flex-shrink: 0;
 }
 
 .badge.modified {
@@ -194,6 +175,7 @@ button:disabled {
   background: #121a24;
   max-height: 120px;
   overflow: auto;
+  flex-shrink: 0;
 }
 
 .unit-chip {
@@ -224,4 +206,9 @@ button:disabled {
 .error {
   color: var(--danger);
   font-size: 0.85rem;
+}
+
+.tree-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
 }

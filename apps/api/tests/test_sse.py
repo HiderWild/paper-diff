@@ -38,6 +38,7 @@ def test_events_stream_has_event_lines(client: TestClient):
             "revised": ("r.zip", z, "application/zip"),
         },
     )
+    client.post(f"/api/v1/projects/{pid}/root", json={"root_file": "main.tex"})
     job_id = client.post(f"/api/v1/projects/{pid}/compile", json={}).json()["job_id"]
     with client.stream(
         "GET", f"/api/v1/projects/{pid}/events", params={"job_id": job_id}

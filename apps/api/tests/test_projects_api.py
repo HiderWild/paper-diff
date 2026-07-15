@@ -59,7 +59,9 @@ def test_upload_versions_and_file_pair(client: TestClient):
     assert r.status_code == 200, r.text
     detail = r.json()
     assert detail["status"] == "ready"
-    assert detail["root_file"] == "main.tex"
+    # root must be chosen by user; recommendation still present
+    assert detail["root_file"] is None
+    assert detail.get("root_recommended") == "main.tex"
     assert "chap/a.tex" in [f["path"] for f in detail["alignment"]["files"]]
 
     pair = client.get(f"/api/v1/projects/{pid}/file-pair", params={"path": "chap/a.tex"})
@@ -132,3 +134,51 @@ def test_path_traversal_rejected(client: TestClient):
     )
     r = client.get(f"/api/v1/projects/{pid}/file-pair", params={"path": "../secret.tex"})
     assert r.status_code == 400
+
+
+def test_invalid_zip_returns_400(client: TestClient):
+    pid = client.post("/api/v1/projects").json()["id"]
+    r = client.post(
+        f"/api/v1/projects/{pid}/versions/upload",
+        files={
+            "base": ("b.zip", b"not a zip", "application/zip"),
+            "revised": ("r.zip", b"not a zip", "application/zip"),
+        },
+    )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["error"]["code"] == "INVALID_ZIP"
+
+
+def test_upload_preserves_binary_assets(client: TestClient):
+    pid = client.post("/api/v1/projects").json()["id"]
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\n"
+            "\\includegraphics{fig.png}\n\\end{document}\n",
+        )
+        zf.writestr("fig.png", png)
+        zf.writestr("__MACOSX/._main.tex", b"\x00junk")
+        zf.writestr(".DS_Store", b"\x00store")
+    data = buf.getvalue()
+    r = client.post(
+        f"/api/v1/projects/{pid}/versions/upload",
+        files={
+            "base": ("b.zip", data, "application/zip"),
+            "revised": ("r.zip", data, "application/zip"),
+        },
+    )
+    assert r.status_code == 200, r.text
+    detail = r.json()
+    paths = [f["path"] for f in detail["alignment"]["files"]]
+    assert "fig.png" in paths
+    assert "main.tex" in paths
+    assert not any(p.startswith("__MACOSX") for p in paths)
+    assert ".DS_Store" not in paths
+
+    tree = client.get(f"/api/v1/projects/{pid}/tree").json()
+    assert "fig.png" in tree["base"]
+    assert "fig.png" in tree["merged"]
