@@ -142,13 +142,21 @@ button.mini {
 
 .panel-header {
   padding: 0.45rem 0.75rem;
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
   background: var(--panel-header);
   flex-shrink: 0;
+}
+
+/* Shared custom hover tips (+1 size step); prefer over native title where we control UI */
+.float-tip,
+.tool-float-tip {
+  font-size: 0.85rem;
+  line-height: 1.35;
+  padding: 0.35rem 0.65rem;
 }
 
 .badge {
