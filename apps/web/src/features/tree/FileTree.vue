@@ -215,7 +215,7 @@ function expandTop() {
   border-bottom: 1px solid var(--border);
   font-size: 0.75rem;
   color: var(--muted);
-  background: #121a24;
+  background: var(--panel-header);
   flex-shrink: 0;
 }
 .tree-title {
@@ -243,7 +243,7 @@ function expandTop() {
   min-width: 1.4rem;
 }
 .icon-btn:hover {
-  background: #243044;
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel-header));
   color: var(--text);
 }
 .hide-btn {

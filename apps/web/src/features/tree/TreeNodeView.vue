@@ -135,14 +135,14 @@ const emit = defineEmits<{
   user-select: none;
 }
 .tree-row:hover {
-  background: #243044;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .tree-row.active {
-  background: #1e3a5f;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 .tree-row.dir .dir-name {
   font-weight: 600;
-  color: #cbd5e1;
+  color: var(--text);
 }
 .chevron {
   width: 0.9rem;
@@ -169,8 +169,8 @@ const emit = defineEmits<{
 .cmp-btn {
   flex-shrink: 0;
   opacity: 0;
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--secondary-btn);
+  color: var(--text);
   border: none;
   border-radius: 3px;
   font-size: 0.65rem;
@@ -194,34 +194,34 @@ const emit = defineEmits<{
   font-size: 0.6rem;
   padding: 0.05rem 0.25rem;
   border-radius: 3px;
-  background: #334155;
+  background: var(--secondary-btn);
   color: var(--muted);
   flex-shrink: 0;
 }
 .badge.modified {
-  background: #14532d;
-  color: #86efac;
+  background: color-mix(in srgb, var(--green) 28%, var(--panel));
+  color: var(--green);
 }
 .badge.added {
-  background: #1e3a8a;
-  color: #93c5fd;
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+  color: var(--accent);
 }
 .badge.removed {
-  background: #7f1d1d;
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger) 28%, var(--panel));
+  color: var(--danger);
 }
 .badge.pending,
 .badge.queued,
 .badge.comparing {
-  background: #3b3b1f;
-  color: #fde68a;
+  background: color-mix(in srgb, #eab308 22%, var(--panel));
+  color: color-mix(in srgb, #eab308 75%, var(--text));
 }
 .badge.skipped {
-  background: #1f2937;
-  color: #6b7280;
+  background: var(--secondary-btn);
+  color: var(--muted);
 }
 .badge.binary {
-  background: #312e81;
-  color: #c7d2fe;
+  background: color-mix(in srgb, #6366f1 25%, var(--panel));
+  color: color-mix(in srgb, #6366f1 70%, var(--text));
 }
 </style>

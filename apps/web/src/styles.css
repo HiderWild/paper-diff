@@ -14,6 +14,8 @@
   --input-bg: #1e293b;
   --secondary-btn: #334155;
   --surface-deep: #0b0f14;
+  --hover: #243044;
+  --row-active: #1e3a5f;
   font-family: "Segoe UI", system-ui, sans-serif;
 }
 
@@ -32,6 +34,8 @@
   --input-bg: #ffffff;
   --secondary-btn: #e2e8f0;
   --surface-deep: #e8edf5;
+  --hover: #e2e8f0;
+  --row-active: #dbeafe;
 }
 
 * {
@@ -136,24 +140,24 @@ button.mini {
   font-size: 0.65rem;
   padding: 0.1rem 0.3rem;
   border-radius: 3px;
-  background: #334155;
+  background: var(--secondary-btn);
   color: var(--muted);
   flex-shrink: 0;
 }
 
 .badge.modified {
-  background: #14532d;
-  color: #86efac;
+  background: color-mix(in srgb, var(--green) 28%, var(--panel));
+  color: var(--green);
 }
 
 .badge.added {
-  background: #1e3a8a;
-  color: #93c5fd;
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+  color: var(--accent);
 }
 
 .badge.removed {
-  background: #7f1d1d;
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger) 28%, var(--panel));
+  color: var(--danger);
 }
 
 .diff-host,
@@ -206,7 +210,7 @@ button.mini {
   padding: 0.2rem 0.45rem;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: #1e293b;
+  background: var(--input-bg);
   color: var(--text);
 }
 
@@ -223,7 +227,7 @@ button.mini {
 }
 
 .unit-chip:hover {
-  background: #334155;
+  background: var(--hover);
 }
 
 .error {
