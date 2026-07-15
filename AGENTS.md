@@ -36,6 +36,7 @@
 - **UX gap closure v1.1 (scaffold landed; remaining P0 mixed):** `docs/superpowers/plans/2026-07-15-ux-gap-closure.md`
 - **Comparer + preview hardening (true-source pull / arrows / word zoom — execute next):** `docs/superpowers/plans/2026-07-15-comparer-preview-hardening.md`
 - **Large-file performance v1.1 (Steps 0–2 + light 3–4 in tree; window hydrate + hunk UI deferred):** `docs/superpowers/plans/2026-07-15-large-file-performance.md`
+- **Word/phrase hover-accept (multi-phase, not started):** `docs/superpowers/plans/2026-07-15-word-hover-accept.md`
 
 ## Completion tiers (use in status claims)
 
