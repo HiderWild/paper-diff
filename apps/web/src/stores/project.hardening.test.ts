@@ -161,4 +161,32 @@ describe("project store hardening", () => {
     expect(s.imagePreview?.path).toBe("fig/a.png");
     expect(s.pair).toBeNull();
   });
+
+  it("openFile pdf sets pdf file source not pair", async () => {
+    const s = useProjectStore();
+    s.projectId = "p1";
+    await s.openFile("out/paper.pdf");
+    expect(s.pdfSource).toBe("file");
+    expect(s.pdfPath).toBe("out/paper.pdf");
+    expect(s.pdfHref).toContain("file-raw");
+    expect(s.pair).toBeNull();
+  });
+
+  it("swap sides flips pairLeft/Right content", () => {
+    const s = useProjectStore();
+    const p = {
+      path: "x",
+      encoding: "utf-8",
+      base: { content: "W", sha256: "" },
+      revised: { content: "Z", sha256: "" },
+      merged: { content: "W", sha256: "", revision: 0 },
+      left: { kind: "work", content: "W", sha256: "", revision: 0 },
+      right: { kind: "zone", content: "Z", sha256: "" },
+    } as never;
+    expect(s.pairLeftContent(p)).toBe("W");
+    expect(s.pairRightContent(p)).toBe("Z");
+    s.toggleSidesSwapped();
+    expect(s.pairLeftContent(p)).toBe("Z");
+    expect(s.pairRightContent(p)).toBe("W");
+  });
 });

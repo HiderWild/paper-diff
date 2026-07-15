@@ -620,7 +620,7 @@ class ProjectService:
     def _file_raw(self, project_id: str, side: str, path: str) -> tuple[bytes, str]:
         from pathlib import Path as _Path
 
-        from app.domain.media import PREVIEW_IMAGE_EXTS
+        from app.domain.media import RAW_PREVIEW_EXTS
 
         # Fail closed on traversal before media-type checks
         if ".." in path.replace("\\", "/").split("/"):
@@ -630,10 +630,10 @@ class ProjectService:
         if not ws.meta_path.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
         suf = _Path(path).suffix.lower()
-        if suf not in PREVIEW_IMAGE_EXTS:
+        if suf not in RAW_PREVIEW_EXTS:
             raise AppError(
                 "UNSUPPORTED_MEDIA",
-                "only image paths are allowed for raw preview",
+                "only image/pdf paths are allowed for raw preview",
                 status_code=415,
             )
         side_dir = ws._side_dir(side)
@@ -650,7 +650,6 @@ class ProjectService:
             ".bmp": "image/bmp",
             ".svg": "image/svg+xml",
             ".pdf": "application/pdf",
-            ".eps": "application/postscript",
             ".tif": "image/tiff",
             ".tiff": "image/tiff",
         }.get(suf, "application/octet-stream")

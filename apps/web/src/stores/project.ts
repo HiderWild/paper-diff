@@ -119,11 +119,18 @@ export const useProjectStore = defineStore("project", () => {
   } | null>(null);
   const csvPreviewResult = ref<CsvPreviewResult | null>(null);
   const uploadProgress = ref<number | null>(null);
+  /** Display order: false = left work / right zone; true = swapped */
+  const sidesSwapped = ref(false);
+  /** PDF pane source */
+  const pdfSource = ref<"none" | "file" | "compile">("none");
+  const pdfPath = ref<string | null>(null);
+  const pdfTitle = ref<string | null>(null);
   let compileDebounce: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
   const CSV_EXT = /\.(csv|tsv)$/i;
+  const PDF_EXT = /\.pdf$/i;
 
   function isImagePath(path: string) {
     return IMAGE_EXT.test(path);
@@ -133,12 +140,36 @@ export const useProjectStore = defineStore("project", () => {
     return CSV_EXT.test(path);
   }
 
+  function isPdfPath(path: string) {
+    return PDF_EXT.test(path);
+  }
+
   function pairLeftContent(p: FilePair): string {
-    return p.left?.content ?? p.merged.content;
+    const w = p.left?.content ?? p.merged.content;
+    const z = p.right?.content ?? p.revised.content;
+    return sidesSwapped.value ? z : w;
   }
 
   function pairRightContent(p: FilePair): string {
-    return p.right?.content ?? p.revised.content;
+    const w = p.left?.content ?? p.merged.content;
+    const z = p.right?.content ?? p.revised.content;
+    return sidesSwapped.value ? w : z;
+  }
+
+  function toggleSidesSwapped() {
+    sidesSwapped.value = !sidesSwapped.value;
+  }
+
+  function bustUrl(url: string) {
+    const u = url.replace(/([?&])t=\d+/g, "$1").replace(/[?&]$/, "");
+    const sep = u.includes("?") ? "&" : "?";
+    return `${u}${sep}t=${Date.now()}`;
+  }
+
+  function refreshPdfIfFile(path: string) {
+    if (pdfSource.value === "file" && pdfPath.value === path && projectId.value) {
+      pdfHref.value = bustUrl(workFileRawUrl(projectId.value, path));
+    }
   }
 
   function noteAgentProvider(provider?: string | null) {
@@ -248,6 +279,18 @@ export const useProjectStore = defineStore("project", () => {
     // Opening a different tree path leaves commit preview
     if (gitPreviewPair.value && gitPreviewPair.value.path !== path) {
       gitPreviewPair.value = null;
+    }
+    if (isPdfPath(path)) {
+      pair.value = null;
+      imagePreview.value = null;
+      binaryPreview.value = null;
+      // Open this project PDF in the PDF pane (not necessarily compile artifact)
+      pdfSource.value = "file";
+      pdfPath.value = path;
+      pdfTitle.value = path;
+      pdfHref.value = bustUrl(workFileRawUrl(projectId.value, path));
+      status.value = path;
+      return;
     }
     if (isImagePath(path)) {
       pair.value = null;
@@ -502,16 +545,25 @@ export const useProjectStore = defineStore("project", () => {
 
   async function doAccept(unit: DiffUnit) {
     if (!projectId.value || !pair.value || !currentPath.value) return;
+    if (gitPreviewPair.value) return;
     busy.value = true;
     error.value = "";
     try {
+      // When sides are swapped in the UI, Monaco units are display-relative;
+      // API always expects left=work ranges, right=zone ranges.
+      const left_range = (
+        sidesSwapped.value ? unit.right : unit.left
+      ) as LineColRange;
+      const right_range = (
+        sidesSwapped.value ? unit.left : unit.right
+      ) as LineColRange;
       const res = await acceptOps(projectId.value, [
         {
           op_id: unit.id,
           file: currentPath.value,
           granularity: unit.granularity,
-          left_range: unit.left as LineColRange,
-          right_range: unit.right as LineColRange,
+          left_range,
+          right_range,
           expected_merged_revision: pair.value.merged.revision,
         },
       ]);
@@ -677,6 +729,9 @@ export const useProjectStore = defineStore("project", () => {
         /* optional */
       }
       if (job.status === "succeeded") {
+        pdfSource.value = "compile";
+        pdfPath.value = null;
+        pdfTitle.value = null;
         pdfHref.value =
           pdfUrl(projectId.value, start.job_id) + `&t=${Date.now()}`;
         status.value =
@@ -1133,10 +1188,17 @@ export const useProjectStore = defineStore("project", () => {
     imagePreview,
     csvPreviewResult,
     uploadProgress,
+    sidesSwapped,
+    pdfSource,
+    pdfPath,
+    pdfTitle,
     modifiedCount,
     pairLeftContent,
     pairRightContent,
     isCsvPath,
+    isPdfPath,
+    toggleSidesSwapped,
+    refreshPdfIfFile,
     ensureProject,
     refreshIndex,
     refreshProjectMeta,

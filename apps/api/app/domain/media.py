@@ -44,7 +44,7 @@ IMAGE_EXTS = {
     ".tiff",
 }
 
-# Browser-safe image preview (exclude pdf/eps from raw img tags)
+# Browser-safe image preview (exclude pdf/eps from <img> tags)
 PREVIEW_IMAGE_EXTS = {
     ".png",
     ".jpg",
@@ -56,6 +56,9 @@ PREVIEW_IMAGE_EXTS = {
     ".tif",
     ".tiff",
 }
+
+# Raw binary preview via object URL / pdf.js (includes pdf)
+RAW_PREVIEW_EXTS = PREVIEW_IMAGE_EXTS | {".pdf"}
 
 
 def is_text_path(path: str) -> bool:

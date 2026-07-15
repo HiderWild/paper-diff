@@ -36,11 +36,15 @@ async function render(url: string) {
   }
 }
 
+// Re-render whenever url identity changes (incl. cache-bust ?t=)
 watch(
   () => props.url,
   (u) => {
     if (u) void render(u);
-    else if (container.value) container.value.innerHTML = "";
+    else if (container.value) {
+      container.value.innerHTML = "";
+      error.value = "";
+    }
   },
   { immediate: true }
 );

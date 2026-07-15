@@ -99,6 +99,24 @@ def test_work_file_raw_rejects_tex(client: TestClient):
     assert r.status_code in (400, 415)
 
 
+def test_work_file_raw_pdf(client: TestClient):
+    pid = client.post("/api/v1/projects").json()["id"]
+    # Minimal PDF header is enough for endpoint content-type check
+    pdf = b"%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+    z = _zip_bytes({"paper.pdf": pdf, "main.tex": "x\n"})
+    client.post(
+        f"/api/v1/projects/{pid}/work/import/zip",
+        files={"work": ("w.zip", z, "application/zip")},
+    )
+    r = client.get(
+        f"/api/v1/projects/{pid}/work/file-raw",
+        params={"path": "paper.pdf"},
+    )
+    assert r.status_code == 200, r.text
+    assert "pdf" in (r.headers.get("content-type") or "")
+    assert r.content.startswith(b"%PDF")
+
+
 def test_zone_file_raw_png(client: TestClient):
     pid = client.post("/api/v1/projects").json()["id"]
     work = _zip_bytes({"main.tex": "w\n", "fig.png": _png_bytes()})
