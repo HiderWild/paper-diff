@@ -7,18 +7,21 @@ import ConflictImportModal from "./features/import/ConflictImportModal.vue";
 import ToastStack from "./components/ToastStack.vue";
 import ToolStrip from "./components/ToolStrip.vue";
 import WorkViewPane from "./components/WorkViewPane.vue";
+import SettingsPanel from "./features/settings/SettingsPanel.vue";
 import FileTree from "./features/tree/FileTree.vue";
-import { setLocale, type AppLocale } from "./i18n";
-import { useLayoutStore, type MainPaneId } from "./stores/layout";
+import { useLayoutStore, type ActivityId, type MainPaneId } from "./stores/layout";
 import { useProjectStore } from "./stores/project";
+import { useSettingsStore } from "./stores/settings";
 import {
   useWorkspaceStore,
   type ToolKind,
 } from "./stores/workspace";
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const store = useProjectStore();
 const layout = useLayoutStore();
+const settings = useSettingsStore();
+settings.init();
 const workspace = useWorkspaceStore();
 const { views: workViews, activeViewId } = storeToRefs(workspace);
 const {
@@ -352,11 +355,6 @@ function granularityLabel(g: string) {
   return g;
 }
 
-function onLocaleChange(e: Event) {
-  const v = (e.target as HTMLSelectElement).value as AppLocale;
-  setLocale(v);
-}
-
 function onRootChange(e: Event) {
   const v = (e.target as HTMLSelectElement).value;
   if (v) void store.doSetRoot(v);
@@ -502,9 +500,7 @@ async function onGitDiscard() {
   await store.doGitDiscard();
 }
 
-function openActivity(
-  a: "explorer" | "zones" | "git" | "compile" | "agent"
-) {
+function openActivity(a: ActivityId) {
   activity.value = a;
   showFiles.value = true;
   if (a === "git") {
@@ -918,12 +914,6 @@ function formatCommitDate(iso?: string) {
       >
         {{ t("toolbar.toggleBottom") }}
       </button>
-      <label class="status-inline" :title="t('lang.switch')">
-        <select :value="locale" style="width: auto" @change="onLocaleChange">
-          <option value="zh-CN">{{ t("lang.zh") }}</option>
-          <option value="en">{{ t("lang.en") }}</option>
-        </select>
-      </label>
       <span
         v-if="agentProvider"
         class="provider-badge"
@@ -995,6 +985,15 @@ function formatCommitDate(iso?: string) {
           @click="openActivity('agent')"
         >
           ✨
+        </button>
+        <button
+          type="button"
+          class="activity-settings"
+          :class="{ active: activity === 'settings' && showFiles }"
+          :title="t('panels.settings')"
+          @click="openActivity('settings')"
+        >
+          ⚙︎
         </button>
       </nav>
 
@@ -1469,6 +1468,10 @@ function formatCommitDate(iso?: string) {
           </div>
         </template>
 
+        <template v-else-if="activity === 'settings'">
+          <SettingsPanel @hide="layout.toggleFiles()" />
+        </template>
+
         <template v-else>
           <div
             class="panel-header side-header pane-drag-handle"
@@ -1644,7 +1647,7 @@ function formatCommitDate(iso?: string) {
   flex-direction: column;
   gap: 0.3rem;
   padding: 0.4rem 0.2rem;
-  background: #0c1219;
+  background: var(--panel-header, #0c1219);
   border-right: 1px solid var(--border);
   align-items: center;
   z-index: 2;
@@ -1660,8 +1663,11 @@ function formatCommitDate(iso?: string) {
 }
 .activity-bar button.active,
 .activity-bar button:hover {
-  background: #1e3a5f;
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
   color: var(--text);
+}
+.activity-settings {
+  margin-top: auto;
 }
 
 .pane {

@@ -62,6 +62,7 @@ export default {
     git: "Git",
     compile: "Compile",
     agent: "Agent",
+    settings: "Settings",
     bottomLog: "Output",
     sideProject: "project",
     sideZone: "zone",
@@ -255,5 +256,25 @@ export default {
     zh: "中文",
     en: "English",
     switch: "Language",
+  },
+  settings: {
+    title: "Settings",
+    sectionAppearance: "Appearance",
+    sectionLanguage: "Language",
+    sectionWorkbench: "Workbench",
+    sectionAbout: "About",
+    theme: "Theme",
+    themeSystem: "System",
+    themeDark: "Dark",
+    themeLight: "Light",
+    themeHint:
+      "System follows the OS light/dark preference automatically.",
+    showFiles: "Show side bar",
+    showPdfPane: "Show PDF-related layout by default",
+    showBottom: "Show bottom output",
+    showToolTips: "Show tooltips",
+    compactWorkbench: "Compact workbench (experimental)",
+    aboutBody:
+      "paper-diff: project / compare-zone workbench. Language and theme prefs are stored in this browser.",
   },
 } as const;
