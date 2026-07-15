@@ -34,6 +34,7 @@ import {
   gitZoneFromCommit,
   importGit,
   dryRunWorkImport,
+  importWorkFilesReplace,
   importWorkZip,
   importZoneFiles,
   importZoneZip,
@@ -400,6 +401,32 @@ export const useProjectStore = defineStore("project", () => {
       const detail = await importWorkZip(id, file, (pct) => {
         uploadProgress.value = pct;
       });
+      uploadProgress.value = 100;
+      status.value = t("store.project", { id });
+      await afterImport(detail);
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+      uploadProgress.value = null;
+    }
+  }
+
+  async function doImportWorkFiles(files: File[], paths?: string[]) {
+    error.value = "";
+    busy.value = true;
+    uploadProgress.value = 0;
+    try {
+      const id = await ensureProject();
+      status.value = t("store.uploading");
+      const detail = await importWorkFilesReplace(
+        id,
+        files,
+        paths,
+        (pct) => {
+          uploadProgress.value = pct;
+        }
+      );
       uploadProgress.value = 100;
       status.value = t("store.project", { id });
       await afterImport(detail);
@@ -1322,6 +1349,7 @@ export const useProjectStore = defineStore("project", () => {
     openFile,
     clearGitPreview,
     doImportWork,
+    doImportWorkFiles,
     doUpload,
     doGitImport,
     doAddZoneZip,

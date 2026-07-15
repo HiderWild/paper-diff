@@ -108,6 +108,24 @@ export default {
     cancelAll: "Cancel import",
     continueImport: "Continue import",
   },
+  importModal: {
+    open: "Import",
+    projectTitle: "Import project",
+    zoneTitle: "Import compare zone",
+    name: "Name",
+    methodZip: "ZIP",
+    methodFolder: "Folder",
+    methodFiles: "Files",
+    analyzing: "Analyzing…",
+    preview: "Import preview",
+    previewSummary:
+      "{total} path(s) · ~{fresh} new · {conflicts} conflict(s)",
+    morePaths: "+{n} more path(s)",
+    conflictNote:
+      "Conflicting paths will be overwritten on confirm by default.",
+    cancel: "Cancel",
+    confirm: "Confirm import",
+  },
   agent: {
     title: "Agent",
     analyze: "Analyze current file",
