@@ -28,6 +28,8 @@ const emit = defineEmits<{
   action: [path: string, action: "add" | "delete" | "replace_all"];
   compareDir: [prefix: string];
   newCompare: [path: string];
+  /** Add path into the focused comparer (or open one), replacing that side. */
+  addToCompare: [path: string];
   "update:showDotFiles": [value: boolean];
   hide: [];
   titleDragStart: [e: DragEvent];
@@ -161,6 +163,15 @@ function ctxNewCompare(e?: Event) {
   requestAnimationFrame(() => closeCtx());
 }
 
+function ctxAddToCompare(e?: Event) {
+  e?.preventDefault?.();
+  e?.stopPropagation?.();
+  if (!ctxMenu.value) return;
+  const p = ctxMenu.value.path;
+  emit("addToCompare", p);
+  requestAnimationFrame(() => closeCtx());
+}
+
 function onDocPointerDown(e: Event) {
   const t = e.target as HTMLElement | null;
   if (t?.closest?.(".tree-ctx-menu")) return;
@@ -271,6 +282,14 @@ onBeforeUnmount(() => {
         @click.stop
         @contextmenu.prevent
       >
+        <button
+          type="button"
+          class="tree-ctx-item"
+          @pointerdown.stop.prevent="ctxAddToCompare"
+          @click.stop.prevent="ctxAddToCompare"
+        >
+          {{ t("tree.addToCompare") }}
+        </button>
         <button
           type="button"
           class="tree-ctx-item"

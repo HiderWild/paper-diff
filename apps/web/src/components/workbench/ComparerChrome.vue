@@ -11,7 +11,8 @@ import {
 
 const props = withDefaults(
   defineProps<{
-    path: string;
+    /** Work (project) path; null when only compare side is set */
+    path: string | null;
     units: DiffUnit[];
     /** Visible work-side full text (true left buffer) */
     leftText?: string;
@@ -38,47 +39,51 @@ const { sidesSwapped, activeZoneId, zones, busy, pair, projectId, gitCommits } =
 
 const targetKind = ref<"zone" | "git">("zone");
 const zoneId = ref("");
-const zonePath = ref(props.path);
+const zonePath = ref(props.path || "");
 const gitRef = ref("");
-const gitPath = ref(props.path);
+const gitPath = ref(props.path || "");
 const pickerOpen = ref(false);
 
 watch(
   () => [props.path, projectId.value, activeZoneId.value, zones.value] as const,
   ([path]) => {
+    const workPath = path || "";
     // Prefer per-work-path memory; fall back to project default with path=work
-    const mem = targets.resolveForWork(projectId.value, path);
+    const mem = workPath
+      ? targets.resolveForWork(projectId.value, workPath)
+      : targets.getForProject(projectId.value);
     if (mem) {
       if (mem.kind === "zone") {
         targetKind.value = "zone";
         zoneId.value = mem.zoneId;
-        // When only project default applied, path is already rewritten to work path
-        zonePath.value = mem.path || path;
+        zonePath.value = mem.path || workPath;
       } else {
         targetKind.value = "git";
         gitRef.value = mem.ref;
-        gitPath.value = mem.path || path;
+        gitPath.value = mem.path || workPath;
       }
     } else {
       targetKind.value = "zone";
       zoneId.value = activeZoneId.value || zones.value[0]?.id || "";
-      zonePath.value = path;
-      gitPath.value = path;
+      zonePath.value = workPath;
+      gitPath.value = workPath;
     }
-    // Opening a new work path: always seed editable path fields to this file
-    // unless a file-scoped override already set them above (same work path).
-    // For brand-new path without file override, ensure fields match work path.
-    const scope = targets.getMemoryScope(projectId.value, path);
-    if (scope !== "file") {
-      zonePath.value = path;
-      gitPath.value = path;
+    // Opening a new work path: seed fields unless file-scoped override already set them.
+    if (workPath) {
+      const scope = targets.getMemoryScope(projectId.value, workPath);
+      if (scope !== "file") {
+        zonePath.value = workPath;
+        gitPath.value = workPath;
+      }
     }
   },
   { immediate: true }
 );
 
 const memoryScope = computed(() =>
-  targets.getMemoryScope(projectId.value, props.path)
+  props.path
+    ? targets.getMemoryScope(projectId.value, props.path)
+    : targets.getMemoryScope(projectId.value)
 );
 
 const memoryBadge = computed(() => {
@@ -100,29 +105,47 @@ const targetLabel = computed(() => {
 const title = computed(() => {
   const left = sidesSwapped.value ? targetLabel.value : t("panels.sideProject");
   const right = sidesSwapped.value ? t("panels.sideProject") : targetLabel.value;
-  if (!props.path) return t("panels.comparer");
+  if (!props.path && !props.compareReady) {
+    return t("panels.comparer");
+  }
+  if (!props.compareReady) {
+    // One-sided: show which side is bound
+    if (props.path) {
+      return `${t("panels.sideProject")} · ${props.path}`;
+    }
+    return `${t("panels.sideZone")} · ${targetLabel.value}`;
+  }
   return t("panels.diffHeaderWith", { left, right });
 });
 
 function currentTarget(): CompareTarget | null {
   if (targetKind.value === "zone") {
     if (!zoneId.value) return null;
-    return { kind: "zone", zoneId: zoneId.value, path: zonePath.value || props.path };
+    return {
+      kind: "zone",
+      zoneId: zoneId.value,
+      path: zonePath.value || props.path || "",
+    };
   }
   if (!gitRef.value) return null;
-  return { kind: "git", ref: gitRef.value, path: gitPath.value || props.path };
+  return {
+    kind: "git",
+    ref: gitRef.value,
+    path: gitPath.value || props.path || "",
+  };
 }
 
 function applyTarget() {
   const t0 = currentTarget();
-  if (!t0) return;
-  // Persist as both project default and per-workPath override for this file
-  targets.setForProject(projectId.value, t0, props.path);
+  if (!t0 || !t0.path) return;
+  // Persist as both project default and per-workPath override when work path known
+  targets.setForProject(projectId.value, t0, props.path || undefined);
   emit("targetChanged", t0);
   pickerOpen.value = false;
 }
 
 async function onAcceptAll() {
+  if (!props.path) return;
   if (store.isDirty(props.path)) {
     if (!confirm(t("tools.dirtyAcceptConfirm"))) return;
   }
@@ -151,7 +174,7 @@ watch(pickerOpen, (v) => {
   <div class="cmp-chrome">
     <div class="cmp-title-row">
       <span class="cmp-title">{{ title }}</span>
-      <span class="cmp-path muted">{{ path }}</span>
+      <span class="cmp-path muted">{{ path || targetLabel }}</span>
       <span v-if="memoryBadge" class="mem-badge muted" :title="memoryBadge">{{
         memoryBadge
       }}</span>

@@ -245,6 +245,13 @@ export default {
     needActiveZone: "请先激活一个比较区，才能将文件放到对照侧。",
     needBothSides:
       "请设置两侧比较对象：左侧为项目文件，右侧通过「对照…」或拖入比较区/Git 文件。两侧齐全后显示差异与采纳。",
+    dropWork: "拖入项目区文件，或从文件树右键「加入比较」",
+    dropCompare: "拖入比较区文件，或用「对照…」选择区/Git 目标",
+    oneSideOnly: "当前仅一侧就绪：可查看/编辑已绑定侧；另一侧空，可拖入或「加入比较」。",
+    replacedSide: "已替换比较器的{side}侧：{path}",
+    sideWork: "项目",
+    sideCompare: "对照",
+    noFocusedComparer: "没有可用的比较器，已新建一个。",
   },
   gutter: {
     pullLine: "拉取此行（对照 → 项目）",
@@ -258,6 +265,7 @@ export default {
     compareDir: "比较此目录（点目录默认不比较，点此启用）",
     collapseAll: "全部折叠",
     expandTop: "展开顶层",
+    addToCompare: "加入比较",
     newCompare: "新建比较",
     newCompareFailed: "无法打开比较器",
   },
