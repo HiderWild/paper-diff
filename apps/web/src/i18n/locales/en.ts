@@ -223,7 +223,8 @@ export default {
     selectRoot: "Select a main .tex entry before compile",
   },
   pdf: {
-    empty: "No PDF",
+    empty: "No PDF — open or drop a .pdf from the tree",
+    noContainer: "Preview host not ready",
   },
   tree: {
     showDot: "Show dotfiles / folders",

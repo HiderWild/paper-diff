@@ -108,7 +108,12 @@ function onDragOver(e: DragEvent) {
     tabIndex,
   });
   wb.setDropPreview(intent);
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  if (e.dataTransfer) {
+    const hasFile =
+      e.dataTransfer.types.includes("application/x-paper-diff-path") ||
+      e.dataTransfer.types.includes("Files");
+    e.dataTransfer.dropEffect = hasFile ? "copy" : "move";
+  }
 }
 
 function onDrop(e: DragEvent) {
@@ -155,31 +160,47 @@ function onDrop(e: DragEvent) {
   const path =
     e.dataTransfer?.getData("application/x-paper-diff-path") ||
     e.dataTransfer?.getData("text/plain");
-  if (path && !path.startsWith("tab:") && !path.startsWith("col:") && !path.startsWith("tool:")) {
+  if (
+    path &&
+    !path.startsWith("tab:") &&
+    !path.startsWith("col:") &&
+    !path.startsWith("tool:")
+  ) {
     const tab = activeTab.value;
-    if (!tab || tab.kind === "output") {
-      emit(
-        "invalidDrop",
-        t("tools.unsupportedFile", {
-          tool: t("tools.output"),
-          file: path,
-        })
-      );
+    if (tab && toolAcceptsPath(tab.kind, path)) {
+      emit("fileDrop", tab.id, path);
       wb.setDropPreview(null);
       return;
     }
-    if (!toolAcceptsPath(tab.kind, path)) {
-      emit(
-        "invalidDrop",
-        t("tools.unsupportedFile", {
-          tool: t(`tools.${tab.kind}`),
-          file: path,
-        })
+    // Empty / wrong tool: open a matching tool for this file kind
+    const fk = wb.fileKindForPath(path);
+    const kind: ToolKind =
+      fk === "pdf"
+        ? "pdf"
+        : fk === "word"
+          ? "word"
+          : fk === "text" || fk === "other"
+            ? "comparer"
+            : "editor";
+    if (fk === "image") {
+      // images go to editor body image preview path — use editor
+      const opened = wb.openTool("editor", path);
+      if (opened) emit("fileDrop", opened.id, path);
+    } else {
+      const empty = Object.values(wb.tabs).find(
+        (x) => x.kind === kind && !x.path
       );
-      wb.setDropPreview(null);
-      return;
+      if (empty) {
+        emit("fileDrop", empty.id, path);
+      } else if (tab && !tab.path && toolAcceptsPath(tab.kind, path) === false) {
+        // replace not allowed — open new
+        const opened = wb.openTool(kind, path);
+        if (opened) wb.bindPath(opened.id, path);
+      } else {
+        const opened = wb.openTool(kind, path);
+        if (opened) wb.bindPath(opened.id, path);
+      }
     }
-    emit("fileDrop", tab.id, path);
   }
   wb.setDropPreview(null);
 }

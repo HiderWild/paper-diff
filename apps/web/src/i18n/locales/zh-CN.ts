@@ -220,7 +220,8 @@ export default {
     selectRoot: "请先选择主 TeX 入口再编译",
   },
   pdf: {
-    empty: "尚无 PDF",
+    empty: "尚无 PDF — 从文件树打开或拖入 .pdf",
+    noContainer: "预览容器未就绪",
   },
   tree: {
     showDot: "显示以 . 开头的目录/文件",

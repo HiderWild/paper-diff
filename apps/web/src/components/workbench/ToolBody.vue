@@ -62,12 +62,16 @@ async function loadBoundPath(path: string | null) {
   try {
     const pid = project.projectId;
     if (props.tab.kind === "pdf") {
-      rawUrl.value = workFileRawUrl(pid, path) + `&t=${Date.now()}`;
+      const base = workFileRawUrl(pid, path);
+      const sep = base.includes("?") ? "&" : "?";
+      rawUrl.value = `${base}${sep}t=${Date.now()}`;
       return;
     }
     if (props.tab.kind === "word") {
       isLegacyDoc.value = /\.doc$/i.test(path) && !/\.docx$/i.test(path);
-      rawUrl.value = workFileRawUrl(pid, path) + `&t=${Date.now()}`;
+      const base = workFileRawUrl(pid, path);
+      const sep = base.includes("?") ? "&" : "?";
+      rawUrl.value = `${base}${sep}t=${Date.now()}`;
       return;
     }
     if (props.tab.kind === "editor") {
