@@ -8,7 +8,6 @@ import {
   type LineChange,
 } from "./sentenceMapper";
 
-// Monaco workers (Vite)
 self.MonacoEnvironment = {
   getWorker() {
     return new editorWorker();
@@ -30,6 +29,7 @@ const host = ref<HTMLDivElement | null>(null);
 let editor: monaco.editor.IStandaloneDiffEditor | null = null;
 let original: monaco.editor.ITextModel | null = null;
 let modified: monaco.editor.ITextModel | null = null;
+let sub: monaco.IDisposable | null = null;
 
 function recomputeUnits() {
   if (!editor) return;
@@ -54,23 +54,21 @@ function mountEditor() {
     fontSize: 13,
   });
   editor.setModel({ original, modified });
-  // Wait for diff computation
-  const sub = editor.onDidUpdateDiff(() => {
+  sub = editor.onDidUpdateDiff(() => {
     recomputeUnits();
   });
   setTimeout(() => {
     recomputeUnits();
     emit("ready");
   }, 200);
-  onBeforeUnmount(() => sub.dispose());
 }
 
 watch(
   () => [props.left, props.right, props.path],
   () => {
     if (!original || !modified) return;
-    original.setValue(props.left);
-    modified.setValue(props.right);
+    if (original.getValue() !== props.left) original.setValue(props.left);
+    if (modified.getValue() !== props.right) modified.setValue(props.right);
     setTimeout(recomputeUnits, 150);
   }
 );
@@ -78,6 +76,7 @@ watch(
 onMounted(mountEditor);
 
 onBeforeUnmount(() => {
+  sub?.dispose();
   editor?.dispose();
   original?.dispose();
   modified?.dispose();
@@ -89,7 +88,16 @@ function setLeftContent(text: string) {
   setTimeout(recomputeUnits, 150);
 }
 
-defineExpose({ setLeftContent, recomputeUnits });
+/** Jump original (left) editor to 1-based line. */
+function revealLine(line: number) {
+  const ed = editor?.getOriginalEditor();
+  if (!ed || !line || line < 1) return;
+  ed.revealLineInCenter(line);
+  ed.setPosition({ lineNumber: line, column: 1 });
+  ed.focus();
+}
+
+defineExpose({ setLeftContent, recomputeUnits, revealLine });
 </script>
 
 <template>

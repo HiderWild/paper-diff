@@ -1,37 +1,25 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
 import MonacoDiff from "./features/diff/MonacoDiff.vue";
 import PdfPane from "./features/preview/PdfPane.vue";
-import type { DiffUnit } from "./features/diff/sentenceMapper";
-import {
-  acceptAll,
-  acceptOps,
-  compileProject,
-  createProject,
-  exportMergedUrl,
-  getCompileJob,
-  getCompileLog,
-  getDiffIndex,
-  getFilePair,
-  importGit,
-  pdfUrl,
-  undo,
-  uploadVersions,
-  type DiffIndexFile,
-  type FilePair,
-} from "./shared/api";
+import { useProjectStore } from "./stores/project";
 
-const projectId = ref<string | null>(null);
-const files = ref<DiffIndexFile[]>([]);
-const currentPath = ref<string | null>(null);
-const pair = ref<FilePair | null>(null);
-const units = ref<DiffUnit[]>([]);
-const status = ref("Ready");
-const error = ref("");
-const logText = ref("");
-const pdfHref = ref<string | null>(null);
-const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
-const busy = ref(false);
+const store = useProjectStore();
+const {
+  projectId,
+  files,
+  currentPath,
+  pair,
+  units,
+  status,
+  error,
+  logText,
+  pdfHref,
+  busy,
+  autoCompile,
+  lastCompileErrors,
+} = storeToRefs(store);
 
 const unitFilter = ref<"all" | "sentence" | "word" | "hunk">("sentence");
 const visibleUnits = computed(() => {
@@ -45,199 +33,90 @@ const gitRepo = ref("");
 const gitBaseRef = ref("");
 const gitRevisedRef = ref("");
 const gitSubdir = ref("");
+const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
 
-
-async function ensureProject() {
-  if (!projectId.value) {
-    const p = await createProject();
-    projectId.value = p.id;
+watch(
+  () => pair.value?.merged.content,
+  (c) => {
+    if (c != null) diffRef.value?.setLeftContent(c);
   }
-  return projectId.value!;
-}
+);
 
 async function onUpload() {
-  error.value = "";
-  busy.value = true;
-  try {
-    const baseFile = baseInput.value?.files?.[0];
-    const revFile = revisedInput.value?.files?.[0];
-    if (!baseFile || !revFile) {
-      error.value = "Select base.zip and revised.zip";
-      return;
-    }
-    const id = await ensureProject();
-    status.value = "Uploading…";
-    await uploadVersions(id, baseFile, revFile);
-    status.value = `Project ${id}`;
-    await refreshIndex();
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
+  const baseFile = baseInput.value?.files?.[0];
+  const revFile = revisedInput.value?.files?.[0];
+  if (!baseFile || !revFile) {
+    store.error = "Select base.zip and revised.zip";
+    return;
   }
+  await store.doUpload(baseFile, revFile);
 }
 
 async function onGitImport() {
-  error.value = "";
-  busy.value = true;
-  try {
-    if (!gitRepo.value || !gitBaseRef.value || !gitRevisedRef.value) {
-      error.value = "Fill repo path/url and both refs";
-      return;
-    }
-    const id = await ensureProject();
-    status.value = "Importing from git…";
-    await importGit(id, {
-      repo_url: gitRepo.value,
-      base_ref: gitBaseRef.value,
-      revised_ref: gitRevisedRef.value,
-      subdir: gitSubdir.value || undefined,
-    });
-    status.value = `Project ${id} (git)`;
-    await refreshIndex();
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
+  if (!gitRepo.value || !gitBaseRef.value || !gitRevisedRef.value) {
+    store.error = "Fill repo path/url and both refs";
+    return;
   }
+  await store.doGitImport({
+    repo_url: gitRepo.value,
+    base_ref: gitBaseRef.value,
+    revised_ref: gitRevisedRef.value,
+    subdir: gitSubdir.value || undefined,
+  });
 }
 
-
-async function refreshIndex() {
-  if (!projectId.value) return;
-  const idx = await getDiffIndex(projectId.value);
-  files.value = idx.files.filter((f) => f.kind === "text" || f.status !== "same");
-  const first =
-    files.value.find((f) => f.status === "modified") || files.value[0];
-  if (first) await openFile(first.path);
-}
-
-async function openFile(path: string) {
-  if (!projectId.value) return;
-  currentPath.value = path;
-  pair.value = await getFilePair(projectId.value, path);
-  units.value = [];
-  status.value = path;
-}
-
-async function onAccept(unit: DiffUnit) {
-  if (!projectId.value || !pair.value || !currentPath.value) return;
-  busy.value = true;
-  error.value = "";
-  try {
-    const res = await acceptOps(projectId.value, [
-      {
-        op_id: unit.id,
-        file: currentPath.value,
-        granularity: unit.granularity,
-        left_range: unit.left,
-        right_range: unit.right,
-        expected_merged_revision: pair.value.merged.revision,
-      },
-    ]);
-    pair.value = {
-      ...pair.value,
-      merged: {
-        content: res.merged.content,
-        sha256: res.merged.sha256,
-        revision: res.merged.revision,
-      },
-    };
-    diffRef.value?.setLeftContent(res.merged.content);
-    status.value = `Accepted ${unit.granularity} → rev ${res.merged.revision}`;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+async function onAccept(unit: (typeof units.value)[0]) {
+  const content = await store.doAccept(unit);
+  if (content != null) diffRef.value?.setLeftContent(content);
 }
 
 async function onAcceptAll() {
-  if (!projectId.value || !pair.value || !currentPath.value) return;
-  busy.value = true;
-  try {
-    const res = await acceptAll(
-      projectId.value,
-      currentPath.value,
-      pair.value.merged.revision
-    );
-    pair.value = {
-      ...pair.value,
-      merged: {
-        ...pair.value.merged,
-        content: res.merged.content,
-        revision: res.merged.revision,
-      },
-    };
-    diffRef.value?.setLeftContent(res.merged.content);
-    status.value = `Accepted all → rev ${res.merged.revision}`;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  const content = await store.doAcceptAll();
+  if (content != null) diffRef.value?.setLeftContent(content);
 }
 
 async function onUndo() {
-  if (!projectId.value) return;
-  busy.value = true;
-  try {
-    const res = await undo(projectId.value, 1);
-    if (pair.value && res.file === currentPath.value) {
-      pair.value = {
-        ...pair.value,
-        merged: {
-          ...pair.value.merged,
-          content: res.merged.content,
-          revision: res.merged.revision,
-        },
-      };
-      diffRef.value?.setLeftContent(res.merged.content);
-    }
-    status.value = "Undo ok";
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function onCompile() {
-  if (!projectId.value) return;
-  busy.value = true;
-  error.value = "";
-  logText.value = "Compiling…\n";
-  try {
-    const { job_id } = await compileProject(projectId.value);
-    const job = await getCompileJob(projectId.value, job_id);
-    logText.value += `status=${job.status}\n`;
-    if (job.message) logText.value += job.message + "\n";
-    if (job.errors?.length) {
-      logText.value += job.errors.map((e) => e.message).join("\n") + "\n";
-    }
-    try {
-      logText.value += await getCompileLog(projectId.value, job_id);
-    } catch {
-      /* log optional */
-    }
-    if (job.status === "succeeded") {
-      pdfHref.value = pdfUrl(projectId.value, job_id) + `&t=${Date.now()}`;
-      status.value = "Compile OK";
-    } else {
-      status.value = "Compile failed";
-      error.value = job.message || "compile failed";
-    }
-
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  const content = await store.doUndo();
+  if (content != null) diffRef.value?.setLeftContent(content);
 }
 
 function onExport() {
-  if (!projectId.value) return;
-  window.open(exportMergedUrl(projectId.value), "_blank");
+  const u = store.exportUrl();
+  if (u) window.open(u, "_blank");
+}
+
+function onReport() {
+  const u = store.reportUrl();
+  if (u) window.open(u, "_blank");
+}
+
+function jumpError(err: {
+  file?: string | null;
+  line?: number | null;
+  message: string;
+}) {
+  if (err.file) {
+    const path = err.file.replace(/^\.\//, "").replace(/\\/g, "/");
+    const match =
+      files.value.find((f) => f.path === path) ||
+      files.value.find((f) => path.endsWith(f.path));
+    if (match) {
+      void store.openFile(match.path).then(() => {
+        if (err.line) setTimeout(() => diffRef.value?.revealLine(err.line!), 250);
+      });
+      return;
+    }
+  }
+  if (err.line) diffRef.value?.revealLine(err.line);
+}
+
+function fileActions(path: string, status: string) {
+  if (status === "added") return [{ label: "Add→merged", action: "add" as const }];
+  if (status === "removed")
+    return [{ label: "Delete from merged", action: "delete" as const }];
+  if (status === "modified")
+    return [{ label: "Replace all", action: "replace_all" as const }];
+  return [];
 }
 </script>
 
@@ -257,29 +136,47 @@ function onExport() {
       <input
         v-model="gitRepo"
         placeholder="git repo path or URL"
-        style="min-width: 12rem"
+        style="min-width: 10rem"
       />
-      <input v-model="gitBaseRef" placeholder="base ref" style="width: 7rem" />
+      <input v-model="gitBaseRef" placeholder="base ref" style="width: 6rem" />
       <input
         v-model="gitRevisedRef"
         placeholder="revised ref"
-        style="width: 7rem"
+        style="width: 6rem"
       />
-      <input v-model="gitSubdir" placeholder="subdir" style="width: 5rem" />
+      <input v-model="gitSubdir" placeholder="subdir" style="width: 4rem" />
       <button class="secondary" :disabled="busy" @click="onGitImport">
         Import git
       </button>
       <button class="secondary" :disabled="busy || !pair" @click="onAcceptAll">
         Accept file
       </button>
-
       <button class="secondary" :disabled="busy || !projectId" @click="onUndo">
         Undo
       </button>
-      <button :disabled="busy || !projectId" @click="onCompile">Compile</button>
+      <button
+        :disabled="busy || !projectId"
+        @click="store.doCompile('latexmk')"
+      >
+        Compile
+      </button>
+      <button
+        class="secondary"
+        :disabled="busy || !projectId"
+        @click="store.doCompile('latexdiff')"
+      >
+        latexdiff PDF
+      </button>
       <button class="secondary" :disabled="!projectId" @click="onExport">
         Export merged
       </button>
+      <button class="secondary" :disabled="!projectId" @click="onReport">
+        Accept report
+      </button>
+      <label class="status" style="margin-left: 0.5rem">
+        <input v-model="autoCompile" type="checkbox" />
+        auto-compile
+      </label>
       <select v-model="unitFilter">
         <option value="sentence">sentences</option>
         <option value="word">words</option>
@@ -293,22 +190,42 @@ function onExport() {
       <aside class="panel">
         <div class="panel-header">Files</div>
         <div class="file-list">
+          <div v-for="f in files" :key="f.path" class="file-row">
+            <button
+              class="file-item"
+              :class="{ active: f.path === currentPath }"
+              @click="store.openFile(f.path)"
+            >
+              <span class="badge" :class="f.status">{{ f.status }}</span>
+              <span>{{ f.path }}</span>
+            </button>
+            <div class="file-ops">
+              <button
+                v-for="a in fileActions(f.path, f.status)"
+                :key="a.action"
+                class="secondary mini"
+                :disabled="busy"
+                @click="store.doAcceptFile(f.path, a.action)"
+              >
+                {{ a.label }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-if="lastCompileErrors.length" class="err-list">
+          <div class="panel-header">Compile errors</div>
           <button
-            v-for="f in files"
-            :key="f.path"
-            class="file-item"
-            :class="{ active: f.path === currentPath }"
-            @click="openFile(f.path)"
+            v-for="(e, i) in lastCompileErrors"
+            :key="i"
+            class="file-item err-item"
+            @click="jumpError(e)"
           >
-            <span class="badge" :class="f.status">{{ f.status }}</span>
-            <span>{{ f.path }}</span>
+            {{ e.file || "?" }}:{{ e.line || "?" }} — {{ e.message }}
           </button>
         </div>
       </aside>
       <section class="panel">
-        <div class="panel-header">
-          Diff — left: merged · right: revised
-        </div>
+        <div class="panel-header">Diff — left: merged · right: revised</div>
         <div class="unit-bar">
           <button
             v-for="u in visibleUnits"
@@ -321,9 +238,9 @@ function onExport() {
           >
             Accept {{ u.granularity }}
           </button>
-          <span v-if="!visibleUnits.length" style="color: var(--muted)"
-            >No units (open a modified file)</span
-          >
+          <span v-if="!visibleUnits.length" style="color: var(--muted)">
+            No units (open a modified file)
+          </span>
         </div>
         <MonacoDiff
           v-if="pair"
@@ -332,7 +249,7 @@ function onExport() {
           :path="currentPath || ''"
           :left="pair.merged.content"
           :right="pair.revised.content"
-          @units="units = $event"
+          @units="store.units = $event"
         />
       </section>
       <section class="panel">
@@ -343,3 +260,32 @@ function onExport() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.file-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.25rem;
+}
+.file-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding-left: 0.5rem;
+}
+button.mini {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+}
+.err-list {
+  border-top: 1px solid var(--border);
+  max-height: 180px;
+  overflow: auto;
+}
+.err-item {
+  color: var(--danger);
+  font-size: 0.75rem;
+  white-space: normal;
+}
+</style>

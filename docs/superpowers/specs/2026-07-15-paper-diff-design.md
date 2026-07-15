@@ -1,7 +1,7 @@
 # paper-diff Design Spec
 
 **Date:** 2026-07-15  
-**Status:** Approved  
+**Status:** Approved — implemented P0–P5 (UI manual acceptance deferred)  
 **Approach:** A — Monaco Diff (frontend) + Python FastAPI (workspace/merge/compile) + Docker TeX
 
 ## Goals

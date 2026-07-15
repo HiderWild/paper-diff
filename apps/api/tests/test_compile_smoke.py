@@ -54,14 +54,24 @@ def test_compile_fixture_via_api(tmp_path, monkeypatch):
         },
     )
     assert r.status_code == 200, r.text
+    import time
+
     comp = client.post(f"/api/v1/projects/{pid}/compile", json={"side": "merged"})
     assert comp.status_code == 200, comp.text
     body = comp.json()
     job_id = body["job_id"]
-    job = client.get(f"/api/v1/projects/{pid}/compile/{job_id}").json()
-    if job["status"] != "succeeded":
+    deadline = time.time() + 120
+    job = {}
+    while time.time() < deadline:
+        job = client.get(f"/api/v1/projects/{pid}/compile/{job_id}").json()
+        if job["status"] in ("succeeded", "failed"):
+            break
+        time.sleep(0.2)
+    if job.get("status") != "succeeded":
         log = client.get(f"/api/v1/projects/{pid}/compile/{job_id}/log")
-        pytest.fail(f"compile {job['status']}: {job.get('message')}\n{log.text[:2000]}")
+        pytest.fail(
+            f"compile {job.get('status')}: {job.get('message')}\n{log.text[:2000]}"
+        )
     pdf = client.get(f"/api/v1/projects/{pid}/artifacts/pdf", params={"job_id": job_id})
     assert pdf.status_code == 200
     assert pdf.content[:4] == b"%PDF"

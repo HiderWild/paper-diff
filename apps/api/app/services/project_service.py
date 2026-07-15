@@ -471,7 +471,151 @@ class ProjectService:
             "dirty": True,
         }
 
+    def accept_file(self, project_id: str, path: str, action: str) -> dict:
+        """File-level ops: add (from revised), delete (from merged), replace_all."""
+        ws = self._ws(project_id)
+        meta = ws.load_meta()
+        if meta.get("status") != "ready":
+            raise AppError("VALIDATION_ERROR", "versions not uploaded", status_code=400)
+        action = action.lower().strip()
+        if action not in ("add", "delete", "replace_all"):
+            raise AppError("VALIDATION_ERROR", f"unknown action: {action}", status_code=422)
+
+        # path jail
+        ws.resolve_under(ws.merged_dir, path)
+        current_rev = meta.get("revisions", {}).get(path, 0)
+        snap_id = f"{path.replace('/', '__')}__{current_rev}__{action}"
+
+        if action == "add":
+            src = ws.resolve_under(ws.revised_dir, path)
+            if not src.is_file():
+                raise AppError("FILE_NOT_FOUND", f"not in revised: {path}", status_code=404)
+            before = ""
+            if ws.resolve_under(ws.merged_dir, path).is_file():
+                before = ws.read_text("merged", path)
+            (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
+            dest = ws.resolve_under(ws.merged_dir, path)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            content = dest.read_text(encoding="utf-8", errors="replace") if is_text_path(path) else ""
+            new_rev = current_rev + 1
+            if is_text_path(path):
+                meta.setdefault("revisions", {})[path] = new_rev
+            meta.setdefault("accept_log", []).append(
+                {
+                    "file": path,
+                    "from_revision": current_rev,
+                    "to_revision": new_rev,
+                    "ops": [{"type": "accept_file", "action": "add"}],
+                    "snapshot": f"{snap_id}.txt",
+                    "snapshot_kind": "text" if is_text_path(path) else "marker",
+                }
+            )
+            if meta.get("versions", {}).get("merged"):
+                meta["versions"]["merged"]["dirty"] = True
+            ws.save_meta(meta)
+            return {
+                "file": path,
+                "action": "add",
+                "merged": {
+                    "content": content if is_text_path(path) else None,
+                    "revision": new_rev if is_text_path(path) else current_rev,
+                },
+                "dirty": True,
+            }
+
+        if action == "delete":
+            dest = ws.resolve_under(ws.merged_dir, path)
+            if not dest.is_file():
+                raise AppError("FILE_NOT_FOUND", f"not in merged: {path}", status_code=404)
+            before = dest.read_text(encoding="utf-8", errors="replace") if is_text_path(path) else ""
+            (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
+            # also keep binary backup name for restore via snapshot text only for text
+            dest.unlink()
+            new_rev = current_rev + 1
+            meta.setdefault("revisions", {})[path] = new_rev
+            meta.setdefault("accept_log", []).append(
+                {
+                    "file": path,
+                    "from_revision": current_rev,
+                    "to_revision": new_rev,
+                    "ops": [{"type": "accept_file", "action": "delete"}],
+                    "snapshot": f"{snap_id}.txt",
+                }
+            )
+            if meta.get("versions", {}).get("merged"):
+                meta["versions"]["merged"]["dirty"] = True
+            ws.save_meta(meta)
+            return {"file": path, "action": "delete", "dirty": True}
+
+        # replace_all
+        if not ws.resolve_under(ws.revised_dir, path).is_file():
+            raise AppError("FILE_NOT_FOUND", f"not in revised: {path}", status_code=404)
+        before = ""
+        if ws.resolve_under(ws.merged_dir, path).is_file() and is_text_path(path):
+            before = ws.read_text("merged", path)
+        (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
+        shutil.copy2(
+            ws.resolve_under(ws.revised_dir, path),
+            ws.resolve_under(ws.merged_dir, path),
+        )
+        content = (
+            ws.read_text("merged", path) if is_text_path(path) else ""
+        )
+        new_rev = current_rev + 1
+        if is_text_path(path):
+            meta.setdefault("revisions", {})[path] = new_rev
+        meta.setdefault("accept_log", []).append(
+            {
+                "file": path,
+                "from_revision": current_rev,
+                "to_revision": new_rev,
+                "ops": [{"type": "accept_file", "action": "replace_all"}],
+                "snapshot": f"{snap_id}.txt",
+            }
+        )
+        if meta.get("versions", {}).get("merged"):
+            meta["versions"]["merged"]["dirty"] = True
+        ws.save_meta(meta)
+        return {
+            "file": path,
+            "action": "replace_all",
+            "merged": {
+                "content": content if is_text_path(path) else None,
+                "sha256": ws.file_sha256(content) if is_text_path(path) else None,
+                "revision": new_rev if is_text_path(path) else current_rev,
+            },
+            "dirty": True,
+        }
+
+    def accept_report(self, project_id: str) -> dict:
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        meta = ws.load_meta()
+        return {
+            "project_id": project_id,
+            "root_file": meta.get("root_file"),
+            "versions": meta.get("versions", {}),
+            "alignment": meta.get("alignment", {}),
+            "revisions": meta.get("revisions", {}),
+            "accept_log": meta.get("accept_log", []),
+            "dirty": bool(meta.get("versions", {}).get("merged", {}).get("dirty")),
+        }
+
+    def export_merged_zip(self, project_id: str) -> bytes:
+        ws = self._ws(project_id)
+        if not ws.merged_dir.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in ws.list_files("merged"):
+                full = ws.resolve_under(ws.merged_dir, p)
+                zf.write(full, p)
+        return buf.getvalue()
+
     def undo(self, project_id: str, steps: int = 1) -> dict:
+        """Undo accepts and accept-file ops using snapshots."""
         ws = self._ws(project_id)
         meta = ws.load_meta()
         log = meta.get("accept_log", [])
@@ -487,10 +631,27 @@ class ProjectService:
             snap = entry["snapshot"]
             file_path = entry["file"]
             snap_path = ws.snapshots_dir / snap
-            if not snap_path.exists():
+            ops = entry.get("ops") or []
+            action = None
+            if ops and isinstance(ops[0], dict):
+                action = ops[0].get("action") or ops[0].get("type")
+            if not snap_path.exists() and action != "delete":
                 raise AppError("INTERNAL", f"missing snapshot {snap}", status_code=500)
-            content = snap_path.read_text(encoding="utf-8")
-            ws.write_text("merged", file_path, content)
+            content = snap_path.read_text(encoding="utf-8") if snap_path.exists() else ""
+            # if last op was add and before was empty, deleting restores empty base — remove file
+            if action == "add" and content == "":
+                target = ws.resolve_under(ws.merged_dir, file_path)
+                if target.is_file():
+                    target.unlink()
+            elif action == "delete":
+                # restore deleted text file from snapshot
+                if is_text_path(file_path):
+                    ws.write_text("merged", file_path, content)
+                else:
+                    # binary delete undo not fully supported — recreate empty marker
+                    ws.write_text("merged", file_path, content)
+            else:
+                ws.write_text("merged", file_path, content)
             meta.setdefault("revisions", {})[file_path] = entry["from_revision"]
             last_file = file_path
             last_content = content
@@ -507,17 +668,6 @@ class ProjectService:
                 "revision": last_rev,
             },
         }
-
-    def export_merged_zip(self, project_id: str) -> bytes:
-        ws = self._ws(project_id)
-        if not ws.merged_dir.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for p in ws.list_files("merged"):
-                full = ws.resolve_under(ws.merged_dir, p)
-                zf.write(full, p)
-        return buf.getvalue()
 
 
 def hashlib_hex(data: bytes) -> str:

@@ -1,35 +1,61 @@
 # paper-diff Implementation Plan
 
-> **For agentic workers:** Use task-by-task execution with tests first (TDD).
+> **Status:** P0–P5 implemented (backend + frontend). User real-device UI acceptance deferred.
 
 **Goal:** Vue + FastAPI LaTeX paper diff with Accept merge and Docker full-doc compile.
 
 **Architecture:** Monaco computes visual diff; FastAPI owns workspace, merge, compile.
 
-**Tech stack:** Vue3/Vite/TS/Monaco, FastAPI/Pydantic, Docker+latexmk, pytest.
+**Tech stack:** Vue3/Vite/TS/Monaco/Pinia, FastAPI/Pydantic, Docker+latexmk+latexdiff, pytest/vitest.
 
 ---
 
-### Task 1: Backend scaffolding + merge_engine (TDD)
+## Completed checklist
 
-**Files:**
-- `apps/api/pyproject.toml`
-- `apps/api/app/...`
-- `apps/api/tests/test_merge_engine.py`
+### P0 — Foundation
+- [x] Monorepo `apps/web`, `apps/api`, `docker/texlive`, `fixtures`
+- [x] Dual zip import, tree, file-pair, diff-index
+- [x] Monaco side-by-side line diff
 
-### Task 2: Project import/align/file APIs
+### P1 — Accept / merge
+- [x] line/col `merge_engine` + Accept / Undo / accept-all
+- [x] Export merged.zip
+- [x] accept-file add / delete / replace_all
+- [x] Accept report JSON export
 
-**Files:**
-- `apps/api/app/api/routes_projects.py`
-- `apps/api/app/services/import_service.py`
-- `apps/api/tests/test_projects_api.py`
+### P2 — Sentence / word units
+- [x] sentence-mapper (LaTeX-aware tokenize + charChanges)
+- [x] Accept chips in UI (hunk/word/sentence filter)
 
-### Task 3: Accept / undo / export APIs
+### P3 — Compile
+- [x] Docker latexmk + Windows volume mount
+- [x] Async background jobs + per-project serial lock
+- [x] SSE `/events` + poll fallback
+- [x] PDF artifact + log endpoint
+- [x] Compile smoke test
 
-### Task 4: Vue workbench + Monaco Diff (P0)
+### P4 — Git / UX
+- [x] Git dual-ref import (+ subdir)
+- [x] Auto-compile debounce (2s after accept)
+- [x] Compile error list → jump to left editor line
 
-### Task 5: Accept UI + sentence-mapper (P1–P2)
+### P5 — latexdiff + embed
+- [x] `POST .../compile/latexdiff` (flatten + latexdiff + latexmk)
+- [x] Embed SDK `mountPaperDiff` (`src/embed.ts`)
+- [x] Pinia store for host integration
 
-### Task 6: Docker compile + PDF preview (P3)
+---
 
-See design spec: `docs/superpowers/specs/2026-07-15-paper-diff-design.md`
+## Verify
+
+```bash
+cd apps/api && pytest -v
+cd apps/web && npm test
+docker build -t paper-diff-texlive:latest docker/texlive
+```
+
+## Deferred (user later)
+
+- Live browser walkthrough / visual polish
+- Production auth / multi-tenant storage
+- Rename fuzzy path matching

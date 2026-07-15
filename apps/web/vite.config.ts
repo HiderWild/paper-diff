@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import { resolve } from "node:path";
 
 export default defineConfig({
   plugins: [vue()],
@@ -12,5 +13,14 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ["monaco-editor"],
+  },
+  build: {
+    lib: undefined,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        embed: resolve(__dirname, "src/embed.ts"),
+      },
+    },
   },
 });
