@@ -21,10 +21,18 @@
 
 ## Architecture pointers
 
-- Spec: `docs/superpowers/specs/2026-07-15-paper-diff-design.md`
+- Spec: `docs/superpowers/specs/2026-07-15-paper-diff-design.md`（待 R0 补 v2 模型章节）
 - Plan status: `docs/superpowers/plans/2026-07-15-paper-diff-implementation.md`
 - Workbench track: `docs/superpowers/plans/2026-07-15-workbench-git-async-diff.md`
 - **Product v2 (project core + zones + git + agent):** `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`
+- **Hardening / gap closure (post-audit R0–R5):** `docs/superpowers/plans/2026-07-15-hardening-followups.md`
+
+## Completion tiers (use in status claims)
+
+- **L0 main path:** work + zones + accept + compile + local git — **done**
+- **L1 API↔UI wiring:** every public API has UI or is explicitly deferred — **partial** (chat/CSV/image)
+- **L2 product depth:** real agent provider, upload progress, layout presets — **partial**
+- **L3 platform:** remote git auth, multi-tenant, virtualized tree — **deferred**
 - Merge line/col: `apps/api/app/domain/merge_engine.py`
 - Accept/import (work + dual-zip compat): `apps/api/app/services/project_service.py`
 - Zones: `apps/api/app/services/zone_service.py` — `work/` truth + `zones/{id}/tree`
