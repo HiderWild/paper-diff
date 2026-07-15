@@ -84,66 +84,76 @@ def test_zone_import_activate_accept(client: TestClient):
     )
     assert ir.status_code == 200, ir.text
 
+    # Activate is deprecated: still records id for API compat, but does NOT
+    # merge zone files into work tree / diff-index auto-compare.
     act = client.post(f"/api/v1/projects/{pid}/zones/{zid}/activate")
     assert act.status_code == 200, act.text
     assert act.json()["active_zone_id"] == zid
+    # Zones marked not-active in list payload (isolated snapshots)
+    assert all(not z0.get("active") for z0 in act.json().get("zones") or [])
 
-    # wait compare
+    # Explorer/diff-index lists work only — zone-only file must not appear.
+    idx = client.get(f"/api/v1/projects/{pid}/diff-index").json()
+    paths = {f["path"] for f in idx["files"]}
+    assert "main.tex" in paths
+    assert "only_zone.tex" not in paths
+    # Zone tree still has the isolated files
+    ztree = client.get(f"/api/v1/projects/{pid}/zones/{zid}/tree").json()
+    zfiles = set(ztree.get("files") or [n["path"] for n in ztree.get("nodes") or []])
+    assert "only_zone.tex" in zfiles
+    assert "main.tex" in zfiles
+
+    # wait compare for work files (optional) — should still become ready for work
     ready = False
     for _ in range(40):
         idx = client.get(f"/api/v1/projects/{pid}/diff-index").json()
         main = next((f for f in idx["files"] if f["path"] == "main.tex"), None)
-        if main and main.get("compare_state") == "ready":
+        if main and main.get("compare_state") in ("ready", "work") or (
+            main and main.get("status") in ("work", "same", "modified", "unknown")
+        ):
             ready = True
             break
         time.sleep(0.05)
     assert ready, idx
 
+    # Work pair does not auto-load zone as right (zones are isolated).
     pair = client.get(f"/api/v1/projects/{pid}/file-pair", params={"path": "main.tex"}).json()
-    assert "bbb" in pair["base"]["content"] or "bbb" in pair["merged"]["content"]
-    assert "XXX" in pair["revised"]["content"]
-    rev = pair["merged"]["revision"]
-
-    r = client.post(
-        f"/api/v1/projects/{pid}/accept",
-        json={
-            "ops": [
-                {
-                    "op_id": "op1",
-                    "file": "main.tex",
-                    "granularity": "word",
-                    "left_range": {
-                        "start_line": 1,
-                        "start_col": 4,
-                        "end_line": 1,
-                        "end_col": 7,
-                    },
-                    "right_range": {
-                        "start_line": 1,
-                        "start_col": 4,
-                        "end_line": 1,
-                        "end_col": 7,
-                    },
-                    "expected_merged_revision": rev,
-                }
-            ]
-        },
+    work_text = (
+        (pair.get("left") or {}).get("content")
+        or pair["merged"]["content"]
+        or pair["base"]["content"]
     )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert "XXX" in body["merged"]["content"]
-
-    # zone content unchanged
+    assert "bbb" in work_text
+    # Zone file still available via zone API for client true-source compare
     zf = client.get(
         f"/api/v1/projects/{pid}/zones/{zid}/file", params={"path": "main.tex"}
     ).json()
     assert "XXX" in (zf.get("content") or "")
 
+    # Client apply path: PUT full work content after "accept" from zone text
+    put = client.put(
+        f"/api/v1/projects/{pid}/work/file",
+        params={"path": "main.tex"},
+        json={"content": "aaa XXX ccc\n", "expected_revision": None},
+    )
+    assert put.status_code == 200, put.text
+
+    # zone content unchanged after writing work
+    zf2 = client.get(
+        f"/api/v1/projects/{pid}/zones/{zid}/file", params={"path": "main.tex"}
+    ).json()
+    assert "XXX" in (zf2.get("content") or "")
+
     # delete zone keeps work
     d = client.delete(f"/api/v1/projects/{pid}/zones/{zid}")
     assert d.status_code == 200
     pair2 = client.get(f"/api/v1/projects/{pid}/file-pair", params={"path": "main.tex"}).json()
-    assert "XXX" in pair2["merged"]["content"]
+    content2 = (
+        (pair2.get("left") or {}).get("content")
+        or pair2["merged"]["content"]
+        or ""
+    )
+    assert "XXX" in content2
 
 
 def test_dual_zip_compat(client: TestClient):

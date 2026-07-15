@@ -43,7 +43,7 @@ const project = useProjectStore();
 const settings = useSettingsStore();
 const compareTarget = useCompareTargetStore();
 const { monacoTheme, wordWrap } = storeToRefs(settings);
-const { sidesSwapped, zones, activeZoneId } = storeToRefs(project);
+const { sidesSwapped, zones } = storeToRefs(project);
 const targetTick = ref(0);
 
 const left = ref("");
@@ -106,11 +106,7 @@ const compareSideLabel = computed(() => {
   const mem = resolvedTarget.value;
   if (!mem) return t("comparer.emptyCompareHint");
   if (mem.kind === "zone") {
-    const z =
-      zones.value.find((x) => x.id === mem.zoneId) ||
-      (activeZoneId.value === mem.zoneId
-        ? { name: t("panels.sideZone") }
-        : null);
+    const z = zones.value.find((x) => x.id === mem.zoneId);
     const name = z?.name || mem.zoneId.slice(0, 8);
     return `${t("comparer.fromZone")}「${name}」 · ${mem.path}`;
   }
@@ -165,9 +161,7 @@ async function loadBoundPath(path: string | null) {
       if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path)) {
         imageUrls.value = {
           work: workFileRawUrl(pid, path),
-          zone: project.activeZoneId
-            ? zoneFileRawUrl(pid, project.activeZoneId, path)
-            : null,
+          zone: null,
         };
         return;
       }
@@ -264,7 +258,6 @@ watch(
     [
       props.tab.path,
       props.tab.kind,
-      project.activeZoneId,
       props.active,
       targetTick.value,
       compareTarget.session,

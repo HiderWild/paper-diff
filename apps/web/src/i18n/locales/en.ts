@@ -182,7 +182,6 @@ export default {
   },
   zones: {
     empty: "No compare zones yet",
-    active: "active",
     rename: "Rename",
     delete: "Delete",
     fromWork: "Snapshot current project",
@@ -191,14 +190,10 @@ export default {
     namePrompt: "Zone name",
     deleteConfirm: "Delete this compare zone?",
     fileCount: "{n} files",
-    activated: "Zone active: {name}",
-    deactivated: "Compare zone cleared",
     snapshotOk: "Snapshot created: {name}",
     importOk: "Imported zone {name} ({n} files)",
     treeEmpty: "No files in this zone",
     toggleTree: "Expand / collapse file tree",
-    setActive: "Set active",
-    activateOnly: "Activate without toggling tree",
   },
   fileActions: {
     add: "Add→project",
@@ -252,7 +247,9 @@ export default {
       "Saved as project default and remembered for this file. Opening other files uses the default source with the current path.",
     rememberedFile: "Remembered for this file",
     rememberedProject: "Project default",
-    needActiveZone: "Activate a compare zone before dropping a zone-side file.",
+    needActiveZone: "Pick a zone file from a zone tree into the compare side.",
+    needZoneId:
+      "Choose a file from a specific compare-zone tree (zones are isolated snapshots).",
     needBothSides:
       "Set both compare sides: project file on the left; use “vs…” or drop a zone/Git file for the right. Diff and accept appear when both are ready.",
     dropWork: "Drop a project file, or use “Add to compare” in the file tree",

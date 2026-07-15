@@ -63,13 +63,14 @@ class ZoneService:
     def list_zones(self, project_id: str) -> dict:
         ws = self._require_project(project_id)
         pmeta = ws.load_meta()
+        # active_zone_id kept in meta for API compat only; UI no longer uses it.
         active = pmeta.get("active_zone_id")
         zones = []
         for zid in ws.list_zone_ids():
             zm = self._load_zone_meta(ws, zid)
             tree = ws.zone_dir(zid)
             n = len(ws.list_files_in(tree)) if tree.exists() else 0
-            zones.append({**zm, "file_count": n, "active": zid == active})
+            zones.append({**zm, "file_count": n, "active": False})
         return {"zones": zones, "active_zone_id": active}
 
     def create_zone(
@@ -118,27 +119,23 @@ class ZoneService:
         return zm
 
     def activate_zone(self, project_id: str, zone_id: str | None) -> dict:
+        """Deprecated no-op-ish stub.
+
+        Compare zones are isolated; there is no global "active zone" that drives
+        the explorer tree or auto-compare. Endpoint remains for older clients and
+        only stores the id without enqueuing work↔zone compare.
+        """
         ws = self._require_project(project_id)
         if zone_id is not None:
             self._load_zone_meta(ws, zone_id)
 
         def mut(meta: dict) -> dict:
+            # Clear on None; otherwise still record last-touched id for legacy fields.
             meta["active_zone_id"] = zone_id
             return meta
 
         ws.mutate_meta(mut)
-        from app.services.compare_service import CompareService
-
-        cmp = CompareService(self.settings)
-        meta = ws.load_meta()
-        meta = cmp.ensure_init_states(ws, meta)
-        ws.save_meta(meta)
-        if zone_id:
-            work = set(ws.list_files("work"))
-            zone_files = set(ws.list_files_in(ws.zone_dir(zone_id)))
-            paths = [p for p in sorted(work | zone_files) if is_text_path(p)]
-            if paths:
-                cmp.enqueue(project_id, paths=paths, include_dot_paths=False)
+        # Intentionally do NOT ensure_init_states / enqueue full tree compare.
         return self.list_zones(project_id)
 
     def import_zone_zip(

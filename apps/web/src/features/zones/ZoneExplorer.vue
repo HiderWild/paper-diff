@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * Compare-zones side panel: list of zones, each expandable into a FileTree.
- * Multiple zones can stay expanded at once (unlike a single "active only" list).
+ * Compare-zones side panel: list of isolated zone snapshots.
+ * Each zone expands into a FileTree; multiple can stay open.
+ * No "active zone" concept — user picks files into the comparer.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -14,7 +15,6 @@ import { getZoneTree } from "../../shared/api";
 const props = defineProps<{
   projectId: string | null;
   zones: Zone[];
-  activeZoneId: string | null;
   busy?: boolean;
   showDotFiles: boolean;
   currentPath: string | null;
@@ -22,12 +22,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:showDotFiles": [value: boolean];
-  activate: [zoneId: string];
   rename: [zoneId: string, name: string];
   delete: [zoneId: string];
   importZone: [];
   fromWork: [];
-  /** Open zone file in editor (read-only intent — path only; source is zone). */
   openFile: [zoneId: string, path: string];
   addToCompare: [zoneId: string, path: string];
   newCompare: [zoneId: string, path: string];
@@ -46,13 +44,9 @@ const treeError = ref<Record<string, string>>({});
 const treeLoading = ref<Record<string, boolean>>({});
 
 const sortedZones = computed(() =>
-  [...props.zones].sort((a, b) => {
-    // Active first, then by name
-    const aa = a.id === props.activeZoneId || a.active ? 0 : 1;
-    const bb = b.id === props.activeZoneId || b.active ? 0 : 1;
-    if (aa !== bb) return aa - bb;
-    return (a.name || a.id).localeCompare(b.name || b.id);
-  })
+  [...props.zones].sort((a, b) =>
+    (a.name || a.id).localeCompare(b.name || b.id)
+  )
 );
 
 async function loadTree(zoneId: string, force = false) {
@@ -68,7 +62,6 @@ async function loadTree(zoneId: string, force = false) {
       kind: n.kind || "text",
       is_dot: n.path.split("/").some((p) => p.startsWith(".")),
     }));
-    // Fallback if API only returns paths list
     if (!files.length && res.files?.length) {
       for (const p of res.files) {
         files.push({
@@ -94,17 +87,7 @@ async function loadTree(zoneId: string, force = false) {
 function toggleZone(zoneId: string) {
   const next = !openZones.value[zoneId];
   openZones.value = { ...openZones.value, [zoneId]: next };
-  // Expand/collapse only — do not call activate (it sets busy + full compare enqueue).
   if (next) void loadTree(zoneId);
-}
-
-function onHeaderActivate(zoneId: string, e: MouseEvent) {
-  // Cmd/Ctrl+click = activate without toggle expand
-  if (e.metaKey || e.ctrlKey) {
-    emit("activate", zoneId);
-    return;
-  }
-  toggleZone(zoneId);
 }
 
 // When zones list refreshes (after import), reload open trees
@@ -117,16 +100,18 @@ watch(
   }
 );
 
-// Auto-expand active zone once when list appears
+// Expand first zone once when list first appears
 watch(
-  () => [props.activeZoneId, props.zones.length] as const,
-  ([aid, n]) => {
-    if (!aid || !n) return;
-    if (openZones.value[aid]) return;
-    // Only auto-open if nothing is expanded yet (first visit)
+  () => props.zones.length,
+  (n, prev) => {
+    if (!n) return;
     if (Object.values(openZones.value).some(Boolean)) return;
-    openZones.value = { ...openZones.value, [aid]: true };
-    void loadTree(aid);
+    if (prev && prev > 0) return;
+    const first = props.zones[0]?.id;
+    if (first) {
+      openZones.value = { ...openZones.value, [first]: true };
+      void loadTree(first);
+    }
   },
   { immediate: true }
 );
@@ -183,10 +168,7 @@ function zoneFiles(zoneId: string): FileMeta[] {
         v-for="z in sortedZones"
         :key="z.id"
         class="zone-block"
-        :class="{
-          active: z.id === activeZoneId || z.active,
-          open: openZones[z.id],
-        }"
+        :class="{ open: openZones[z.id] }"
       >
         <div class="zone-row">
           <button
@@ -195,31 +177,17 @@ function zoneFiles(zoneId: string): FileMeta[] {
             :aria-expanded="!!openZones[z.id]"
             :disabled="busy"
             :title="t('zones.toggleTree')"
-            @click="onHeaderActivate(z.id, $event)"
+            @click="toggleZone(z.id)"
           >
             <span class="chevron" :class="{ open: openZones[z.id] }">
               <span class="chevron-tri" />
             </span>
             <span class="zone-name">{{ z.name }}</span>
-            <span
-              v-if="z.id === activeZoneId || z.active"
-              class="badge modified"
-              >{{ t("zones.active") }}</span
-            >
             <span v-if="z.file_count != null" class="zone-meta">{{
               t("zones.fileCount", { n: z.file_count })
             }}</span>
           </button>
           <div class="zone-ops">
-            <button
-              type="button"
-              class="mini secondary"
-              :disabled="busy"
-              :title="t('zones.activateOnly')"
-              @click.stop="emit('activate', z.id)"
-            >
-              {{ t("zones.setActive") }}
-            </button>
             <button
               type="button"
               class="mini secondary"
@@ -327,9 +295,6 @@ function zoneFiles(zoneId: string): FileMeta[] {
 .zone-block {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
-.zone-block.active > .zone-row {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
 .zone-row {
   display: flex;
   flex-direction: column;
@@ -371,14 +336,6 @@ function zoneFiles(zoneId: string): FileMeta[] {
   flex-wrap: wrap;
   gap: 0.25rem;
   padding-left: 1.4rem;
-}
-.badge {
-  font-size: 0.58rem;
-  padding: 0.05rem 0.25rem;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--green) 28%, var(--panel));
-  color: var(--green);
-  flex-shrink: 0;
 }
 .chevron {
   width: 1.1rem;

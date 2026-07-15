@@ -72,9 +72,7 @@ async function loadBoundPath(path: string | null) {
       if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path)) {
         imageUrls.value = {
           work: workFileRawUrl(pid, path),
-          zone: project.activeZoneId
-            ? zoneFileRawUrl(pid, project.activeZoneId, path)
-            : null,
+          zone: null,
         };
         return;
       }
@@ -95,7 +93,7 @@ async function loadBoundPath(path: string | null) {
 }
 
 watch(
-  () => [props.view.path, props.view.kind, project.activeZoneId] as const,
+  () => [props.view.path, props.view.kind] as const,
   ([path]) => {
     void loadBoundPath(path);
   },

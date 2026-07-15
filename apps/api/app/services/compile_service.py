@@ -283,15 +283,11 @@ class CompileService:
             shutil.rmtree(diff_dir)
         diff_dir.mkdir(parents=True)
 
-        # Left = work, right = active zone (or legacy base/revised)
+        # Left = work, right = legacy dual-zip revised if present (zones are isolated).
         base_c = diff_dir / "base"
         rev_c = diff_dir / "revised"
-        meta = ws.load_meta()
-        zid = meta.get("active_zone_id")
         left_src = ws.work_dir if ws.work_dir.exists() else ws.base_dir
-        if zid and ws.zone_root(zid).exists():
-            right_src = ws.zone_dir(zid)
-        elif ws.revised_dir.exists():
+        if ws.revised_dir.exists():
             right_src = ws.revised_dir
         else:
             right_src = left_src
