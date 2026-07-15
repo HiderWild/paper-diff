@@ -73,11 +73,14 @@ const singlePane = computed(() => {
 const rightResolved = ref(false);
 /** Last successfully loaded compare target (for labels); cleared when load fails. */
 const loadedCompareTarget = ref<CompareTarget | null>(null);
+/** Human-readable last failure (work or compare); empty when ok / pending. */
+const workLoadError = ref("");
+const compareLoadError = ref("");
 
 /** Work path + resolved compare target — show real red/green diff + arrows. */
 const compareReady = computed(() => {
   if (props.tab.kind !== "comparer") return true;
-  return !!(props.tab.path && rightResolved.value);
+  return !!(props.tab.path && rightResolved.value && workLoaded.value);
 });
 
 /** Work side content successfully available (path bound and load finished with content or empty file). */
@@ -102,8 +105,14 @@ const projectSideLabel = computed(() => {
   if (hasWorkSide.value && props.tab.path) {
     return `${t("comparer.fromProject")} · ${props.tab.path}`;
   }
-  if (props.tab.path && !workLoaded.value) {
-    return `${t("comparer.fromProject")} · ${props.tab.path} · ${t("comparer.loadFailedShort")}`;
+  if (props.tab.path && loading.value) {
+    return `${t("comparer.fromProject")} · ${props.tab.path}`;
+  }
+  if (props.tab.path && !project.projectId) {
+    return `${t("comparer.fromProject")} · ${props.tab.path}`;
+  }
+  if (props.tab.path && !workLoaded.value && workLoadError.value) {
+    return `${t("comparer.fromProject")} · ${props.tab.path}`;
   }
   return t("comparer.fromProject");
 });
@@ -139,13 +148,19 @@ async function loadBoundPath(path: string | null) {
   rightResolved.value = false;
   loadedCompareTarget.value = null;
   workLoaded.value = false;
+  workLoadError.value = "";
+  compareLoadError.value = "";
   error.value = "";
   imageUrls.value = null;
   rawUrl.value = null;
   isLegacyDoc.value = false;
   units.value = [];
   if (props.tab.kind === "output") return;
-  if (!project.projectId) return;
+  // Wait for project restore — do not mark "load failed" when id is still null
+  if (!project.projectId) {
+    loading.value = !!path || props.tab.kind === "comparer";
+    return;
+  }
   // Non-comparer tools need a bound path
   if (!path && props.tab.kind !== "comparer") return;
   loading.value = true;
@@ -195,21 +210,31 @@ async function loadBoundPath(path: string | null) {
     // comparer: left=work path (optional), right=remembered target (zone/git, optional)
     // Content load success gates UI labels and panes (no ghost sides after refresh).
     if (path) {
-      try {
-        const wf = await getWorkFileText(pid, path);
-        left.value = project.localBuffers[path] ?? wf.content;
+      if (project.localBuffers[path] != null) {
+        left.value = project.localBuffers[path];
         workLoaded.value = true;
-      } catch {
+      } else {
         try {
-          const pair0 = await getFilePair(pid, path);
-          left.value =
-            project.localBuffers[path] ??
-            pair0.left?.content ??
-            pair0.merged.content;
+          const wf = await getWorkFileText(pid, path);
+          left.value = wf.content ?? "";
           workLoaded.value = true;
-        } catch {
-          left.value = "";
-          workLoaded.value = false;
+        } catch (e1) {
+          try {
+            const pair0 = await getFilePair(pid, path);
+            left.value =
+              pair0.left?.content ?? pair0.merged?.content ?? "";
+            // file-pair may return empty left for missing work; only mark loaded if pair ok
+            workLoaded.value = true;
+          } catch (e2) {
+            left.value = "";
+            workLoaded.value = false;
+            workLoadError.value =
+              e2 instanceof Error
+                ? e2.message
+                : e1 instanceof Error
+                  ? e1.message
+                  : String(e2);
+          }
         }
       }
     } else {
@@ -227,13 +252,23 @@ async function loadBoundPath(path: string | null) {
       if (showPath) {
         try {
           const shown = await gitShow(pid, mem.ref, showPath);
-          right.value = shown.content ?? "";
-          rightResolved.value = true;
-          loadedCompareTarget.value = mem;
-        } catch {
+          // binary git blob: content null — still "resolved" empty with note
+          if (shown.binary) {
+            right.value = "";
+            rightResolved.value = false;
+            loadedCompareTarget.value = null;
+            compareLoadError.value = t("comparer.compareBinary");
+          } else {
+            right.value = shown.content ?? "";
+            rightResolved.value = true;
+            loadedCompareTarget.value = mem;
+          }
+        } catch (e) {
           right.value = "";
           rightResolved.value = false;
           loadedCompareTarget.value = null;
+          compareLoadError.value =
+            e instanceof Error ? e.message : String(e);
         }
       }
     } else if (mem?.kind === "zone") {
@@ -241,14 +276,23 @@ async function loadBoundPath(path: string | null) {
       if (zPath) {
         try {
           const zf = await getZoneFileText(pid, mem.zoneId, zPath);
-          right.value = zf.content;
-          rightResolved.value = true;
-          loadedCompareTarget.value = mem;
-        } catch {
-          // Zone file missing / zone deleted → empty pick side (label not sticky)
+          if (zf.content == null && (zf as { kind?: string }).kind === "binary") {
+            right.value = "";
+            rightResolved.value = false;
+            loadedCompareTarget.value = null;
+            compareLoadError.value = t("comparer.compareBinary");
+          } else {
+            right.value = zf.content ?? "";
+            rightResolved.value = true;
+            loadedCompareTarget.value = mem;
+          }
+        } catch (e) {
+          // Zone file missing / zone deleted → empty pick side
           right.value = "";
           rightResolved.value = false;
           loadedCompareTarget.value = null;
+          compareLoadError.value =
+            e instanceof Error ? e.message : String(e);
         }
       }
     } else {
@@ -284,6 +328,7 @@ watch(
       props.tab.kind,
       props.active,
       targetTick.value,
+      project.projectId,
       compareTarget.session,
       compareTarget.memory,
     ] as const,
@@ -379,7 +424,9 @@ function onAfterMutation(content: string | null) {
         :class="{ swapped: sidesSwapped }"
       >
         <div class="side work-side">
-          <div class="side-label">{{ projectSideLabel }}</div>
+          <div class="side-label" :title="projectSideLabel">
+            {{ projectSideLabel }}
+          </div>
           <MonacoDiff
             v-if="hasWorkSide"
             :key="tab.id + '-work-' + (tab.path || '') + '-t' + targetTick"
@@ -393,6 +440,28 @@ function onAfterMutation(content: string | null) {
             :show-gutter-actions="false"
             @left-change="onLeftChange"
           />
+          <div
+            v-else-if="tab.path && !project.projectId"
+            class="empty side-hint"
+          >
+            {{ t("preview.loading") }}
+          </div>
+          <div
+            v-else-if="tab.path && workLoadError"
+            class="empty drop-hint side-hint pick-panel"
+          >
+            <p class="pick-hint">{{ t("comparer.workLoadFailed") }}</p>
+            <p class="muted tiny err-detail" :title="workLoadError">
+              {{ workLoadError }}
+            </p>
+            <button
+              type="button"
+              class="pick-btn primary"
+              @click="emit('pickProject')"
+            >
+              {{ t("comparer.pickProject") }}
+            </button>
+          </div>
           <div v-else class="empty drop-hint side-hint pick-panel">
             <p class="pick-hint">{{ t("comparer.emptyProjectHint") }}</p>
             <button
@@ -406,7 +475,9 @@ function onAfterMutation(content: string | null) {
           </div>
         </div>
         <div class="side compare-side">
-          <div class="side-label">{{ compareSideLabel }}</div>
+          <div class="side-label" :title="compareSideLabel">
+            {{ compareSideLabel }}
+          </div>
           <MonacoDiff
             v-if="hasCompareSide"
             :key="tab.id + '-cmp-' + targetTick"
@@ -419,6 +490,31 @@ function onAfterMutation(content: string | null) {
             :word-wrap="wordWrap"
             :show-gutter-actions="false"
           />
+          <div
+            v-else-if="compareLoadError"
+            class="empty drop-hint side-hint pick-panel"
+          >
+            <p class="pick-hint">{{ t("comparer.compareLoadFailed") }}</p>
+            <p class="muted tiny err-detail" :title="compareLoadError">
+              {{ compareLoadError }}
+            </p>
+            <div class="pick-row">
+              <button
+                type="button"
+                class="pick-btn"
+                @click="emit('pickZone')"
+              >
+                {{ t("comparer.pickFromZone") }}
+              </button>
+              <button
+                type="button"
+                class="pick-btn"
+                @click="emit('pickGit')"
+              >
+                {{ t("comparer.pickFromGit") }}
+              </button>
+            </div>
+          </div>
           <div v-else class="empty drop-hint side-hint pick-panel">
             <p class="pick-hint">{{ t("comparer.emptyCompareHint") }}</p>
             <div class="pick-row">
@@ -553,6 +649,16 @@ function onAfterMutation(content: string | null) {
   color: var(--muted);
   background: var(--panel-header);
   border-bottom: 1px solid var(--border);
+  /* Single-line path header — no awkward short second line */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.err-detail {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .side-hint {
   flex: 1;

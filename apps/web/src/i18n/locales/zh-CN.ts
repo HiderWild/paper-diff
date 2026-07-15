@@ -270,6 +270,9 @@ export default {
     emptyProjectHint: "尚未绑定项目文件。打开资源树选择一个文件。",
     emptyCompareHint: "尚未绑定对照目标。可从对比区或某个 Git 提交中选择文件。",
     loadFailedShort: "加载失败",
+    workLoadFailed: "工作区文件未能加载（项目未就绪、路径不存在或不是文本）。请重新选择文件。",
+    compareLoadFailed: "对照文件未能加载（区/提交路径不存在或为二进制）。请重新选择对照。",
+    compareBinary: "该对照文件是二进制，文本比较器无法打开。",
   },
   hoverAccept: {
     title: "词/短语差异",
