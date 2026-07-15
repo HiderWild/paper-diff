@@ -86,6 +86,14 @@ export default {
     docLegacyUnsupported:
       "暂不支持预览旧版 .doc（请在 Word 中另存为 .docx 后重试）。.docx 使用浏览器还原渲染，复杂版式可能与 Word 桌面版略有差异。",
   },
+  viewer: {
+    mdPreview: "预览",
+    mdSource: "源码",
+    tableView: "表格",
+    tableMeta: "{cols} 列 · {rows} 行",
+    tableTruncated: "仅显示前 {n} 行",
+    tableEmpty: "空表格",
+  },
   tools: {
     strip: "工具",
     comparer: "比较器",

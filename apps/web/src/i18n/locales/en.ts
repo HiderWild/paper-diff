@@ -86,6 +86,14 @@ export default {
     docLegacyUnsupported:
       "Legacy .doc is not previewable here — re-save as .docx in Word. .docx is rendered in-browser and may differ slightly from desktop Word.",
   },
+  viewer: {
+    mdPreview: "Preview",
+    mdSource: "Source",
+    tableView: "Table",
+    tableMeta: "{cols} cols · {rows} rows",
+    tableTruncated: "first {n} shown",
+    tableEmpty: "Empty table",
+  },
   tools: {
     strip: "Tools",
     comparer: "Comparer",

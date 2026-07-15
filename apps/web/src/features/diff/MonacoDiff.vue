@@ -53,6 +53,8 @@ const props = withDefaults(
     sidesSwapped?: boolean;
     /** Enable word/phrase hover card (default on for diff when word units exist) */
     enableWordHover?: boolean;
+    /** Monaco language id for syntax highlight (default plaintext) */
+    language?: string;
   }>(),
   {
     editableLeft: false,
@@ -62,6 +64,7 @@ const props = withDefaults(
     wordWrap: false,
     sidesSwapped: false,
     enableWordHover: true,
+    language: "plaintext",
   }
 );
 
@@ -519,7 +522,7 @@ function applyDiffAlgorithm() {
 
 function mountEditor() {
   if (!host.value) return;
-  original = monaco.editor.createModel(props.left, "plaintext");
+  original = monaco.editor.createModel(props.left, props.language || "plaintext");
 
   // Editor tool: single CodeEditor → one line-number gutter (no diff overview)
   if (props.singlePane) {
@@ -547,7 +550,7 @@ function mountEditor() {
     return;
   }
 
-  modified = monaco.editor.createModel(props.right, "plaintext");
+  modified = monaco.editor.createModel(props.right, props.language || "plaintext");
   editor = monaco.editor.createDiffEditor(host.value, {
     automaticLayout: true,
     readOnly: !props.editableLeft,
@@ -608,6 +611,20 @@ watch(
     if (!props.singlePane) {
       applyDiffAlgorithm();
       setTimeout(scheduleRecomputeUnits, 150);
+    }
+  }
+);
+
+// Keep model language in sync when path changes (e.g. switching tabs in editor)
+watch(
+  () => props.language,
+  (lang) => {
+    const id = lang || "plaintext";
+    if (original && original.getLanguageId() !== id) {
+      monaco.editor.setModelLanguage(original, id);
+    }
+    if (modified && modified.getLanguageId() !== id) {
+      monaco.editor.setModelLanguage(modified, id);
     }
   }
 );
