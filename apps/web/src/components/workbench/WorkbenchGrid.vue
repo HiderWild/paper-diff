@@ -83,8 +83,17 @@ function highlightFor(colId: string) {
   return null;
 }
 
-/** Resize adjacent columns by dragging vertical gap */
-function onColSashDown(rowId: string, leftColId: string, rightColId: string, e: MouseEvent) {
+/**
+ * Resize using measured pixel widths so 1px mouse = 1px layout.
+ * flex sizes are proportional weights: size' = size * (newPx / startPx)
+ * and the pair keeps sum weight constant.
+ */
+function onColSashDown(
+  rowId: string,
+  leftColId: string,
+  rightColId: string,
+  e: MouseEvent
+) {
   e.preventDefault();
   e.stopPropagation();
   const row = rows.value.find((r) => r.id === rowId);
@@ -92,18 +101,41 @@ function onColSashDown(rowId: string, leftColId: string, rightColId: string, e: 
   const left = columns.value[leftColId];
   const right = columns.value[rightColId];
   if (!left || !right) return;
+
+  const gapEl = e.currentTarget as HTMLElement;
+  const rowEl = gapEl.parentElement;
+  const leftEl = rowEl?.querySelector(
+    `[data-col-id="${leftColId}"]`
+  ) as HTMLElement | null;
+  const rightEl = rowEl?.querySelector(
+    `[data-col-id="${rightColId}"]`
+  ) as HTMLElement | null;
+  const leftPx0 = leftEl?.getBoundingClientRect().width || 0;
+  const rightPx0 = rightEl?.getBoundingClientRect().width || 0;
+  if (leftPx0 < 8 || rightPx0 < 8) return;
+
   const startX = e.clientX;
   const left0 = left.size;
   const right0 = right.size;
   const sum = left0 + right0;
+  const minPx = 120;
 
-  function onMove(ev: MouseEvent) {
+  function onMove(ev: PointerEvent) {
     const dx = ev.clientX - startX;
-    // approx: 1 flex unit ≈ 200px heuristic scaled by sum
-    const delta = dx / 200;
-    let nl = Math.max(0.35, left0 + delta);
-    let nr = Math.max(0.35, sum - nl);
-    nl = sum - nr;
+    let newLeftPx = leftPx0 + dx;
+    let newRightPx = rightPx0 - dx;
+    if (newLeftPx < minPx) {
+      newLeftPx = minPx;
+      newRightPx = leftPx0 + rightPx0 - minPx;
+    }
+    if (newRightPx < minPx) {
+      newRightPx = minPx;
+      newLeftPx = leftPx0 + rightPx0 - minPx;
+    }
+    const totalPx = leftPx0 + rightPx0;
+    // keep weight sum; map px share → weight
+    const nl = Math.max(0.35, (newLeftPx / totalPx) * sum);
+    const nr = Math.max(0.35, sum - nl);
     wb.setColumnSize(leftColId, nl);
     wb.setColumnSize(rightColId, nr);
   }
@@ -122,16 +154,40 @@ function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
   const upper = rows.value.find((r) => r.id === upperRowId);
   const lower = rows.value.find((r) => r.id === lowerRowId);
   if (!upper || !lower) return;
+
+  const gapEl = e.currentTarget as HTMLElement;
+  const gridEl = gapEl.parentElement;
+  const upperEl = gridEl?.querySelector(
+    `[data-row-id="${upperRowId}"]`
+  ) as HTMLElement | null;
+  const lowerEl = gridEl?.querySelector(
+    `[data-row-id="${lowerRowId}"]`
+  ) as HTMLElement | null;
+  const upPx0 = upperEl?.getBoundingClientRect().height || 0;
+  const lowPx0 = lowerEl?.getBoundingClientRect().height || 0;
+  if (upPx0 < 8 || lowPx0 < 8) return;
+
   const startY = e.clientY;
   const u0 = upper.size;
   const l0 = lower.size;
   const sum = u0 + l0;
-  function onMove(ev: MouseEvent) {
+  const minPx = 80;
+
+  function onMove(ev: PointerEvent) {
     const dy = ev.clientY - startY;
-    const delta = dy / 160;
-    let nu = Math.max(0.35, u0 + delta);
-    let nl = Math.max(0.35, sum - nu);
-    nu = sum - nl;
+    let newUp = upPx0 + dy;
+    let newLow = lowPx0 - dy;
+    if (newUp < minPx) {
+      newUp = minPx;
+      newLow = upPx0 + lowPx0 - minPx;
+    }
+    if (newLow < minPx) {
+      newLow = minPx;
+      newUp = upPx0 + lowPx0 - minPx;
+    }
+    const totalPx = upPx0 + lowPx0;
+    const nu = Math.max(0.35, (newUp / totalPx) * sum);
+    const nl = Math.max(0.35, sum - nu);
     wb.setRowSize(upperRowId, nu);
     wb.setRowSize(lowerRowId, nl);
   }
@@ -162,7 +218,11 @@ function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
           onRowSashDown(rows[ri - 1].id, row.id, $event)
         "
       />
-      <div class="wb-row" :style="{ flex: `${row.size} 1 0` }">
+      <div
+        class="wb-row"
+        :data-row-id="row.id"
+        :style="{ flex: `${row.size} 1 0` }"
+      >
         <template v-for="(colId, ci) in row.columnIds" :key="colId">
           <div
             v-if="ci > 0"
@@ -188,13 +248,19 @@ function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
               )
             "
           />
-          <WorkbenchColumn
+          <div
             v-if="columns[colId]"
-            :column="columns[colId]"
-            :highlight="highlightFor(colId)"
-            @file-drop="(tabId, path) => emit('fileDrop', tabId, path)"
-            @invalid-drop="(msg) => emit('invalidDrop', msg)"
-          />
+            class="wb-col-host"
+            :data-col-id="colId"
+            :style="{ flex: `${columns[colId].size} 1 0`, minWidth: 0, minHeight: 0, display: 'flex' }"
+          >
+            <WorkbenchColumn
+              :column="columns[colId]"
+              :highlight="highlightFor(colId)"
+              @file-drop="(tabId, path) => emit('fileDrop', tabId, path)"
+              @invalid-drop="(msg) => emit('invalidDrop', msg)"
+            />
+          </div>
         </template>
       </div>
     </template>
