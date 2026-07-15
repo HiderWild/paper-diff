@@ -18,7 +18,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  fileDrop: [tabId: string, path: string];
+  fileDrop: [tabId: string, path: string, side?: "work" | "zone"];
   invalidDrop: [message: string];
 }>();
 
@@ -160,6 +160,9 @@ function onDrop(e: DragEvent) {
   const path =
     e.dataTransfer?.getData("application/x-paper-diff-path") ||
     e.dataTransfer?.getData("text/plain");
+  const sideRaw = e.dataTransfer?.getData("application/x-paper-diff-side");
+  const side =
+    sideRaw === "zone" || sideRaw === "work" ? sideRaw : ("work" as const);
   if (
     path &&
     !path.startsWith("tab:") &&
@@ -167,39 +170,35 @@ function onDrop(e: DragEvent) {
     !path.startsWith("tool:")
   ) {
     const tab = activeTab.value;
-    if (tab && toolAcceptsPath(tab.kind, path)) {
-      emit("fileDrop", tab.id, path);
+    if (tab && tab.kind === "comparer") {
+      // Always allow path drop onto comparer; side decides work vs zone
+      emit("fileDrop", tab.id, path, side);
       wb.setDropPreview(null);
       return;
     }
-    // Empty / wrong tool: open a matching tool for this file kind
+    if (tab && toolAcceptsPath(tab.kind, path)) {
+      emit("fileDrop", tab.id, path, side);
+      wb.setDropPreview(null);
+      return;
+    }
+    // Empty / wrong tool: open matching tool (text → editor by default)
     const fk = wb.fileKindForPath(path);
     const kind: ToolKind =
       fk === "pdf"
         ? "pdf"
         : fk === "word"
           ? "word"
-          : fk === "text" || fk === "other"
-            ? "comparer"
+          : fk === "image"
+            ? "editor"
             : "editor";
-    if (fk === "image") {
-      // images go to editor body image preview path — use editor
-      const opened = wb.openTool("editor", path);
-      if (opened) emit("fileDrop", opened.id, path);
+    const empty = Object.values(wb.tabs).find(
+      (x) => x.kind === kind && !x.path
+    );
+    if (empty) {
+      emit("fileDrop", empty.id, path, side);
     } else {
-      const empty = Object.values(wb.tabs).find(
-        (x) => x.kind === kind && !x.path
-      );
-      if (empty) {
-        emit("fileDrop", empty.id, path);
-      } else if (tab && !tab.path && toolAcceptsPath(tab.kind, path) === false) {
-        // replace not allowed — open new
-        const opened = wb.openTool(kind, path);
-        if (opened) wb.bindPath(opened.id, path);
-      } else {
-        const opened = wb.openTool(kind, path);
-        if (opened) wb.bindPath(opened.id, path);
-      }
+      const opened = wb.openTool(kind, path);
+      if (opened) emit("fileDrop", opened.id, path, side);
     }
   }
   wb.setDropPreview(null);

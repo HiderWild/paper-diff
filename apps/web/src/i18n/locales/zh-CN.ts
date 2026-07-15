@@ -242,6 +242,7 @@ export default {
       "将记为项目默认，并为本文件单独记忆。打开其他文件时使用项目默认源、路径随当前文件。",
     rememberedFile: "已记住 · 本文件",
     rememberedProject: "已记住 · 项目默认",
+    needActiveZone: "请先激活一个比较区，才能将文件放到对照侧。",
   },
   gutter: {
     pullLine: "拉取此行（对照 → 项目）",
@@ -255,6 +256,7 @@ export default {
     compareDir: "比较此目录（点目录默认不比较，点此启用）",
     collapseAll: "全部折叠",
     expandTop: "展开顶层",
+    newCompare: "新建比较",
   },
   store: {
     ready: "就绪",

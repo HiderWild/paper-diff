@@ -17,6 +17,7 @@ import {
   useWorkbenchStore,
   type ToolKind,
 } from "./stores/workbench";
+import { useCompareTargetStore } from "./stores/compareTarget";
 
 const { t } = useI18n();
 const store = useProjectStore();
@@ -25,6 +26,7 @@ const settings = useSettingsStore();
 settings.init();
 const workbench = useWorkbenchStore();
 workbench.ensureSeed();
+const compareTarget = useCompareTargetStore();
 const {
   projectId,
   files,
@@ -221,8 +223,16 @@ function onGlobalKey(e: KeyboardEvent) {
   }
 }
 
-/** Block browser default context menu inside the app (custom menus later). */
+/**
+ * Block browser default context menu, except nodes that opt into custom menus
+ * (e.g. tree file rows emit their own menu).
+ */
 function onAppContextMenu(e: MouseEvent) {
+  const el = e.target as HTMLElement | null;
+  // Allow custom tree menus (and future app menus) to handle themselves
+  if (el?.closest?.("[data-allow-context-menu], .tree-ctx-menu")) {
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
 }
@@ -712,47 +722,26 @@ function onOpenTool(kind: ToolKind) {
   workbench.openTool(kind, null);
 }
 
-/** Click in tree: bind into a suitable tab (active if compatible, else new). */
+/** Click in tree: text → editor; pdf/word → preview (not comparer by default). */
 function onTreeOpen(path: string) {
   void store.openFile(path);
   const fk = workbench.fileKindForPath(path);
-  let tool: ToolKind =
-    fk === "pdf"
-      ? "pdf"
-      : fk === "word"
-        ? "word"
-        : fk === "image"
-          ? "editor"
-          : "comparer";
+  const tool: ToolKind =
+    fk === "pdf" ? "pdf" : fk === "word" ? "word" : "editor";
 
-  // PDF/Word always prefer dedicated preview tool (don't stick on wrong focused tab)
-  if (tool === "pdf" || tool === "word") {
-    const empty = workbench.allTabs.find((v) => v.kind === tool && !v.path);
-    if (empty) {
-      workbench.bindPath(empty.id, path);
-      return;
-    }
-    const any = workbench.allTabs.find((v) => v.kind === tool);
-    if (any) {
-      workbench.bindPath(any.id, path);
-      return;
-    }
-    workbench.openTool(tool, path);
-    return;
-  }
-
-  const focused = workbench.focusedTab;
-  if (focused && workbench.toolAcceptsPath(focused.kind, path)) {
-    workbench.bindPath(focused.id, path);
-    return;
-  }
+  // Prefer empty/matching tool of the right kind
   const empty = workbench.allTabs.find((v) => v.kind === tool && !v.path);
   if (empty) {
     workbench.bindPath(empty.id, path);
     return;
   }
-  const any = workbench.allTabs.find((v) =>
-    workbench.toolAcceptsPath(v.kind, path)
+  const focused = workbench.focusedTab;
+  if (focused && focused.kind === tool && workbench.toolAcceptsPath(tool, path)) {
+    workbench.bindPath(focused.id, path);
+    return;
+  }
+  const any = workbench.allTabs.find(
+    (v) => v.kind === tool && workbench.toolAcceptsPath(v.kind, path)
   );
   if (any) {
     workbench.bindPath(any.id, path);
@@ -761,14 +750,89 @@ function onTreeOpen(path: string) {
   workbench.openTool(tool, path);
 }
 
-function onWorkbenchFileDrop(tabId: string, path: string) {
+/**
+ * Context menu "New compare":
+ * - work source → work path on project (left) side
+ * - zone source → same path as zone target (right) when possible
+ */
+function onTreeNewCompare(path: string, source: "work" | "zone" = "work") {
+  const fk = workbench.fileKindForPath(path);
+  if (fk === "pdf" || fk === "word" || fk === "image") {
+    workbench.toast(
+      t("tools.unsupportedFile", {
+        tool: t("tools.comparer"),
+        file: path,
+      }),
+      "warn"
+    );
+    return;
+  }
+  void store.openFile(path);
+  const tab = workbench.openTool("comparer", path);
+  if (!tab) return;
+  workbench.bindPath(tab.id, path);
+  if (source === "zone" && store.activeZoneId) {
+    compareTarget.setForProject(
+      store.projectId,
+      { kind: "zone", zoneId: store.activeZoneId, path },
+      path
+    );
+  } else if (source === "work" && store.activeZoneId) {
+    // Work on left; keep/seed zone same-path as default right if available
+    compareTarget.setForProject(
+      store.projectId,
+      { kind: "zone", zoneId: store.activeZoneId, path },
+      path
+    );
+  }
+}
+
+function onWorkbenchFileDrop(
+  tabId: string,
+  path: string,
+  side?: "work" | "zone"
+) {
   let tab = workbench.getTab(tabId);
   if (!tab) return;
+
+  // Comparer: replace work (left path) or zone (compare target) side
+  if (tab.kind === "comparer") {
+    const origin = side || "work";
+    if (origin === "zone") {
+      if (!store.activeZoneId) {
+        workbench.toast(t("comparer.needActiveZone"), "warn");
+        return;
+      }
+      // Keep work path if already bound; only set zone target
+      const workPath = tab.path || path;
+      if (!tab.path) workbench.bindPath(tab.id, workPath);
+      compareTarget.setForProject(
+        store.projectId,
+        { kind: "zone", zoneId: store.activeZoneId, path },
+        workPath
+      );
+      // Ensure work path stays set; ToolBody watches compareTarget memory deeply
+      workbench.bindPath(tab.id, workPath);
+      workbench.focusTab(tab.id);
+      return;
+    }
+    // work side
+    const ok = workbench.bindPathWithMessage(
+      tab.id,
+      path,
+      t("tools.unsupportedFile", {
+        tool: t("tools.comparer"),
+        file: path,
+      })
+    );
+    if (ok) void store.openFile(path);
+    return;
+  }
+
   if (!workbench.toolAcceptsPath(tab.kind, path)) {
-    // open/focus correct tool instead of dead drop
     const fk = workbench.fileKindForPath(path);
     const kind: ToolKind =
-      fk === "pdf" ? "pdf" : fk === "word" ? "word" : "comparer";
+      fk === "pdf" ? "pdf" : fk === "word" ? "word" : "editor";
     const empty = workbench.allTabs.find((v) => v.kind === kind && !v.path);
     if (empty) {
       tabId = empty.id;
@@ -1015,10 +1079,12 @@ function formatCommitDate(iso?: string) {
             :show-dot-files="showDotFiles"
             :busy="busy"
             :draggable-title="true"
+            file-source="work"
             @update:show-dot-files="showDotFiles = $event"
             @open="onTreeOpen($event)"
             @action="(p, a) => store.doAcceptFile(p, a)"
             @compare-dir="store.doEnqueueDir($event)"
+            @new-compare="(p) => onTreeNewCompare(p, 'work')"
             @hide="layout.toggleFiles()"
             @title-drag-start="onPaneDragStart('files', $event)"
             @title-drag-end="onPaneDragEnd"
@@ -1508,7 +1574,9 @@ function formatCommitDate(iso?: string) {
       >
         <div class="work-views-host">
           <WorkbenchGrid
-            @file-drop="onWorkbenchFileDrop"
+            @file-drop="
+              (tabId, path, side) => onWorkbenchFileDrop(tabId, path, side)
+            "
             @invalid-drop="(msg) => workbench.toast(msg, 'warn')"
           />
         </div>

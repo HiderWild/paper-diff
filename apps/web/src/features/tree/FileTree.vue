@@ -9,19 +9,25 @@ import {
 } from "./buildTree";
 import TreeNodeView from "./TreeNodeView.vue";
 
-const props = defineProps<{
-  files: FileMeta[];
-  currentPath: string | null;
-  showDotFiles: boolean;
-  busy?: boolean;
-  /** Allow dragging the toolbar title to rearrange workbench panes */
-  draggableTitle?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    files: FileMeta[];
+    currentPath: string | null;
+    showDotFiles: boolean;
+    busy?: boolean;
+    /** Allow dragging the toolbar title to rearrange workbench panes */
+    draggableTitle?: boolean;
+    /** Drag origin for comparers: work project tree vs zone tree */
+    fileSource?: "work" | "zone";
+  }>(),
+  { fileSource: "work" }
+);
 
 const emit = defineEmits<{
   open: [path: string];
   action: [path: string, action: "add" | "delete" | "replace_all"];
   compareDir: [prefix: string];
+  newCompare: [path: string];
   "update:showDotFiles": [value: boolean];
   hide: [];
   titleDragStart: [e: DragEvent];
@@ -127,6 +133,52 @@ function onTreeScroll() {
 onBeforeUnmount(() => {
   if (scrollHideTimer) clearTimeout(scrollHideTimer);
 });
+
+const ctxMenu = ref<{
+  x: number;
+  y: number;
+  path: string;
+} | null>(null);
+
+function onFileContext(path: string, e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  ctxMenu.value = { x: e.clientX, y: e.clientY, path };
+}
+
+function closeCtx() {
+  ctxMenu.value = null;
+}
+
+function ctxNewCompare() {
+  if (!ctxMenu.value) return;
+  const p = ctxMenu.value.path;
+  closeCtx();
+  emit("newCompare", p);
+}
+
+function onDocClick() {
+  closeCtx();
+}
+
+watch(ctxMenu, (m) => {
+  if (m) {
+    window.addEventListener("click", onDocClick, true);
+    window.addEventListener("keydown", onEscClose, true);
+  } else {
+    window.removeEventListener("click", onDocClick, true);
+    window.removeEventListener("keydown", onEscClose, true);
+  }
+});
+
+function onEscClose(e: KeyboardEvent) {
+  if (e.key === "Escape") closeCtx();
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener("click", onDocClick, true);
+  window.removeEventListener("keydown", onEscClose, true);
+});
 </script>
 
 <template>
@@ -196,12 +248,27 @@ onBeforeUnmount(() => {
         :status-label="statusLabel"
         :file-actions="fileActions"
         :t-compare="t('tree.compareDir')"
+        :file-source="fileSource"
         @toggle="toggle"
         @open="emit('open', $event)"
         @action="onAction"
         @compare-dir="emit('compareDir', $event)"
+        @file-context="onFileContext"
       />
     </div>
+    <Teleport to="body">
+      <div
+        v-if="ctxMenu"
+        class="tree-ctx-menu"
+        :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button type="button" class="tree-ctx-item" @click="ctxNewCompare">
+          {{ t("tree.newCompare") }}
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -299,5 +366,33 @@ onBeforeUnmount(() => {
   color: var(--muted);
   padding: 0.75rem;
   font-size: 0.85rem;
+}
+</style>
+
+<style>
+.tree-ctx-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 10rem;
+  padding: 0.25rem;
+  background: var(--panel, #1a2332);
+  border: 1px solid var(--border, #2d3a4d);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.tree-ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text, #e7ecf3);
+  border: none;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.tree-ctx-item:hover {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 25%, transparent);
 }
 </style>
