@@ -104,6 +104,21 @@ export async function createProject(): Promise<{ id: string; status: string }> {
   return parse(await fetch(`${BASE()}/api/v1/projects`, { method: "POST" }));
 }
 
+export type ProjectListItem = {
+  id: string;
+  status: string;
+  model?: string;
+  root_file?: string | null;
+  active_zone_id?: string | null;
+  zone_count?: number;
+  work_file_count?: number;
+  updated_at?: number;
+};
+
+export async function listProjects(): Promise<{ projects: ProjectListItem[] }> {
+  return parse(await fetch(`${BASE()}/api/v1/projects`));
+}
+
 export async function getProject(projectId: string): Promise<ProjectDetail> {
   return parse(await fetch(`${BASE()}/api/v1/projects/${projectId}`));
 }

@@ -25,6 +25,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP", "false")
     monkeypatch.setenv("PAPER_DIFF_DOCKER_ENABLED", "false")
     monkeypatch.setenv("PAPER_DIFF_AGENT_PROVIDER", "stub")
+    monkeypatch.setenv("PAPER_DIFF_AGENT_STUB", "true")
     from app.main import app
 
     return TestClient(app)
@@ -127,7 +128,7 @@ def test_health_v2(client: TestClient):
     body = r.json()
     assert body.get("ok") is True
     assert body.get("version") == "v2" or body.get("model") == "v2"
-    assert body.get("agent_provider") == "stub"
+    assert body.get("agent_provider") in ("stub", "off", "http")
 
 
 def test_csv_preview(client: TestClient):

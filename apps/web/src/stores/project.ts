@@ -36,6 +36,7 @@ import {
   importWorkZip,
   importZoneFiles,
   importZoneZip,
+  listProjects,
   listZones,
   pdfUrl,
   renameZone,
@@ -336,6 +337,14 @@ export const useProjectStore = defineStore("project", () => {
   }
 
   async function afterImport(detail: ProjectDetail) {
+    if (detail.id) {
+      projectId.value = detail.id;
+      try {
+        localStorage.setItem("paper-diff-last-project-id", detail.id);
+      } catch {
+        /* ignore */
+      }
+    }
     await applyProjectDetail(detail);
     await refreshZones();
     await refreshIndex();
@@ -759,10 +768,42 @@ export const useProjectStore = defineStore("project", () => {
 
   function setProjectId(id: string) {
     projectId.value = id;
+    try {
+      localStorage.setItem("paper-diff-last-project-id", id);
+    } catch {
+      /* ignore */
+    }
     startPolling();
     void refreshProjectMeta();
     void refreshZones();
     void refreshIndex();
+  }
+
+  async function restoreLastProject(): Promise<boolean> {
+    try {
+      const last = localStorage.getItem("paper-diff-last-project-id");
+      const listed = await listProjects();
+      const projects = listed.projects || [];
+      if (!projects.length) return false;
+      let pick = projects[0]?.id;
+      if (last && projects.some((p) => p.id === last)) pick = last;
+      if (!pick) return false;
+      projectId.value = pick;
+      await applyProjectDetail(await getProject(pick));
+      await refreshZones();
+      await refreshIndex();
+      startPolling();
+      void refreshAgentProvider();
+      const first =
+        files.value.find((f) => f.status === "modified") ||
+        files.value.find((f) => f.kind === "text") ||
+        files.value[0];
+      if (first) await openFile(first.path);
+      status.value = t("store.project", { id: pick });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async function refreshGitStatus() {
@@ -1225,6 +1266,7 @@ export const useProjectStore = defineStore("project", () => {
     exportUrl,
     reportUrl,
     setProjectId,
+    restoreLastProject,
     refreshGitStatus,
     refreshGitLog,
     doGitCommit,

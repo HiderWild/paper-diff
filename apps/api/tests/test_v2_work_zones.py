@@ -25,6 +25,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PAPER_DIFF_WORKSPACE_ROOT", str(tmp_path / "ws"))
     monkeypatch.setenv("PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP", "false")
     monkeypatch.setenv("PAPER_DIFF_DOCKER_ENABLED", "false")
+    monkeypatch.setenv("PAPER_DIFF_AGENT_PROVIDER", "off")
     from app.main import app
 
     return TestClient(app)
@@ -193,19 +194,29 @@ def test_local_git_commit_log(client: TestClient):
     assert st.get("mode") in ("local", "external", "none") or st.get("repo") is not None
 
 
-def test_agent_stub(client: TestClient):
+def test_agent_default_off(client: TestClient, monkeypatch):
+    monkeypatch.setenv("PAPER_DIFF_AGENT_PROVIDER", "off")
+    monkeypatch.setenv("PAPER_DIFF_AGENT_STUB", "false")
     pid = client.post("/api/v1/projects").json()["id"]
     r = client.post(
         f"/api/v1/projects/{pid}/agent/analyze",
         json={"path": "main.tex", "left_text": "a", "right_text": "ab"},
     )
     assert r.status_code == 200
-    body = r.json()
-    # default provider is stub → structured analysis
-    assert body["status"] == "ok"
-    assert body.get("provider") == "stub"
-    assert "summary" in body
-    assert "left_strengths" in body
+    assert r.json()["status"] == "not_configured"
+
+
+def test_list_projects_persists(client: TestClient):
+    pid = client.post("/api/v1/projects").json()["id"]
+    work = _zip_bytes({"main.tex": "hi\n"})
+    client.post(
+        f"/api/v1/projects/{pid}/work/import/zip",
+        files={"work": ("w.zip", work, "application/zip")},
+    )
+    listed = client.get("/api/v1/projects").json()
+    ids = [p["id"] for p in listed["projects"]]
+    assert pid in ids
+    assert listed["projects"][0]["work_file_count"] >= 1
 
 
 def test_git_diff_show_zone_from_commit_restore(client: TestClient):

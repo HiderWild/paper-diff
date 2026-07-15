@@ -61,9 +61,10 @@ vi.mock("../shared/api", async () => {
     }),
     getHealth: vi.fn(async () => ({
       ok: true,
-      agent_provider: "stub",
+      agent_provider: "off",
       model: "v2",
     })),
+    listProjects: vi.fn(async () => ({ projects: [] })),
     csvPreview: vi.fn(async () => ({
       changed_rows: 1,
       changes: [{ row: 0, status: "modified", left: "1,2", right: "1,3" }],
@@ -151,7 +152,7 @@ describe("project store hardening", () => {
   it("refreshAgentProvider sets badge", async () => {
     const s = useProjectStore();
     await s.refreshAgentProvider();
-    expect(s.agentProvider).toBe("stub");
+    expect(s.agentProvider).toBe("off");
   });
 
   it("openFile image sets imagePreview", async () => {

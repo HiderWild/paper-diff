@@ -237,6 +237,7 @@ watch(sidesSwapped, () => {
 
 onMounted(() => {
   void store.refreshAgentProvider();
+  void store.restoreLastProject();
   window.addEventListener("keydown", onGlobalKey);
 });
 

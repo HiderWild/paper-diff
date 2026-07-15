@@ -11,12 +11,12 @@ class Settings(BaseSettings):
     compile_timeout_s: int = 120
     tex_image: str = "paper-diff-texlive:latest"
     docker_enabled: bool = True
-    # Dev-friendly: wipe project workspaces (uploads/artifacts) on API startup.
-    # Set PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP=false to keep projects across restarts.
-    clear_workspace_on_startup: bool = True
-    # Agent: stub | off | http
-    agent_provider: str = "stub"
-    agent_stub: bool = True
+    # Keep projects across API restarts by default (work + zones on disk).
+    # Set PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP=true only for disposable dev wipes.
+    clear_workspace_on_startup: bool = False
+    # Agent: off (default) | http | stub (tests/dev only — set explicitly)
+    agent_provider: str = "off"
+    agent_stub: bool = False
     agent_api_key: str | None = None
     agent_http_url: str | None = None
     api_version: str = "v2"
