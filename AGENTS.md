@@ -20,7 +20,10 @@
 ## Architecture pointers
 
 - Spec: `docs/superpowers/specs/2026-07-15-paper-diff-design.md`
+- Plan status: `docs/superpowers/plans/2026-07-15-paper-diff-implementation.md`
 - Merge line/col: `apps/api/app/domain/merge_engine.py`
 - Accept/import: `apps/api/app/services/project_service.py`
-- Compile: `apps/api/app/services/compile_service.py`
+- Compile async/SSE/latexdiff: `apps/api/app/services/compile_service.py`
 - Sentence mapper: `apps/web/src/features/diff/sentenceMapper.ts`
+- Pinia store: `apps/web/src/stores/project.ts`
+- Embed: `apps/web/src/embed.ts` → `mountPaperDiff`

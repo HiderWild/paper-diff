@@ -9,6 +9,8 @@ RUN apt-get update \
         texlive-latex-recommended \
         texlive-fonts-recommended \
         latexmk \
+        latexdiff \
+        bash \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

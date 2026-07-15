@@ -68,12 +68,42 @@ UI toolbar also has repo / base / revised / subdir fields.
 
 ## Workflow
 
-1. Upload `base.zip` + `revised.zip` (same relative tree).  
+1. Upload `base.zip` + `revised.zip` (or Import git dual refs).  
 2. Open a modified `.tex` in the file list.  
 3. Accept sentence / word / hunk chips (right → left merged).  
-4. Undo / Accept file / Export merged zip.  
-5. Compile merged tree with latexmk in Docker → PDF preview.
+4. File-level ops: Add / Delete / Replace all from the file tree.  
+5. Undo / Export merged zip / Accept report JSON.  
+6. Compile merged tree (async) with latexmk in Docker → PDF; optional **latexdiff PDF**.  
+7. Toggle auto-compile (debounced after accept). Click compile errors to jump.
 
-## Fixture idea
+## Embed into a host app
 
-Create two small multi-file trees under `fixtures/` and zip them for manual QA.
+```ts
+import { mountPaperDiff } from "./src/embed";
+
+const handle = mountPaperDiff(document.getElementById("root")!, {
+  apiBase: "http://127.0.0.1:8000",
+  projectId: undefined, // or existing id
+  autoCompile: true,
+});
+// handle.destroy()
+```
+
+## API highlights
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/api/v1/projects` | create |
+| POST | `.../versions/upload` | base+revised zip |
+| POST | `.../versions/git` | dual ref |
+| POST | `.../accept` | range ops |
+| POST | `.../accept-file` | add/delete/replace_all |
+| POST | `.../compile` | async latexmk |
+| POST | `.../compile/latexdiff` | annotated PDF side path |
+| GET | `.../events` | SSE |
+| GET | `.../export/merged.zip` | |
+| GET | `.../export/accept-report.json` | |
+
+## Fixture
+
+`fixtures/sample-base.zip` / `sample-revised.zip` and trees under `fixtures/sample/`.

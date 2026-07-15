@@ -48,3 +48,9 @@ class GitImportRequest(BaseModel):
     revised_ref: str
     subdir: str | None = None
 
+
+class AcceptFileRequest(BaseModel):
+    path: str
+    action: Literal["add", "delete", "replace_all"]
+
+
