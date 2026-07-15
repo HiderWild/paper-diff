@@ -19,8 +19,14 @@ const props = withDefaults(
     draggableTitle?: boolean;
     /** Drag origin for comparers: work project tree vs zone tree */
     fileSource?: "work" | "zone";
+    /** Hide toolbar (embedded under a zone header) */
+    hideToolbar?: boolean;
+    /** Compact layout for nested zone trees */
+    compact?: boolean;
+    /** When source is zone, optional id embedded in drag payload */
+    zoneId?: string | null;
   }>(),
-  { fileSource: "work" }
+  { fileSource: "work", hideToolbar: false, compact: false, zoneId: null }
 );
 
 const emit = defineEmits<{
@@ -200,8 +206,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="file-tree">
+  <div class="file-tree" :class="{ compact }">
     <div
+      v-if="!hideToolbar"
       class="tree-toolbar"
       :class="{ 'tree-toolbar-drag': draggableTitle }"
       :draggable="!!draggableTitle"
@@ -254,7 +261,9 @@ onBeforeUnmount(() => {
       :class="{ 'scroll-visible': scrollVisible }"
       @scroll.passive="onTreeScroll"
     >
-      <div v-if="!tree.length" class="tree-empty">{{ t("tree.empty") }}</div>
+      <div v-if="!tree.length" class="tree-empty">
+        {{ compact ? t("zones.treeEmpty") : t("tree.empty") }}
+      </div>
       <TreeNodeView
         v-for="n in tree"
         :key="n.path + n.type"
@@ -267,6 +276,9 @@ onBeforeUnmount(() => {
         :file-actions="fileActions"
         :t-compare="t('tree.compareDir')"
         :file-source="fileSource"
+        :zone-id="zoneId"
+        :hide-file-actions="fileSource === 'zone'"
+        :hide-compare-dir="fileSource === 'zone'"
         @toggle="toggle"
         @open="emit('open', $event)"
         @action="onAction"
@@ -323,6 +335,10 @@ onBeforeUnmount(() => {
   min-height: 0;
   height: 100%;
   flex: 1;
+}
+.file-tree.compact {
+  height: auto;
+  flex: none;
 }
 .tree-toolbar {
   display: flex;

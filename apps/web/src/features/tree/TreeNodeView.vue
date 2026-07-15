@@ -15,8 +15,16 @@ withDefaults(
     ) => Array<{ label: string; action: "add" | "delete" | "replace_all" }>;
     tCompare: string;
     fileSource?: "work" | "zone";
+    zoneId?: string | null;
+    hideFileActions?: boolean;
+    hideCompareDir?: boolean;
   }>(),
-  { fileSource: "work" }
+  {
+    fileSource: "work",
+    zoneId: null,
+    hideFileActions: false,
+    hideCompareDir: false,
+  }
 );
 
 const emit = defineEmits<{
@@ -51,6 +59,7 @@ function iconFor(node: TreeNode) {
       </span>
       <span class="tree-name dir-name">{{ node.name }}</span>
       <button
+        v-if="!hideCompareDir"
         class="cmp-btn"
         type="button"
         :disabled="busy"
@@ -73,6 +82,9 @@ function iconFor(node: TreeNode) {
         :file-actions="fileActions"
         :t-compare="tCompare"
         :file-source="fileSource"
+        :zone-id="zoneId"
+        :hide-file-actions="hideFileActions"
+        :hide-compare-dir="hideCompareDir"
         @toggle="emit('toggle', $event)"
         @open="emit('open', $event)"
         @action="(p, a) => emit('action', p, a)"
@@ -104,6 +116,11 @@ function iconFor(node: TreeNode) {
           'application/x-paper-diff-side',
           fileSource || 'work'
         );
+        if (zoneId)
+          ($event as DragEvent).dataTransfer?.setData(
+            'application/x-paper-diff-zone-id',
+            zoneId
+          );
         ($event as DragEvent).dataTransfer?.setData('text/plain', node.path);
         if (($event as DragEvent).dataTransfer)
           ($event as DragEvent).dataTransfer!.effectAllowed = 'copy';
@@ -138,7 +155,7 @@ function iconFor(node: TreeNode) {
       </span>
     </div>
     <div
-      v-if="fileActions(node.file?.status).length"
+      v-if="!hideFileActions && fileActions(node.file?.status).length"
       class="file-ops"
       :style="{ paddingLeft: `${28 + depth * 12}px` }"
     >

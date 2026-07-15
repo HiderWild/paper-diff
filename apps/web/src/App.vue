@@ -10,6 +10,7 @@ import ToolStrip from "./components/ToolStrip.vue";
 import WorkbenchGrid from "./components/workbench/WorkbenchGrid.vue";
 import SettingsPanel from "./features/settings/SettingsPanel.vue";
 import FileTree from "./features/tree/FileTree.vue";
+import ZoneExplorer from "./features/zones/ZoneExplorer.vue";
 import { useLayoutStore, type ActivityId, type MainPaneId } from "./stores/layout";
 import { useProjectStore } from "./stores/project";
 import { useSettingsStore } from "./stores/settings";
@@ -328,14 +329,23 @@ onBeforeUnmount(() => {
   document.removeEventListener("contextmenu", onAppContextMenu, true);
 });
 
-function openImportModal() {
+/** Forced target when opening import from a specific panel; null = auto. */
+const importTargetOverride = ref<"project" | "zone" | null>(null);
+
+function openImportModal(target?: "project" | "zone" | Event) {
   importServerDryRun.value = null;
+  // Ignore DOM event when bound as @click="openImportModal"
+  const t =
+    target === "project" || target === "zone" ? target : null;
+  importTargetOverride.value = t;
   importOpen.value = true;
 }
 
-const importTarget = computed<"project" | "zone">(() =>
-  projectId.value ? "zone" : "project"
-);
+const importTarget = computed<"project" | "zone">(() => {
+  if (importTargetOverride.value) return importTargetOverride.value;
+  // Explorer / toolbar: prefer zone when a project already exists
+  return projectId.value ? "zone" : "project";
+});
 
 async function onImportAnalyze(paths: string[]) {
   importServerDryRun.value = null;
@@ -395,8 +405,13 @@ async function onImportConfirm(payload: {
   if (payload.method === "zip" && payload.zip) {
     await store.doAddZoneZip(payload.zip, payload.name);
   } else if (payload.files.length) {
-    await store.doAddZoneFiles(payload.files, payload.name);
+    await store.doAddZoneFiles(payload.files, payload.name, payload.paths);
+  } else {
+    workbench.toast(t("importModal.noFiles"), "warn");
+    return;
   }
+  // Jump to zones panel so the new zone is visible with its tree
+  openActivity("zones");
 }
 
 async function onAccept(unit: (typeof units.value)[0]) {
@@ -651,7 +666,29 @@ async function onCsvPreview() {
 }
 
 function openZoneImport() {
-  openImportModal();
+  openImportModal("zone");
+}
+
+function onZoneOpenFile(zoneId: string, path: string) {
+  // Soft-activate for context; open as compare-side binding
+  if (store.activeZoneId !== zoneId) {
+    void store.doActivateZone(zoneId, { silent: true });
+  }
+  onTreeAddToCompare(path, "zone", zoneId);
+}
+
+function onZoneAddToCompare(zoneId: string, path: string) {
+  if (store.activeZoneId !== zoneId) {
+    void store.doActivateZone(zoneId, { silent: true });
+  }
+  onTreeAddToCompare(path, "zone", zoneId);
+}
+
+function onZoneNewCompare(zoneId: string, path: string) {
+  if (store.activeZoneId !== zoneId) {
+    void store.doActivateZone(zoneId, { silent: true });
+  }
+  onTreeNewCompare(path, "zone", zoneId);
 }
 
 async function onRenameZone(zoneId: string, current: string) {
@@ -755,7 +792,11 @@ function onTreeOpen(path: string) {
  * - work source → bind project (work) side; leave compare empty (no auto-seed)
  * - zone source → bind compare target only (work side empty until filled)
  */
-function onTreeNewCompare(path: string, source: "work" | "zone" = "work") {
+function onTreeNewCompare(
+  path: string,
+  source: "work" | "zone" = "work",
+  zoneId?: string | null
+) {
   const fk = workbench.fileKindForPath(path);
   if (fk === "pdf" || fk === "word" || fk === "image") {
     workbench.toast(
@@ -774,13 +815,14 @@ function onTreeNewCompare(path: string, source: "work" | "zone" = "work") {
   }
   workbench.focusTab(tab.id);
   if (source === "zone") {
-    if (!store.activeZoneId) {
+    const zid = zoneId || store.activeZoneId;
+    if (!zid) {
       workbench.toast(t("comparer.needActiveZone"), "warn");
       return;
     }
     compareTarget.setForProject(store.projectId, {
       kind: "zone",
-      zoneId: store.activeZoneId,
+      zoneId: zid,
       path,
     });
     return;
@@ -793,7 +835,11 @@ function onTreeNewCompare(path: string, source: "work" | "zone" = "work") {
  * Context menu "Add to compare": put file into the focused comparer (or create one).
  * One work file + one compare (zone/git) file per comparer; same side replaces.
  */
-function onTreeAddToCompare(path: string, source: "work" | "zone" = "work") {
+function onTreeAddToCompare(
+  path: string,
+  source: "work" | "zone" = "work",
+  zoneId?: string | null
+) {
   const fk = workbench.fileKindForPath(path);
   if (fk === "pdf" || fk === "word" || fk === "image") {
     workbench.toast(
@@ -822,13 +868,14 @@ function onTreeAddToCompare(path: string, source: "work" | "zone" = "work") {
   }
 
   if (source === "zone") {
-    if (!store.activeZoneId) {
+    const zid = zoneId || store.activeZoneId;
+    if (!zid) {
       workbench.toast(t("comparer.needActiveZone"), "warn");
       return;
     }
     compareTarget.setForProject(
       store.projectId,
-      { kind: "zone", zoneId: store.activeZoneId, path },
+      { kind: "zone", zoneId: zid, path },
       tab.path || undefined
     );
     workbench.focusTab(tab.id);
@@ -849,7 +896,8 @@ function onTreeAddToCompare(path: string, source: "work" | "zone" = "work") {
 function onWorkbenchFileDrop(
   tabId: string,
   path: string,
-  side?: "work" | "zone"
+  side?: "work" | "zone",
+  zoneId?: string | null
 ) {
   let tab = workbench.getTab(tabId);
   if (!tab) return;
@@ -858,13 +906,18 @@ function onWorkbenchFileDrop(
   if (tab.kind === "comparer") {
     const origin = side || "work";
     if (origin === "zone") {
-      if (!store.activeZoneId) {
+      const zid = zoneId || store.activeZoneId;
+      if (!zid) {
         workbench.toast(t("comparer.needActiveZone"), "warn");
         return;
       }
+      // Make this the active zone for subsequent UX consistency
+      if (store.activeZoneId !== zid) {
+        void store.doActivateZone(zid, { silent: true });
+      }
       compareTarget.setForProject(
         store.projectId,
-        { kind: "zone", zoneId: store.activeZoneId, path },
+        { kind: "zone", zoneId: zid, path },
         tab.path || undefined
       );
       workbench.focusTab(tab.id);
@@ -1161,88 +1214,26 @@ function formatCommitDate(iso?: string) {
         </template>
 
         <template v-else-if="activity === 'zones'">
-          <div
-            class="panel-header side-header pane-drag-handle"
-            draggable="true"
-            :title="t('panels.dragToRearrange')"
-            @dragstart="onPaneDragStart('files', $event)"
-            @dragend="onPaneDragEnd"
-          >
-            <span class="drag-grip" aria-hidden="true">⋮⋮</span>
-            <span>{{ t("panels.zones") }}</span>
-            <button
-              type="button"
-              class="header-hide"
-              :title="t('toolbar.toggleFiles')"
-              @click.stop="layout.toggleFiles()"
-            >
-              ◀
-            </button>
-          </div>
-          <div class="side-body">
-            <div class="zone-actions">
-              <button
-                type="button"
-                class="secondary mini"
-                :disabled="busy || !projectId"
-                @click="openZoneImport"
-              >
-                {{ t("importModal.open") }}
-              </button>
-              <button
-                type="button"
-                class="secondary mini"
-                :disabled="busy || !projectId"
-                @click="store.doZoneFromWork()"
-              >
-                {{ t("zones.fromWork") }}
-              </button>
-            </div>
-            <p v-if="!zones.length" class="muted">{{ t("zones.empty") }}</p>
-            <ul class="zone-list">
-              <li
-                v-for="z in zones"
-                :key="z.id"
-                class="zone-item"
-                :class="{ active: z.id === activeZoneId || z.active }"
-              >
-                <button
-                  type="button"
-                  class="zone-main"
-                  :disabled="busy"
-                  @click="store.doActivateZone(z.id)"
-                >
-                  <span class="zone-name">{{ z.name }}</span>
-                  <span
-                    v-if="z.id === activeZoneId || z.active"
-                    class="badge modified"
-                    >{{ t("zones.active") }}</span
-                  >
-                  <span v-if="z.file_count != null" class="zone-meta">{{
-                    t("zones.fileCount", { n: z.file_count })
-                  }}</span>
-                </button>
-                <div class="zone-ops">
-                  <button
-                    type="button"
-                    class="mini secondary"
-                    :disabled="busy"
-                    @click="onRenameZone(z.id, z.name)"
-                  >
-                    {{ t("zones.rename") }}
-                  </button>
-                  <button
-                    type="button"
-                    class="mini secondary"
-                    :disabled="busy"
-                    @click="onDeleteZone(z.id)"
-                  >
-                    {{ t("zones.delete") }}
-                  </button>
-                </div>
-              </li>
-            </ul>
-          </div>
+          <ZoneExplorer
+            :project-id="projectId"
+            :zones="zones"
+            :active-zone-id="activeZoneId"
+            :busy="busy"
+            :show-dot-files="showDotFiles"
+            :current-path="currentPath"
+            @update:show-dot-files="showDotFiles = $event"
+            @activate="(id) => store.doActivateZone(id)"
+            @rename="onRenameZone"
+            @delete="onDeleteZone"
+            @import-zone="openZoneImport"
+            @from-work="store.doZoneFromWork()"
+            @open-file="onZoneOpenFile"
+            @add-to-compare="onZoneAddToCompare"
+            @new-compare="onZoneNewCompare"
+            @hide="layout.toggleFiles()"
+            @title-drag-start="onPaneDragStart('files', $event)"
+            @title-drag-end="onPaneDragEnd"
+          />
         </template>
 
         <template v-else-if="activity === 'git'">
@@ -1632,7 +1623,8 @@ function formatCommitDate(iso?: string) {
         <div class="work-views-host">
           <WorkbenchGrid
             @file-drop="
-              (tabId, path, side) => onWorkbenchFileDrop(tabId, path, side)
+              (tabId, path, side, zoneId) =>
+                onWorkbenchFileDrop(tabId, path, side, zoneId)
             "
             @invalid-drop="(msg) => workbench.toast(msg, 'warn')"
           />

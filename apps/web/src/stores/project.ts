@@ -536,7 +536,11 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
-  async function doAddZoneFiles(fileList: File[] | FileList, name?: string) {
+  async function doAddZoneFiles(
+    fileList: File[] | FileList,
+    name?: string,
+    relativePaths?: string[]
+  ) {
     if (!projectId.value) await ensureProject();
     const id = projectId.value!;
     const filesArr = Array.from(fileList as File[]);
@@ -545,17 +549,40 @@ export const useProjectStore = defineStore("project", () => {
     busy.value = true;
     try {
       const z = await createZone(id, name);
-      const rels = filesArr.map(
-        (f) =>
-          (f as File & { webkitRelativePath?: string }).webkitRelativePath ||
-          f.name
+      const rels =
+        relativePaths && relativePaths.length === filesArr.length
+          ? relativePaths
+          : filesArr.map(
+              (f) =>
+                (f as File & { webkitRelativePath?: string })
+                  .webkitRelativePath || f.name
+            );
+      // Normalize paths: strip leading slashes, collapse \\
+      const clean = rels.map((p) =>
+        String(p || "")
+          .replace(/\\/g, "/")
+          .replace(/^\/+/, "")
       );
-      await importZoneFiles(id, z.id, filesArr, rels);
+      const result = (await importZoneFiles(
+        id,
+        z.id,
+        filesArr,
+        clean
+      )) as Zone & { written?: number; file_count?: number };
       await activateZone(id, z.id);
       await refreshZones();
       await refreshIndex();
       if (currentPath.value) await openFile(currentPath.value);
-      status.value = t("zones.activated", { name: z.name });
+      const written =
+        typeof result.written === "number"
+          ? result.written
+          : typeof result.file_count === "number"
+            ? result.file_count
+            : filesArr.length;
+      status.value = t("zones.importOk", {
+        name: z.name,
+        n: written,
+      });
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -577,24 +604,34 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
-  async function doActivateZone(zoneId: string | null) {
+  async function doActivateZone(
+    zoneId: string | null,
+    opts?: { silent?: boolean }
+  ) {
     if (!projectId.value) return;
-    busy.value = true;
+    const silent = !!opts?.silent;
+    // Activating enqueues full compare on the server — keep UI responsive unless user
+    // explicitly chose "set active" and we want status feedback.
+    if (!silent) busy.value = true;
     try {
       const res = await activateZone(projectId.value, zoneId);
       zones.value = res.zones || [];
       activeZoneId.value = res.active_zone_id ?? null;
-      await refreshIndex();
-      if (currentPath.value) await openFile(currentPath.value);
-      status.value = zoneId
-        ? t("zones.activated", {
-            name: zones.value.find((z) => z.id === zoneId)?.name || zoneId,
-          })
-        : t("zones.deactivated");
+      // Refresh index in background so zone tree stays interactive
+      void refreshIndex().then(() => {
+        if (currentPath.value) return openFile(currentPath.value);
+      });
+      if (!silent) {
+        status.value = zoneId
+          ? t("zones.activated", {
+              name: zones.value.find((z) => z.id === zoneId)?.name || zoneId,
+            })
+          : t("zones.deactivated");
+      }
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
-      busy.value = false;
+      if (!silent) busy.value = false;
     }
   }
 
