@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "docx-preview": "^0.3.6",
+    "katex": "^0.16.21",
     "marked": "^15.0.7",
     "monaco-editor": "^0.52.2",
     "pdfjs-dist": "^4.10.38",

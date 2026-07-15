@@ -3,6 +3,7 @@
  * Call once before creating models.
  */
 import * as monaco from "monaco-editor";
+import { registerLatexMathHover } from "./latexMathHover";
 
 let registered = false;
 
@@ -111,4 +112,7 @@ export function registerExtraLanguages() {
       ],
     },
   });
+
+  // Hover formula preview for .tex (KaTeX + theme-aware colors)
+  registerLatexMathHover();
 }
