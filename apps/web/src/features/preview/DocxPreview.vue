@@ -70,14 +70,15 @@ function onWheel(e: WheelEvent) {
   e.preventDefault();
   e.stopPropagation();
   const factor = e.deltaY > 0 ? 0.9 : 1.1;
-  const next = Math.min(4, Math.max(0.25, zoom.value * factor));
+  // Max 800% (= ×8), same as PDF / image preview
+  const next = Math.min(8, Math.max(0.25, zoom.value * factor));
   if (Math.abs(next - zoom.value) < 0.001) return;
   zoom.value = next;
   applyZoomStyle();
 }
 
 function zoomBy(factor: number) {
-  zoom.value = Math.min(4, Math.max(0.25, zoom.value * factor));
+  zoom.value = Math.min(8, Math.max(0.25, zoom.value * factor));
   applyZoomStyle();
 }
 
