@@ -92,4 +92,23 @@ export function registerExtraLanguages() {
       { open: '"', close: '"' },
     ],
   });
+
+  // --- LaTeX / latexmk compile logs ---
+  monaco.languages.register({ id: "latexlog", extensions: [".log"] });
+  monaco.languages.setMonarchTokensProvider("latexlog", {
+    tokenizer: {
+      root: [
+        [/^!.*$/, "invalid"],
+        [/.*\bError:.*$/, "invalid"],
+        [/.*Emergency stop.*$/, "invalid"],
+        [/^l\.\d+.*$/, "number"],
+        [/.*\bWarning:.*$/, "comment"],
+        [/Overfull \\[hv]box.*$/, "comment"],
+        [/Underfull \\[hv]box.*$/, "comment"],
+        [/\([^()\s]+\.(?:tex|sty|cls|ltx)/, "type"],
+        [/Output written on .*/, "keyword"],
+        [/Transcript written on .*/, "keyword"],
+      ],
+    },
+  });
 }
