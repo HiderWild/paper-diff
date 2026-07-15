@@ -49,6 +49,8 @@ body,
   height: 100%;
   background: var(--bg);
   color: var(--text);
+  /* Avoid long-press/callout quirks; context menu blocked in App for custom menus */
+  -webkit-touch-callout: none;
 }
 
 button,

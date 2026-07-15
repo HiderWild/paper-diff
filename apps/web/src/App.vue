@@ -221,6 +221,12 @@ function onGlobalKey(e: KeyboardEvent) {
   }
 }
 
+/** Block browser default context menu inside the app (custom menus later). */
+function onAppContextMenu(e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
 const leftContent = computed(() => {
   if (!pair.value) return "";
   return store.pairLeftContent(pair.value);
@@ -302,11 +308,14 @@ onMounted(() => {
   void store.refreshAgentProvider();
   void store.restoreLastProject();
   window.addEventListener("keydown", onGlobalKey);
+  // Capture phase so Monaco / nested listeners cannot re-open native menu
+  document.addEventListener("contextmenu", onAppContextMenu, true);
 });
 
 onBeforeUnmount(() => {
   store.stopPolling();
   window.removeEventListener("keydown", onGlobalKey);
+  document.removeEventListener("contextmenu", onAppContextMenu, true);
 });
 
 function openImportModal() {
@@ -805,7 +814,7 @@ function formatCommitDate(iso?: string) {
 </script>
 
 <template>
-  <div class="layout">
+  <div class="layout" @contextmenu.prevent.stop="onAppContextMenu">
     <header class="toolbar">
       <span class="title">{{ t("app.title") }}</span>
       <ToolStrip
