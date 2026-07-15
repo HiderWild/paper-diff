@@ -102,7 +102,7 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="word-hover-card"
-    :class="'mode-' + mode"
+    :class="['mode-' + mode, mode !== 'replace' ? 'compact' : 'replace-mode']"
     role="dialog"
     :aria-label="titleForKind()"
     :style="{ left: x + 'px', top: y + 'px' }"
@@ -112,66 +112,79 @@ onBeforeUnmount(() => {
     @pointerleave="emit('pointerLeave')"
     @wheel.stop
   >
-    <!-- Top-right apply only; leave-to-close (no dismiss button) -->
-    <button
-      ref="applyBtn"
-      type="button"
-      class="apply-corner"
-      :class="{ danger: mode === 'delete' }"
-      :title="applyLabel() + ' (Enter)'"
-      @click.stop="emit('apply')"
-    >
-      {{ applyLabel() }}
-    </button>
-
-    <div class="card-body">
+    <!-- Insert / delete: ONE horizontal strip — badge | text | apply -->
+    <template v-if="mode === 'insert' || mode === 'delete'">
       <span class="mode-badge" :class="mode">{{
         mode === "insert"
           ? t("hoverAccept.badgeInsert")
-          : mode === "delete"
-            ? t("hoverAccept.badgeDelete")
-            : t("hoverAccept.badgeReplace")
+          : t("hoverAccept.badgeDelete")
       }}</span>
+      <span class="one-line">
+        {{
+          mode === "insert"
+            ? t("hoverAccept.insertBrief")
+            : t("hoverAccept.deleteBrief")
+        }}
+        <code
+          class="inline-snip"
+          :class="mode === 'insert' ? 'compare' : 'work'"
+          >{{
+            mode === "insert" ? compareDisplay().text : workDisplay().text
+          }}</code
+        >
+      </span>
+      <button
+        ref="applyBtn"
+        type="button"
+        class="apply-btn"
+        :class="{ danger: mode === 'delete' }"
+        :title="applyLabel() + ' (Enter)'"
+        @click.stop="emit('apply')"
+      >
+        {{ applyLabel() }}
+      </button>
+    </template>
 
-      <template v-if="mode === 'insert'">
-        <span class="one-line">
-          {{ t("hoverAccept.insertBrief") }}
-          <code class="inline-snip compare">{{ compareDisplay().text }}</code>
-        </span>
-      </template>
-
-      <template v-else-if="mode === 'delete'">
-        <span class="one-line">
-          {{ t("hoverAccept.deleteBrief") }}
-          <code class="inline-snip work">{{ workDisplay().text }}</code>
-        </span>
-      </template>
-
-      <template v-else>
-        <div class="pair">
-          <div class="side">
-            <div class="label">{{ t("hoverAccept.work") }}</div>
-            <code
-              class="snip"
-              :class="{ empty: workDisplay().empty, work: !workDisplay().empty }"
-              >{{ workDisplay().text }}</code
-            >
-          </div>
-          <div class="arrow" aria-hidden="true">←</div>
-          <div class="side">
-            <div class="label">{{ t("hoverAccept.compare") }}</div>
-            <code
-              class="snip"
-              :class="{
-                empty: compareDisplay().empty,
-                compare: !compareDisplay().empty,
-              }"
-              >{{ compareDisplay().text }}</code
-            >
-          </div>
+    <!-- Replace: header row + pair below (still same flow: apply at end of head row) -->
+    <template v-else>
+      <div class="replace-head">
+        <span class="mode-badge replace">{{
+          t("hoverAccept.badgeReplace")
+        }}</span>
+        <span class="kind-title">{{ titleForKind() }}</span>
+        <button
+          ref="applyBtn"
+          type="button"
+          class="apply-btn"
+          :title="applyLabel() + ' (Enter)'"
+          @click.stop="emit('apply')"
+        >
+          {{ applyLabel() }}
+        </button>
+      </div>
+      <div class="pair">
+        <div class="side">
+          <div class="label">{{ t("hoverAccept.work") }}</div>
+          <code
+            class="snip"
+            :class="{ empty: workDisplay().empty, work: !workDisplay().empty }"
+            >{{ workDisplay().text }}</code
+          >
         </div>
-      </template>
-    </div>
+        <div class="arrow" aria-hidden="true">←</div>
+        <div class="side">
+          <div class="label">{{ t("hoverAccept.compare") }}</div>
+          <code
+            class="snip"
+            :class="{
+              empty: compareDisplay().empty,
+              compare: !compareDisplay().empty,
+            }"
+            >{{ compareDisplay().text }}</code
+          >
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -181,10 +194,8 @@ onBeforeUnmount(() => {
   z-index: 220;
   box-sizing: border-box;
   width: max-content;
-  min-width: 12rem;
-  max-width: min(66rem, 92vw);
-  /* leave room on the right for the absolute apply button */
-  padding: 0.4rem 5.5rem 0.45rem 0.55rem;
+  max-width: min(40rem, 92vw);
+  padding: 0.35rem 0.45rem;
   border-radius: 8px;
   background: var(--panel, #1a2332);
   color: var(--text, #e7ecf3);
@@ -194,14 +205,44 @@ onBeforeUnmount(() => {
   transform: translate(-50%, 8px);
 }
 
-/* Always top-right of the card, independent of content width */
-.apply-corner {
-  position: absolute;
-  top: 0.35rem;
-  right: 0.4rem;
-  z-index: 2;
-  margin: 0;
-  padding: 0.2rem 0.55rem;
+/* insert/delete: single horizontal track, no separate layers */
+.word-hover-card.compact {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.word-hover-card.replace-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 14rem;
+}
+
+.replace-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.kind-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.apply-btn {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  padding: 0.18rem 0.5rem;
   font-size: 0.72rem;
   line-height: 1.2;
   font-weight: 600;
@@ -212,23 +253,15 @@ onBeforeUnmount(() => {
   color: #fff;
   white-space: nowrap;
 }
-.apply-corner.danger {
+/* in compact row, push apply to the end of the same line */
+.word-hover-card.compact .apply-btn {
+  margin-left: 0.15rem;
+}
+.apply-btn.danger {
   background: var(--danger, #ef4444);
 }
-.apply-corner:hover {
+.apply-btn:hover {
   filter: brightness(1.08);
-}
-.apply-corner:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 70%, #fff);
-  outline-offset: 1px;
-}
-
-.card-body {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.3rem;
-  min-width: 0;
 }
 
 .mode-badge {
@@ -255,10 +288,14 @@ onBeforeUnmount(() => {
 
 .one-line {
   margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 0.78rem;
   line-height: 1.35;
   color: var(--muted);
-  max-width: 36rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .inline-snip {
   display: inline;
