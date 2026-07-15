@@ -10,8 +10,19 @@ import type { DiffUnit } from "../../features/diff/sentenceMapper";
 import type { ViewTab } from "../../stores/workbench";
 import { useProjectStore } from "../../stores/project";
 import { useSettingsStore } from "../../stores/settings";
-import { workFileRawUrl, zoneFileRawUrl, getFilePair } from "../../shared/api";
+import {
+  workFileRawUrl,
+  zoneFileRawUrl,
+  getFilePair,
+  getZoneFileText,
+  getWorkFileText,
+  gitShow,
+} from "../../shared/api";
 import ComparerChrome from "./ComparerChrome.vue";
+import {
+  useCompareTargetStore,
+  type CompareTarget,
+} from "../../stores/compareTarget";
 
 const props = defineProps<{
   tab: ViewTab;
@@ -21,8 +32,10 @@ const props = defineProps<{
 const { t } = useI18n();
 const project = useProjectStore();
 const settings = useSettingsStore();
+const compareTarget = useCompareTargetStore();
 const { monacoTheme } = storeToRefs(settings);
 const { sidesSwapped } = storeToRefs(project);
+const targetTick = ref(0);
 
 const left = ref("");
 const right = ref("");
@@ -97,17 +110,52 @@ async function loadBoundPath(path: string | null) {
       }
       return;
     }
-    // comparer: left=work, right=zone (buffers apply to work)
-    const pair = await getFilePair(pid, path);
-    left.value =
-      project.localBuffers[path] ??
-      pair.left?.content ??
-      pair.merged.content;
-    right.value = pair.right?.content ?? pair.revised.content;
-    if (props.active) {
-      project.pair = pair;
-      project.currentPath = path;
-      project.units = [];
+    // comparer: left=work path, right=remembered target (zone/git)
+    let workContent = "";
+    try {
+      const wf = await getWorkFileText(pid, path);
+      workContent = wf.content;
+    } catch {
+      const pair0 = await getFilePair(pid, path);
+      workContent = pair0.left?.content ?? pair0.merged.content;
+    }
+    left.value = project.localBuffers[path] ?? workContent;
+
+    const mem =
+      compareTarget.getForProject(project.projectId) ||
+      (project.activeZoneId
+        ? {
+            kind: "zone" as const,
+            zoneId: project.activeZoneId,
+            path,
+          }
+        : null);
+
+    if (mem?.kind === "git") {
+      const shown = await gitShow(pid, mem.ref, mem.path || path);
+      right.value = shown.content ?? "";
+    } else if (mem?.kind === "zone") {
+      try {
+        const zf = await getZoneFileText(pid, mem.zoneId, mem.path || path);
+        right.value = zf.content;
+      } catch {
+        right.value = "";
+      }
+    } else {
+      const pair = await getFilePair(pid, path);
+      right.value = pair.right?.content ?? pair.revised.content ?? "";
+    }
+
+    // Keep pair meta for accept revision when same-path zone compare
+    try {
+      const pair = await getFilePair(pid, path);
+      if (props.active) {
+        project.pair = pair;
+        project.currentPath = path;
+        project.units = [];
+      }
+    } catch {
+      if (props.active) project.currentPath = path;
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -123,12 +171,22 @@ watch(
       props.tab.kind,
       project.activeZoneId,
       props.active,
+      targetTick.value,
     ] as const,
   ([path]) => {
     void loadBoundPath(path);
   },
   { immediate: true }
 );
+
+function onTargetChanged(_t: CompareTarget) {
+  targetTick.value++;
+}
+
+async function onPullUnit(u: DiffUnit) {
+  const content = await project.doAccept(u);
+  onAfterMutation(content ?? null);
+}
 
 function onLeftChange(content: string) {
   if (!props.tab.path || !editableLeft.value) return;
@@ -176,6 +234,7 @@ function onAfterMutation(content: string | null) {
         :path="tab.path"
         :units="units"
         @after-mutation="onAfterMutation"
+        @target-changed="onTargetChanged"
       />
       <div v-if="loading" class="empty">{{ t("preview.loading") }}</div>
       <div v-else-if="error" class="empty error">{{ error }}</div>
@@ -198,15 +257,23 @@ function onAfterMutation(content: string | null) {
         <MonacoDiff
           v-else-if="tab.kind === 'comparer' || tab.kind === 'editor'"
           ref="diffRef"
-          :key="tab.id + (tab.path || '') + (sidesSwapped ? '-s' : '')"
+          :key="
+            tab.id +
+            (tab.path || '') +
+            (sidesSwapped ? '-s' : '') +
+            '-t' +
+            targetTick
+          "
           :path="tab.path || ''"
           :left="displayLeft"
           :right="displayRight"
           :editable-left="effectiveEditable"
           :single-pane="singlePane"
           :monaco-theme="monacoTheme"
+          :show-gutter-actions="tab.kind === 'comparer'"
           @units="onUnits"
           @left-change="onLeftChange"
+          @pull-unit="onPullUnit"
         />
       </template>
     </template>

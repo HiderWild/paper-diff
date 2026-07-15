@@ -13,6 +13,8 @@ const host = ref<HTMLDivElement | null>(null);
 const container = ref<HTMLDivElement | null>(null);
 const error = ref("");
 const loading = ref(false);
+/** True after at least one successful paint of current document */
+const containerHasPages = ref(false);
 /** User zoom multiplier (1 = fit-width baseline * 1) */
 const zoom = ref(1);
 const zoomPct = ref(100);
@@ -33,10 +35,11 @@ function fitScaleForPage(
 async function paintPages() {
   if (!pdfDoc || !container.value) return;
   const gen = renderGen;
-  container.value.innerHTML = "";
+  // Build off-DOM then swap to avoid flicker / "loading" jump
+  const frag = document.createDocumentFragment();
   const maxPages = Math.min(pdfDoc.numPages, 40);
   for (let i = 1; i <= maxPages; i++) {
-    if (gen !== renderGen || !container.value || !pdfDoc) return;
+    if (gen !== renderGen || !pdfDoc) return;
     const page = await pdfDoc.getPage(i);
     const fit = fitScaleForPage(page);
     const scale = fit * zoom.value;
@@ -48,10 +51,14 @@ async function paintPages() {
     canvas.height = viewport.height;
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
-    container.value.appendChild(canvas);
+    frag.appendChild(canvas);
     await page.render({ canvasContext: ctx, viewport }).promise;
   }
+  if (gen !== renderGen || !container.value) return;
+  container.value.innerHTML = "";
+  container.value.appendChild(frag);
   zoomPct.value = Math.round(zoom.value * 100);
+  containerHasPages.value = container.value.childElementCount > 0;
 }
 
 async function loadUrl(url: string) {
@@ -61,13 +68,14 @@ async function loadUrl(url: string) {
   zoom.value = 1;
   pdfDoc = null;
   pagesData = null;
+  containerHasPages.value = false;
   await nextTick();
   if (!container.value) {
     loading.value = false;
     error.value = t("pdf.noContainer");
     return;
   }
-  container.value.innerHTML = "";
+  // Keep previous canvases until first new page paints? For URL change, clear after fetch.
   try {
     try {
       loadingTask?.destroy();
@@ -90,6 +98,7 @@ async function loadUrl(url: string) {
     loadingTask = pdfjs.getDocument({ data: data.slice(0) });
     pdfDoc = await loadingTask.promise;
     if (gen !== renderGen) return;
+    if (container.value) container.value.innerHTML = "";
     await paintPages();
   } catch (e) {
     if (gen === renderGen) {
@@ -102,16 +111,9 @@ async function loadUrl(url: string) {
 
 async function rezoom() {
   if (!pdfDoc || !pagesData) return;
-  const gen = ++renderGen;
-  // keep pdfDoc; only repaint
-  loading.value = true;
-  try {
-    // renderGen already bumped — paintPages checks gen at start of each page
-    // Restore gen affinity: paintPages uses current renderGen
-    await paintPages();
-  } finally {
-    if (gen === renderGen) loading.value = false;
-  }
+  // Silent: never toggle loading banner (avoids layout jump)
+  renderGen++;
+  await paintPages();
 }
 
 function onWheel(e: WheelEvent) {
@@ -177,7 +179,13 @@ onBeforeUnmount(() => {
       <span class="hint muted">{{ t("pdf.zoomHint") }}</span>
     </div>
     <div v-if="!url" class="status-empty">{{ t("pdf.empty") }}</div>
-    <div v-if="loading" class="status-empty">{{ t("preview.loading") }}</div>
+    <!-- Only show loading on initial open when nothing is painted yet -->
+    <div
+      v-if="loading && !containerHasPages"
+      class="status-empty"
+    >
+      {{ t("preview.loading") }}
+    </div>
     <div v-if="error" class="error">{{ error }}</div>
     <div ref="container" class="pdf-pages" />
   </div>
