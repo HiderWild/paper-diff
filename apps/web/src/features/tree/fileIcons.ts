@@ -72,7 +72,8 @@ const MAP: Array<{ re: RegExp; icon: FileIconSpec }> = [
   { re: /\.(zip|tar|gz|tgz|bz2|7z|rar|xz)$/i, icon: { label: "ZIP", color: "#cfcfc2" } },
 ];
 
-const DEFAULT_FILE: FileIconSpec = { label: "·", color: "#8b9bb4" };
+/** Generic file — avoid "·" which looked like a broken directory twisty. */
+const DEFAULT_FILE: FileIconSpec = { label: "f", color: "#8b9bb4" };
 const BINARY: FileIconSpec = { label: "BIN", color: "#6366f1" };
 
 export function fileIconForPath(

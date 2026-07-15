@@ -33,19 +33,22 @@ function iconFor(node: TreeNode) {
 </script>
 
 <template>
-  <!-- Directory row: VS Code-style chevron only (no folder emoji) -->
+  <!-- Directory row: CSS triangle twisty (collapsed ▶, open ▼) — no emoji / no ▶ glyph -->
   <div v-if="node.type === 'dir'" class="tree-dir">
     <div
       class="tree-row dir"
       :style="{ paddingLeft: `${6 + depth * 12}px` }"
+      :aria-expanded="!!expanded[node.path]"
+      role="treeitem"
       @click="emit('toggle', node.path)"
     >
       <span
         class="chevron"
         :class="{ open: expanded[node.path] }"
         aria-hidden="true"
-        >▸</span
       >
+        <span class="chevron-tri" />
+      </span>
       <span class="tree-name dir-name">{{ node.name }}</span>
       <button
         class="cmp-btn"
@@ -178,25 +181,37 @@ function iconFor(node: TreeNode) {
   font-weight: 600;
   color: var(--text);
 }
-/* VS Code-like twisty: ▸ collapsed, rotates when open */
+/* VS Code-like twisty: CSS triangle, not a unicode glyph (avoids "·" font fallback) */
 .chevron {
-  width: 1rem;
+  width: 1.1rem;
+  height: 1.1rem;
   flex-shrink: 0;
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.7rem;
-  line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  color: var(--muted);
+}
+.chevron-tri {
+  display: block;
+  width: 0;
+  height: 0;
+  /* ▶ pointing right when collapsed */
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent currentColor;
   transition: transform 0.12s ease;
+  transform-origin: 40% 50%;
   transform: rotate(0deg);
 }
-.chevron.open {
+.chevron.open .chevron-tri {
+  /* rotate to ▼ when expanded */
   transform: rotate(90deg);
 }
 .chevron.placeholder {
   visibility: hidden;
+}
+.tree-row.dir:hover .chevron {
+  color: var(--text);
 }
 .file-icon {
   flex-shrink: 0;
