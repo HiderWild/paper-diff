@@ -318,10 +318,11 @@ onBeforeUnmount(() => clearTipTimer());
   position: fixed;
   z-index: 200;
   transform: translateX(-50%);
-  padding: 0.3rem 0.55rem;
+  padding: 0.35rem 0.65rem;
   border-radius: 6px;
-  font-size: 0.75rem;
-  line-height: 1.3;
+  /* +1 size step from 0.75rem */
+  font-size: 0.85rem;
+  line-height: 1.35;
   white-space: nowrap;
   pointer-events: none;
   background: #1e293b;

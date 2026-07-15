@@ -332,14 +332,17 @@ const edgeHint = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  max-width: 10rem;
-  padding: 0.2rem 0.4rem 0.2rem 0.55rem;
+  /* ~25% wider than previous 10rem max */
+  max-width: 12.5rem;
+  min-width: 4.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.7rem;
   background: transparent;
   color: var(--muted);
   border: none;
   border-radius: 0;
   border-right: 1px solid var(--border);
-  font-size: 0.75rem;
+  /* +1 step from 0.75rem */
+  font-size: 0.85rem;
   cursor: pointer;
   flex: 0 1 auto;
 }
@@ -357,10 +360,11 @@ const edgeHint = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: inherit;
 }
 .wb-tab-close {
   opacity: 0.55;
-  font-size: 0.9rem;
+  font-size: 1rem;
   line-height: 1;
   padding: 0 0.15rem;
   border-radius: 3px;
