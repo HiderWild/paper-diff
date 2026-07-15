@@ -77,6 +77,18 @@ export default {
     docLegacyUnsupported:
       "暂不支持预览旧版 .doc（请在 Word 中另存为 .docx 后重试）。.docx 使用浏览器还原渲染，复杂版式可能与 Word 桌面版略有差异。",
   },
+  tools: {
+    strip: "工具",
+    comparer: "比较器",
+    editor: "编辑器",
+    pdf: "PDF 预览",
+    word: "Word 预览",
+    empty: "空",
+    close: "关闭",
+    dropHint: "将目录树中的文件拖到此处，或从顶部工具栏打开{tool}",
+    unsupportedFile:
+      "本{tool}不支持查看/修改「{file}」，请更换其他文件。目标窗口未改动。",
+  },
   import: {
     addFiles: "向项目添加文件",
     conflictTitle: "文件冲突",

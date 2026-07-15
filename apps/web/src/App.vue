@@ -4,17 +4,23 @@ import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import MonacoDiff from "./features/diff/MonacoDiff.vue";
 import ConflictImportModal from "./features/import/ConflictImportModal.vue";
-import DocxPreview from "./features/preview/DocxPreview.vue";
-import ImagePreview from "./features/preview/ImagePreview.vue";
-import PdfPane from "./features/preview/PdfPane.vue";
+import ToastStack from "./components/ToastStack.vue";
+import ToolStrip from "./components/ToolStrip.vue";
+import WorkViewPane from "./components/WorkViewPane.vue";
 import FileTree from "./features/tree/FileTree.vue";
 import { setLocale, type AppLocale } from "./i18n";
 import { useLayoutStore, type MainPaneId } from "./stores/layout";
 import { useProjectStore } from "./stores/project";
+import {
+  useWorkspaceStore,
+  type ToolKind,
+} from "./stores/workspace";
 
 const { t, locale } = useI18n();
 const store = useProjectStore();
 const layout = useLayoutStore();
+const workspace = useWorkspaceStore();
+const { views: workViews, activeViewId } = storeToRefs(workspace);
 const {
   projectId,
   files,
@@ -632,6 +638,108 @@ function onConflictCancel() {
   dryRunResult.value = null;
 }
 
+function onOpenTool(kind: ToolKind) {
+  workspace.addView(kind, null);
+  if (kind === "pdf") showPdf.value = true;
+}
+
+/** Click in tree: bind into a suitable work view (active if compatible, else new). */
+function onTreeOpen(path: string) {
+  void store.openFile(path);
+  const kind = workspace.fileKindForPath(path);
+  let tool: ToolKind =
+    kind === "pdf"
+      ? "pdf"
+      : kind === "word"
+        ? "word"
+        : "comparer";
+  // Prefer active view when it accepts the file
+  const active = workViews.value.find((v) => v.id === activeViewId.value);
+  if (active && workspace.toolAcceptsPath(active.kind, path)) {
+    workspace.bindPath(active.id, path);
+    return;
+  }
+  // Prefer empty view of matching kind
+  const empty = workViews.value.find(
+    (v) => v.kind === tool && !v.path
+  );
+  if (empty) {
+    workspace.bindPath(empty.id, path);
+    return;
+  }
+  // Prefer any matching kind
+  const any = workViews.value.find((v) =>
+    workspace.toolAcceptsPath(v.kind, path)
+  );
+  if (any) {
+    workspace.bindPath(any.id, path);
+    return;
+  }
+  // Open a new tool of the right kind
+  if (tool === "comparer" && (kind === "image" || kind === "other")) {
+    tool = "editor";
+  }
+  workspace.addView(tool, path);
+}
+
+function onToolDropOnView(kind: ToolKind, targetViewId: string) {
+  const idx = workViews.value.findIndex((v) => v.id === targetViewId);
+  workspace.insertViewAt(kind, idx >= 0 ? idx : workViews.value.length, null);
+}
+
+function onFileDropOnView(viewId: string, path: string) {
+  const v = workViews.value.find((x) => x.id === viewId);
+  if (!v) return;
+  const ok = workspace.bindPathWithMessage(
+    viewId,
+    path,
+    t("tools.unsupportedFile", {
+      tool: t(`tools.${v.kind}`),
+      file: path,
+    })
+  );
+  if (ok) {
+    // keep project store path in sync for accept/git features when comparer
+    if (v.kind === "comparer" || v.kind === "editor") {
+      void store.openFile(path);
+    }
+  }
+}
+
+const dragViewId = ref<string | null>(null);
+
+function onViewTitleDragStart(id: string, e: DragEvent) {
+  dragViewId.value = id;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", `view:${id}`);
+    e.dataTransfer.setData("application/x-paper-diff-view", id);
+  }
+}
+
+function onViewDropReorder(targetId: string, e: DragEvent) {
+  e.preventDefault();
+  const tool = e.dataTransfer?.getData("application/x-paper-diff-tool") as ToolKind;
+  if (tool) {
+    onToolDropOnView(tool, targetId);
+    return;
+  }
+  const viewId =
+    dragViewId.value ||
+    e.dataTransfer?.getData("application/x-paper-diff-view") ||
+    "";
+  if (viewId && viewId !== targetId) {
+    workspace.moveView(viewId, targetId);
+  }
+  const path =
+    e.dataTransfer?.getData("application/x-paper-diff-path") ||
+    e.dataTransfer?.getData("text/plain");
+  if (path && !path.startsWith("tool:") && !path.startsWith("view:")) {
+    onFileDropOnView(targetId, path);
+  }
+  dragViewId.value = null;
+}
+
 function formatCommitDate(iso?: string) {
   if (!iso) return "";
   try {
@@ -647,6 +755,10 @@ function formatCommitDate(iso?: string) {
   <div class="layout">
     <header class="toolbar">
       <span class="title">{{ t("app.title") }}</span>
+      <ToolStrip
+        @open="onOpenTool"
+        @drag-start="() => undefined"
+      />
       <label>
         {{ t("toolbar.importProject") }}
         <input ref="workInput" type="file" accept=".zip" />
@@ -905,7 +1017,7 @@ function formatCommitDate(iso?: string) {
             :busy="busy"
             :draggable-title="true"
             @update:show-dot-files="showDotFiles = $event"
-            @open="store.openFile($event)"
+            @open="onTreeOpen($event)"
             @action="(p, a) => store.doAcceptFile(p, a)"
             @compare-dir="store.doEnqueueDir($event)"
             @hide="layout.toggleFiles()"
@@ -1400,181 +1512,32 @@ function formatCommitDate(iso?: string) {
         </template>
       </aside>
 
-      <!-- Comparer (always grows) -->
-      <section
-        class="pane editor-pane"
-        :class="paneDropClass('editor')"
-        :style="paneStyle('editor')"
-        data-pane="editor"
-        @dragenter.prevent="onPaneDragOver('editor', $event)"
-        @dragover.prevent="onPaneDragOver('editor', $event)"
-        @drop.prevent="onPaneDrop('editor', $event)"
-        @dragend="onPaneDragEnd"
+      <!-- Center work area: multi-view tools (comparer / editor / pdf / word) -->
+      <div
+        class="work-views-host"
+        :style="{ flex: '1 1 auto', minWidth: '200px', order: orderOf('editor') }"
       >
-        <div
-          class="panel-header side-header comparer-header pane-drag-handle"
-          draggable="true"
-          :title="t('panels.dragToRearrange')"
-          @dragstart="onPaneDragStart('editor', $event)"
-          @dragend="onPaneDragEnd"
-        >
-          <span class="drag-grip" aria-hidden="true">⋮⋮</span>
-          <span>{{ comparerTitle }}</span>
-          <button
-            v-if="pair && !gitPreviewPair"
-            type="button"
-            class="mini secondary"
-            :title="t('panels.swapSides')"
-            :class="{ 'active-toggle': sidesSwapped }"
-            @click.stop="store.toggleSidesSwapped()"
-          >
-            ⇄ {{ t("panels.swapSides") }}
-          </button>
+        <div class="work-views-row">
+          <WorkViewPane
+            v-for="v in workViews"
+            :key="v.id"
+            :view="v"
+            :active="v.id === activeViewId"
+            @focus="workspace.focusView(v.id)"
+            @close="workspace.closeView(v.id)"
+            @title-drag-start="onViewTitleDragStart(v.id, $event)"
+            @title-drag-end="dragViewId = null"
+            @drop-tool="(kind) => onToolDropOnView(kind, v.id)"
+            @drop-file="(path) => onFileDropOnView(v.id, path)"
+            @invalid-drop="(msg) => workspace.toast(msg, 'warn')"
+            @dragover.prevent
+            @drop="onViewDropReorder(v.id, $event)"
+          />
         </div>
-        <div v-if="pair && !binaryPreview && !imagePreview" class="unit-bar">
-          <button
-            v-for="u in visibleUnits"
-            :key="u.id"
-            class="unit-chip"
-            :class="u.granularity"
-            type="button"
-            :title="`${u.leftText} → ${u.rightText}`"
-            :disabled="busy || !!gitPreviewPair"
-            @click="onAccept(u)"
-          >
-            {{
-              t("units.accept", {
-                granularity: granularityLabel(u.granularity),
-              })
-            }}
-          </button>
-          <span v-if="!visibleUnits.length" class="muted-inline">
-            {{ t("units.empty") }}
-          </span>
-          <button
-            v-if="isCsvFile && pair"
-            type="button"
-            class="mini secondary"
-            :disabled="busy"
-            @click="onCsvPreview"
-          >
-            {{ t("csv.run") }}
-          </button>
-          <button
-            v-if="gitPreviewPair"
-            type="button"
-            class="mini secondary"
-            @click="store.clearGitPreview()"
-          >
-            {{ t("git.clearPreview") }}
-          </button>
-        </div>
-        <div
-          v-if="isCsvFile && csvPreviewResult"
-          class="csv-preview-panel"
-        >
-          <div class="panel-header zone-subhead">
-            {{ t("csv.preview") }} ·
-            {{ t("csv.changed", { n: csvPreviewResult.changed_rows }) }}
-          </div>
-          <ul v-if="csvPreviewResult.changes?.length" class="csv-list">
-            <li
-              v-for="ch in csvPreviewResult.changes.slice(0, 50)"
-              :key="ch.row"
-            >
-              <span class="badge" :class="ch.status">{{ ch.status }}</span>
-              <span class="csv-row">{{ t("csv.row", { n: ch.row }) }}</span>
-              <span class="csv-snip muted">{{
-                (ch.left || "").slice(0, 40)
-              }}</span>
-              <span class="csv-arrow">→</span>
-              <span class="csv-snip">{{ (ch.right || "").slice(0, 40) }}</span>
-            </li>
-          </ul>
-          <p v-else class="muted">{{ t("csv.empty") }}</p>
-        </div>
-        <MonacoDiff
-          v-if="pair && !binaryPreview && !imagePreview && !wordPreview"
-          ref="diffRef"
-          :key="
-            (currentPath || 'x') +
-            (gitPreviewPair ? '-gp' : '') +
-            (sidesSwapped ? '-sw' : '')
-          "
-          :path="currentPath || ''"
-          :left="leftContent"
-          :right="rightContent"
-          @units="store.units = $event"
-        />
-        <ImagePreview
-          v-else-if="imagePreview"
-          :path="imagePreview.path"
-          :work-url="
-            sidesSwapped && imagePreview.zoneUrl
-              ? imagePreview.zoneUrl
-              : imagePreview.workUrl
-          "
-          :zone-url="
-            sidesSwapped
-              ? imagePreview.workUrl
-              : imagePreview.zoneUrl
-          "
-        />
-        <DocxPreview
-          v-else-if="wordPreview"
-          :url="wordPreview.url"
-          :legacy-doc="wordPreview.legacyDoc"
-        />
-        <div v-else-if="binaryPreview" class="empty-editor binary-preview">
-          <p class="muted">{{ binaryPreview.path }}</p>
-          <p>{{ binaryPreview.message }}</p>
-        </div>
-        <div v-else class="empty-editor">{{ t("panels.comparerEmpty") }}</div>
-      </section>
-
-      <section
-        v-if="showPdf"
-        class="pane pdf-pane"
-        :class="paneDropClass('pdf')"
-        :style="paneStyle('pdf')"
-        data-pane="pdf"
-        @dragenter.prevent="onPaneDragOver('pdf', $event)"
-        @dragover.prevent="onPaneDragOver('pdf', $event)"
-        @drop.prevent="onPaneDrop('pdf', $event)"
-        @dragend="onPaneDragEnd"
-      >
-        <div
-          class="panel-header side-header pane-drag-handle"
-          draggable="true"
-          :title="t('panels.dragToRearrange')"
-          @dragstart="onPaneDragStart('pdf', $event)"
-          @dragend="onPaneDragEnd"
-        >
-          <span class="drag-grip" aria-hidden="true">⋮⋮</span>
-          <span>{{ pdfPaneTitle }}</span>
-          <button
-            type="button"
-            class="header-hide"
-            :title="t('toolbar.togglePdf')"
-            @click.stop="layout.togglePdf()"
-          >
-            ▶
-          </button>
-        </div>
-        <PdfPane :url="pdfHref" />
-      </section>
-
-      <!-- Sashes between adjacent visible panes (order via flex) -->
-      <template v-for="(id, i) in visibleMainOrder" :key="'sash-' + id">
-        <div
-          v-if="i > 0"
-          class="sash-v"
-          title="resize"
-          :style="{ order: sashOrder(visibleMainOrder[i - 1], id) }"
-          @mousedown="onSashDown(visibleMainOrder[i - 1], id, $event)"
-        />
-      </template>
+      </div>
     </div>
+
+    <ToastStack />
 
     <div
       v-if="showBottom"
@@ -1753,6 +1716,21 @@ function formatCommitDate(iso?: string) {
 }
 .pane-dragging {
   opacity: 0.55;
+}
+.work-views-host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.work-views-row {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 2px;
+  overflow: hidden;
 }
 .files-pane {
   display: flex;
