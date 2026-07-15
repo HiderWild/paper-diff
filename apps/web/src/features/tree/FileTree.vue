@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import OverlayScroll from "../../components/OverlayScroll.vue";
 import {
   buildTree,
   filterDotTree,
@@ -127,21 +128,6 @@ function expandTop() {
   expanded.value = next;
 }
 
-/** Show scrollbar only while scrolling */
-const scrollVisible = ref(false);
-let scrollHideTimer: ReturnType<typeof setTimeout> | null = null;
-function onTreeScroll() {
-  scrollVisible.value = true;
-  if (scrollHideTimer) clearTimeout(scrollHideTimer);
-  scrollHideTimer = setTimeout(() => {
-    scrollVisible.value = false;
-    scrollHideTimer = null;
-  }, 900);
-}
-onBeforeUnmount(() => {
-  if (scrollHideTimer) clearTimeout(scrollHideTimer);
-});
-
 const ctxMenu = ref<{
   x: number;
   y: number;
@@ -256,11 +242,7 @@ onBeforeUnmount(() => {
         ◀
       </button>
     </div>
-    <div
-      class="tree-scroll"
-      :class="{ 'scroll-visible': scrollVisible }"
-      @scroll.passive="onTreeScroll"
-    >
+    <OverlayScroll content-class="tree-scroll">
       <div v-if="!tree.length" class="tree-empty">
         {{ compact ? t("zones.treeEmpty") : t("tree.empty") }}
       </div>
@@ -285,7 +267,7 @@ onBeforeUnmount(() => {
         @compare-dir="emit('compareDir', $event)"
         @file-context="onFileContext"
       />
-    </div>
+    </OverlayScroll>
     <Teleport to="body">
       <div
         v-if="ctxMenu"
@@ -382,32 +364,14 @@ onBeforeUnmount(() => {
 .hide-btn {
   margin-left: 0.15rem;
 }
-.tree-scroll {
-  overflow: auto;
-  flex: 1;
-  min-height: 0;
+/* Scrollport content padding only; overflow handled by OverlayScroll */
+:deep(.tree-scroll) {
   padding: 0.15rem 0;
-  /* hide scrollbar until scrolling */
-  scrollbar-width: none; /* Firefox */
-  scrollbar-gutter: stable;
 }
-.tree-scroll::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-.tree-scroll.scroll-visible {
-  scrollbar-width: thin;
-}
-.tree-scroll.scroll-visible::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-.tree-scroll.scroll-visible::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted) 55%, transparent);
-  border-radius: 4px;
-}
-.tree-scroll.scroll-visible::-webkit-scrollbar-track {
-  background: transparent;
+.file-tree.compact :deep(.os-root) {
+  height: auto;
+  max-height: 22rem;
+  flex: none;
 }
 .tree-empty {
   color: var(--muted);
