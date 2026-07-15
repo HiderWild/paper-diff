@@ -78,6 +78,11 @@ export default {
     zoneImage: "Compare zone",
     loading: "Loading…",
     imageLoadError: "Failed to load image",
+    docxNotFound:
+      "Word file not found (404). If the name was garbled after zip import, re-import with the fixed zip decoder.",
+    docxUnsupported:
+      "This path cannot be raw-previewed as Word (extension or encoding issue).",
+    docxEmpty: "Word file is empty or failed to download.",
     docLegacyUnsupported:
       "Legacy .doc is not previewable here — re-save as .docx in Word. .docx is rendered in-browser and may differ slightly from desktop Word.",
   },
