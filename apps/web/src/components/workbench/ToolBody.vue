@@ -42,7 +42,7 @@ const { t } = useI18n();
 const project = useProjectStore();
 const settings = useSettingsStore();
 const compareTarget = useCompareTargetStore();
-const { monacoTheme, wordWrap } = storeToRefs(settings);
+const { monacoTheme, wordWrap, wordHoverAccept } = storeToRefs(settings);
 const { sidesSwapped, zones } = storeToRefs(project);
 const targetTick = ref(0);
 
@@ -278,12 +278,20 @@ async function onPullUnit(u: DiffUnit) {
   // left = work, right = compare target (even when display sides are swapped).
   const path = props.tab.path;
   if (!path) return;
-  const content = await project.doAccept(u, {
-    workPath: path,
-    leftTextFull: left.value,
-    rightTextFull: right.value,
-  });
-  onAfterMutation(content ?? null);
+  try {
+    const content = await project.doAccept(u, {
+      workPath: path,
+      leftTextFull: left.value,
+      rightTextFull: right.value,
+    });
+    onAfterMutation(content ?? null);
+    if (content != null && (u.granularity === "word" || u.granularity === "sentence")) {
+      const { useWorkbenchStore } = await import("../../stores/workbench");
+      useWorkbenchStore().toast(t("hoverAccept.appliedToast"), "info");
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
 }
 
 function onLeftChange(content: string) {
@@ -446,7 +454,9 @@ function onAfterMutation(content: string | null) {
           :word-wrap="wordWrap"
           :show-gutter-actions="tab.kind === 'comparer' && compareReady"
           :sides-swapped="tab.kind === 'comparer' && sidesSwapped"
-          :enable-word-hover="tab.kind === 'comparer' && compareReady"
+          :enable-word-hover="
+            tab.kind === 'comparer' && compareReady && wordHoverAccept
+          "
           @units="onUnits"
           @left-change="onLeftChange"
           @pull-unit="onPullUnit"

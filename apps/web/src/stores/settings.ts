@@ -24,6 +24,8 @@ export type SettingsState = {
    * only `auto` is supported (detect from content size/lines).
    */
   largeFileMode: LargeFileMode;
+  /** Word/phrase hover-accept card on S-tier comparer diffs */
+  wordHoverAccept: boolean;
 };
 
 const DEFAULTS: SettingsState = {
@@ -34,6 +36,7 @@ const DEFAULTS: SettingsState = {
   autoSave: true,
   wordWrap: false,
   largeFileMode: "auto",
+  wordHoverAccept: true,
 };
 
 function load(): SettingsState {
@@ -60,6 +63,9 @@ function load(): SettingsState {
     if (typeof parsed.autoSave !== "boolean") parsed.autoSave = true;
     if (typeof parsed.wordWrap !== "boolean") parsed.wordWrap = false;
     if (parsed.largeFileMode !== "auto") parsed.largeFileMode = "auto";
+    if (typeof parsed.wordHoverAccept !== "boolean") {
+      parsed.wordHoverAccept = true;
+    }
     return parsed;
   } catch {
     return { ...DEFAULTS };
@@ -91,6 +97,7 @@ export const useSettingsStore = defineStore("settings", () => {
   const showToolTips = ref(initial.showToolTips);
   const autoSave = ref(initial.autoSave !== false);
   const wordWrap = ref(!!initial.wordWrap);
+  const wordHoverAccept = ref(initial.wordHoverAccept !== false);
   const largeFileMode = ref<LargeFileMode>(
     initial.largeFileMode === "auto" ? "auto" : "auto"
   );
@@ -109,6 +116,7 @@ export const useSettingsStore = defineStore("settings", () => {
       autoSave: autoSave.value,
       wordWrap: wordWrap.value,
       largeFileMode: largeFileMode.value,
+      wordHoverAccept: wordHoverAccept.value,
     };
     try {
       localStorage.setItem(KEY, JSON.stringify(s));
@@ -156,6 +164,7 @@ export const useSettingsStore = defineStore("settings", () => {
       autoSave,
       wordWrap,
       largeFileMode,
+      wordHoverAccept,
     ],
     persist,
     { deep: true }
@@ -171,6 +180,7 @@ export const useSettingsStore = defineStore("settings", () => {
     showToolTips,
     autoSave,
     wordWrap,
+    wordHoverAccept,
     largeFileMode,
     resolvedTheme,
     monacoTheme,

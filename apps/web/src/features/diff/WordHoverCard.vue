@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { nextTick, onMounted, onBeforeUnmount, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { WordCardModel } from "./wordHover";
 
-defineProps<{
+const props = defineProps<{
   model: WordCardModel;
   x: number;
   y: number;
@@ -11,27 +12,75 @@ defineProps<{
 const emit = defineEmits<{
   apply: [];
   dismiss: [];
+  /** Pointer entered the card — parent should cancel leave-dismiss timers */
+  pointerEnter: [];
+  pointerLeave: [];
 }>();
 
 const { t } = useI18n();
+const root = ref<HTMLElement | null>(null);
+const applyBtn = ref<HTMLButtonElement | null>(null);
 
 function clip(s: string, n = 160): string {
   if (!s) return "∅";
   if (s.length <= n) return s;
   return s.slice(0, n) + "…";
 }
+
+function titleForKind() {
+  return props.model.kind === "sentence"
+    ? t("hoverAccept.titleSentence")
+    : t("hoverAccept.title");
+}
+
+function applyLabel() {
+  return props.model.kind === "sentence"
+    ? t("hoverAccept.applySentence")
+    : t("hoverAccept.apply");
+}
+
+function onKey(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    emit("dismiss");
+    return;
+  }
+  if (e.key === "Enter" && !e.isComposing) {
+    // Apply when focus is on card or apply button
+    const t0 = e.target as HTMLElement | null;
+    if (root.value?.contains(t0) || t0 === document.body) {
+      e.preventDefault();
+      emit("apply");
+    }
+  }
+}
+
+onMounted(async () => {
+  window.addEventListener("keydown", onKey, true);
+  await nextTick();
+  applyBtn.value?.focus();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKey, true);
+});
 </script>
 
 <template>
   <div
+    ref="root"
     class="word-hover-card float-tip"
     role="dialog"
-    :aria-label="t('hoverAccept.title')"
+    :aria-label="titleForKind()"
     :style="{ left: x + 'px', top: y + 'px' }"
+    tabindex="-1"
     @pointerdown.stop
+    @pointerenter="emit('pointerEnter')"
+    @pointerleave="emit('pointerLeave')"
     @wheel.stop
   >
-    <div class="card-title">{{ t("hoverAccept.title") }}</div>
+    <div class="card-title">{{ titleForKind() }}</div>
     <div class="pair">
       <div class="side">
         <div class="label">{{ t("hoverAccept.work") }}</div>
@@ -57,8 +106,13 @@ function clip(s: string, n = 160): string {
       <button type="button" class="secondary mini" @click="emit('dismiss')">
         {{ t("hoverAccept.dismiss") }}
       </button>
-      <button type="button" class="mini primary" @click="emit('apply')">
-        {{ t("hoverAccept.apply") }}
+      <button
+        ref="applyBtn"
+        type="button"
+        class="mini primary"
+        @click="emit('apply')"
+      >
+        {{ applyLabel() }}
       </button>
     </div>
   </div>

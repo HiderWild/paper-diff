@@ -7,6 +7,7 @@ import {
 } from "./applySnippet";
 import type { DiffUnit } from "./sentenceMapper";
 import { lineColToOffset, sliceRange } from "./sentenceMapper";
+import { syntheticWordUnit } from "./fixtures/wordHoverFixtures";
 
 describe("applyRangeReplace", () => {
   it("replaces mid-line range (0-based cols)", () => {
@@ -151,6 +152,58 @@ describe("resolveUnitReplacement / applyUnitToWorkText", () => {
     });
     const out = applyUnitToWorkText(left, u, { rightTextFull: right });
     expect(out).toBe("Hello cosmos\n");
+  });
+});
+
+describe("word-unit apply (insert / delete / replace)", () => {
+  it("replaces mid-line word via syntheticWordUnit", () => {
+    const work = "The analysis shows.\n";
+    const compare = "The review shows.\n";
+    // "analysis" cols 4..12
+    const u = syntheticWordUnit("analysis", "review", 4, 12, 4, 10);
+    expect(applyUnitToWorkText(work, u, { rightTextFull: compare })).toBe(
+      "The review shows.\n"
+    );
+  });
+
+  it("deletes word span when compare text empty (delete-only)", () => {
+    const work = "Hello big world\n";
+    const compare = "Hello world\n";
+    // delete "big " at cols 6..10
+    const u = syntheticWordUnit("big ", "", 6, 10, 6, 6);
+    expect(applyUnitToWorkText(work, u, { rightTextFull: compare })).toBe(
+      "Hello world\n"
+    );
+  });
+
+  it("inserts compare text at empty work range (insert-only)", () => {
+    const work = "Hello world\n";
+    const compare = "Hello big world\n";
+    // insert at col 6
+    const u = syntheticWordUnit("", "big ", 6, 6, 6, 10);
+    expect(applyUnitToWorkText(work, u, { rightTextFull: compare })).toBe(
+      "Hello big world\n"
+    );
+  });
+
+  it("swapped display still pulls true compare into true work range", () => {
+    const work = "aaa\n";
+    const compare = "bbb\n";
+    // unit left/right follow display order when swapped: left=compare, right=work
+    const u: DiffUnit = {
+      id: "sw",
+      granularity: "word",
+      left: { start_line: 1, start_col: 0, end_line: 1, end_col: 3 },
+      right: { start_line: 1, start_col: 0, end_line: 1, end_col: 3 },
+      leftText: "bbb",
+      rightText: "aaa",
+    };
+    expect(
+      applyUnitToWorkText(work, u, {
+        rightTextFull: compare,
+        sidesSwapped: true,
+      })
+    ).toBe("bbb\n");
   });
 });
 

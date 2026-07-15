@@ -17,8 +17,15 @@ const { t } = useI18n();
 const settings = useSettingsStore();
 const layout = useLayoutStore();
 const workbench = useWorkbenchStore();
-const { theme, locale, compactWorkbench, showToolTips, autoSave, wordWrap } =
-  storeToRefs(settings);
+const {
+  theme,
+  locale,
+  compactWorkbench,
+  showToolTips,
+  autoSave,
+  wordWrap,
+  wordHoverAccept,
+} = storeToRefs(settings);
 const { showDotFiles, showFiles } = storeToRefs(layout);
 
 function onTheme(e: Event) {
@@ -91,6 +98,13 @@ function onLocale(e: Event) {
           <input v-model="wordWrap" type="checkbox" />
           {{ t("settings.wordWrap") }}
           <span class="muted"> (Alt+Z)</span>
+        </label>
+        <label
+          class="settings-check"
+          :title="t('settings.wordHoverAcceptHint')"
+        >
+          <input v-model="wordHoverAccept" type="checkbox" />
+          {{ t("settings.wordHoverAccept") }}
         </label>
         <label class="settings-check">
           <input v-model="compactWorkbench" type="checkbox" />

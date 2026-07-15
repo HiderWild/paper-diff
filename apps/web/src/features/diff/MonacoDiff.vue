@@ -16,8 +16,9 @@ import {
 } from "./largeFileTier";
 import WordHoverCard from "./WordHoverCard.vue";
 import {
-  hitTestWordUnit,
+  hitTestHoverUnit,
   MAX_WORD_DECORATIONS,
+  sentenceUnitsOf,
   trueSideForVisualEditor,
   unitCardModel,
   unitToMonacoRange,
@@ -97,6 +98,8 @@ let unitTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 let wordDecoOrig: monaco.editor.IEditorDecorationsCollection | null = null;
 let wordDecoMod: monaco.editor.IEditorDecorationsCollection | null = null;
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+/** When true, mouse is over the float card — do not auto-dismiss on editor leave */
+let pointerOnCard = false;
 
 const hoverCard = ref<{
   model: WordCardModel;
@@ -159,7 +162,30 @@ function clearWordHover() {
     clearTimeout(hoverTimer);
     hoverTimer = null;
   }
+  pointerOnCard = false;
   hoverCard.value = null;
+}
+
+function scheduleDismiss(ms = 280) {
+  if (pointerOnCard) return;
+  if (hoverTimer != null) clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => {
+    if (!pointerOnCard) hoverCard.value = null;
+    hoverTimer = null;
+  }, ms);
+}
+
+function onCardPointerEnter() {
+  pointerOnCard = true;
+  if (hoverTimer != null) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+}
+
+function onCardPointerLeave() {
+  pointerOnCard = false;
+  scheduleDismiss(200);
 }
 
 function syncWordDecorations(units: DiffUnit[]) {
@@ -168,17 +194,32 @@ function syncWordDecorations(units: DiffUnit[]) {
     wordDecoMod?.clear();
     return;
   }
-  const words = wordUnitsOf(units).slice(0, MAX_WORD_DECORATIONS);
+  const words = wordUnitsOf(units);
+  const sentences = sentenceUnitsOf(units);
+  // Prefer words, then fill remaining budget with sentences
+  const budget = MAX_WORD_DECORATIONS;
+  const pick = [
+    ...words.slice(0, budget),
+    ...sentences.slice(0, Math.max(0, budget - words.length)),
+  ];
   const origDecs: monaco.editor.IModelDeltaDecoration[] = [];
   const modDecs: monaco.editor.IModelDeltaDecoration[] = [];
-  const opts: monaco.editor.IModelDecorationOptions = {
+  const wordOpts: monaco.editor.IModelDecorationOptions = {
     className: "pd-word-hover-deco",
     inlineClassName: "pd-word-hover-inline",
     stickiness:
       monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    zIndex: 2,
+  };
+  const sentOpts: monaco.editor.IModelDecorationOptions = {
+    className: "pd-sentence-hover-deco",
+    inlineClassName: "pd-sentence-hover-inline",
+    stickiness:
+      monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
     zIndex: 1,
   };
-  for (const u of words) {
+  for (const u of pick) {
+    const opts = u.granularity === "sentence" ? sentOpts : wordOpts;
     // Ranges are in props/original-modified (display) order
     origDecs.push({
       range: unitToMonacoRange(u.left),
@@ -241,30 +282,22 @@ function onEditorMouseMove(
   const pos = t.position;
   // CONTENT_TEXT = 6 in Monaco MouseTargetType
   if (!pos || (t.type !== 6 && t.type !== 7)) {
-    // still allow content empty to clear soon
-    if (hoverTimer != null) clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => {
-      hoverCard.value = null;
-      hoverTimer = null;
-    }, 200);
+    scheduleDismiss(200);
     return;
   }
   const trueSide = trueSideForVisualEditor(visual, props.sidesSwapped);
   // Monaco columns are 1-based → DiffUnit 0-based
   const col0 = Math.max(0, pos.column - 1);
-  const unit = hitTestWordUnit(
+  const unit = hitTestHoverUnit(
     lastUnits,
     trueSide,
     pos.lineNumber,
     col0,
-    props.sidesSwapped
+    props.sidesSwapped,
+    true // include sentence if no smaller word hit
   );
   if (!unit) {
-    if (hoverTimer != null) clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => {
-      hoverCard.value = null;
-      hoverTimer = null;
-    }, 250);
+    scheduleDismiss(250);
     return;
   }
   const bx = e.event.posx;
@@ -288,20 +321,8 @@ function bindWordHoverListeners() {
   mouseSubs.push(
     orig.onMouseMove((e) => onEditorMouseMove("original", e)),
     mod.onMouseMove((e) => onEditorMouseMove("modified", e)),
-    orig.onMouseLeave(() => {
-      if (hoverTimer != null) clearTimeout(hoverTimer);
-      hoverTimer = setTimeout(() => {
-        hoverCard.value = null;
-        hoverTimer = null;
-      }, 400);
-    }),
-    mod.onMouseLeave(() => {
-      if (hoverTimer != null) clearTimeout(hoverTimer);
-      hoverTimer = setTimeout(() => {
-        hoverCard.value = null;
-        hoverTimer = null;
-      }, 400);
-    }),
+    orig.onMouseLeave(() => scheduleDismiss(450)),
+    mod.onMouseLeave(() => scheduleDismiss(450)),
     orig.onDidScrollChange(() => clearWordHover()),
     mod.onDidScrollChange(() => clearWordHover())
   );
@@ -686,6 +707,8 @@ defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
         :y="hoverCard.y"
         @apply="onHoverApply"
         @dismiss="clearWordHover"
+        @pointer-enter="onCardPointerEnter"
+        @pointer-leave="onCardPointerLeave"
       />
     </Teleport>
   </div>
@@ -710,12 +733,17 @@ defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
   pointer-events: none;
   z-index: 4;
 }
-/* Word-hover decorations (global class names for Monaco DOM) */
+/* Word / sentence hover decorations (global class names for Monaco DOM) */
 :global(.pd-word-hover-inline) {
   border-bottom: 1px dashed color-mix(in srgb, var(--accent, #3b82f6) 70%, transparent);
   cursor: help;
 }
-:global(.pd-word-hover-deco) {
+:global(.pd-sentence-hover-inline) {
+  border-bottom: 1px dotted color-mix(in srgb, var(--green, #22c55e) 55%, transparent);
+  cursor: help;
+}
+:global(.pd-word-hover-deco),
+:global(.pd-sentence-hover-deco) {
   /* range marker; keep light so Monaco char diff stays primary */
 }
 

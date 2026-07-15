@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DiffUnit } from "./sentenceMapper";
 import {
+  hitTestHoverUnit,
   hitTestWordUnit,
   rangeContains,
   trueSideForVisualEditor,
@@ -8,6 +9,7 @@ import {
   unitToMonacoRange,
   wordUnitsOf,
 } from "./wordHover";
+import { ALL_WORD_HOVER_FIXTURES } from "./fixtures/wordHoverFixtures";
 
 function word(
   partial: Partial<DiffUnit> & Pick<DiffUnit, "id" | "left" | "right">
@@ -154,5 +156,35 @@ describe("trueSideForVisualEditor", () => {
     expect(trueSideForVisualEditor("modified", false)).toBe("compare");
     expect(trueSideForVisualEditor("original", true)).toBe("compare");
     expect(trueSideForVisualEditor("modified", true)).toBe("work");
+  });
+});
+
+describe("hitTestHoverUnit prefers word over sentence", () => {
+  it("returns word when both contain point", () => {
+    const units: DiffUnit[] = [
+      word({
+        id: "w1",
+        left: { start_line: 1, start_col: 4, end_line: 1, end_col: 12 },
+        right: { start_line: 1, start_col: 0, end_line: 1, end_col: 8 },
+        leftText: "analysis",
+        rightText: "Analysis",
+      }),
+      {
+        id: "s1",
+        granularity: "sentence",
+        left: { start_line: 1, start_col: 0, end_line: 1, end_col: 24 },
+        right: { start_line: 1, start_col: 0, end_line: 1, end_col: 22 },
+        leftText: "The analysis shows that",
+        rightText: "Analysis shows that",
+      },
+    ];
+    expect(hitTestHoverUnit(units, "work", 1, 6, false)?.id).toBe("w1");
+  });
+});
+
+describe("golden fixtures catalog", () => {
+  it("exports five named cases", () => {
+    expect(ALL_WORD_HOVER_FIXTURES).toHaveLength(5);
+    expect(new Set(ALL_WORD_HOVER_FIXTURES.map((f) => f.id)).size).toBe(5);
   });
 });
