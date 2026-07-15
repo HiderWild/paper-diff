@@ -84,11 +84,16 @@ export default {
     editor: "Editor",
     pdf: "PDF preview",
     word: "Word preview",
+    output: "Output",
     empty: "empty",
     close: "Close",
     dropHint: "Drop a file from the tree here, or open {tool} from the toolbar",
     unsupportedFile:
       "This {tool} cannot open “{file}”. Choose another file. The target pane was not changed.",
+  },
+  workbench: {
+    dragColumn: "Drag empty tab-bar gutter to move the whole column",
+    emptyColumn: "Empty column",
   },
   import: {
     addFiles: "Add files to project",

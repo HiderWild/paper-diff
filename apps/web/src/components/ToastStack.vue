@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
-import { useWorkspaceStore } from "../stores/workspace";
+import { useWorkbenchStore } from "../stores/workbench";
 
-const ws = useWorkspaceStore();
+const ws = useWorkbenchStore();
 const { toasts } = storeToRefs(ws);
 </script>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import type { ToolKind } from "../stores/workspace";
+import type { ToolKind } from "../stores/workbench";
 
 const { t } = useI18n();
 
@@ -9,6 +9,7 @@ const tools: Array<{ kind: ToolKind; icon: string; labelKey: string }> = [
   { kind: "editor", icon: "✎", labelKey: "tools.editor" },
   { kind: "pdf", icon: "PDF", labelKey: "tools.pdf" },
   { kind: "word", icon: "W", labelKey: "tools.word" },
+  { kind: "output", icon: "≡", labelKey: "tools.output" },
 ];
 
 const emit = defineEmits<{

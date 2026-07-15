@@ -6,24 +6,24 @@ import MonacoDiff from "./features/diff/MonacoDiff.vue";
 import ConflictImportModal from "./features/import/ConflictImportModal.vue";
 import ToastStack from "./components/ToastStack.vue";
 import ToolStrip from "./components/ToolStrip.vue";
-import WorkViewPane from "./components/WorkViewPane.vue";
+import WorkbenchGrid from "./components/workbench/WorkbenchGrid.vue";
 import SettingsPanel from "./features/settings/SettingsPanel.vue";
 import FileTree from "./features/tree/FileTree.vue";
 import { useLayoutStore, type ActivityId, type MainPaneId } from "./stores/layout";
 import { useProjectStore } from "./stores/project";
 import { useSettingsStore } from "./stores/settings";
 import {
-  useWorkspaceStore,
+  useWorkbenchStore,
   type ToolKind,
-} from "./stores/workspace";
+} from "./stores/workbench";
 
 const { t } = useI18n();
 const store = useProjectStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
 settings.init();
-const workspace = useWorkspaceStore();
-const { views: workViews, activeViewId } = storeToRefs(workspace);
+const workbench = useWorkbenchStore();
+workbench.ensureSeed();
 const {
   projectId,
   files,
@@ -635,105 +635,54 @@ function onConflictCancel() {
 }
 
 function onOpenTool(kind: ToolKind) {
-  workspace.addView(kind, null);
-  if (kind === "pdf") showPdf.value = true;
+  workbench.openTool(kind, null);
 }
 
-/** Click in tree: bind into a suitable work view (active if compatible, else new). */
+/** Click in tree: bind into a suitable tab (active if compatible, else new). */
 function onTreeOpen(path: string) {
   void store.openFile(path);
-  const kind = workspace.fileKindForPath(path);
+  const fk = workbench.fileKindForPath(path);
   let tool: ToolKind =
-    kind === "pdf"
-      ? "pdf"
-      : kind === "word"
-        ? "word"
-        : "comparer";
-  // Prefer active view when it accepts the file
-  const active = workViews.value.find((v) => v.id === activeViewId.value);
-  if (active && workspace.toolAcceptsPath(active.kind, path)) {
-    workspace.bindPath(active.id, path);
+    fk === "pdf" ? "pdf" : fk === "word" ? "word" : "comparer";
+
+  const focused = workbench.focusedTab;
+  if (focused && workbench.toolAcceptsPath(focused.kind, path)) {
+    workbench.bindPath(focused.id, path);
     return;
   }
-  // Prefer empty view of matching kind
-  const empty = workViews.value.find(
-    (v) => v.kind === tool && !v.path
-  );
+  // Prefer empty matching kind tab
+  const empty = workbench.allTabs.find((v) => v.kind === tool && !v.path);
   if (empty) {
-    workspace.bindPath(empty.id, path);
+    workbench.bindPath(empty.id, path);
     return;
   }
-  // Prefer any matching kind
-  const any = workViews.value.find((v) =>
-    workspace.toolAcceptsPath(v.kind, path)
+  const any = workbench.allTabs.find((v) =>
+    workbench.toolAcceptsPath(v.kind, path)
   );
   if (any) {
-    workspace.bindPath(any.id, path);
+    workbench.bindPath(any.id, path);
     return;
   }
-  // Open a new tool of the right kind
-  if (tool === "comparer" && (kind === "image" || kind === "other")) {
+  if (tool === "comparer" && (fk === "image" || fk === "other")) {
     tool = "editor";
   }
-  workspace.addView(tool, path);
+  workbench.openTool(tool, path);
 }
 
-function onToolDropOnView(kind: ToolKind, targetViewId: string) {
-  const idx = workViews.value.findIndex((v) => v.id === targetViewId);
-  workspace.insertViewAt(kind, idx >= 0 ? idx : workViews.value.length, null);
-}
-
-function onFileDropOnView(viewId: string, path: string) {
-  const v = workViews.value.find((x) => x.id === viewId);
-  if (!v) return;
-  const ok = workspace.bindPathWithMessage(
-    viewId,
+function onWorkbenchFileDrop(tabId: string, path: string) {
+  const tab = workbench.getTab(tabId);
+  if (!tab) return;
+  const ok = workbench.bindPathWithMessage(
+    tabId,
     path,
     t("tools.unsupportedFile", {
-      tool: t(`tools.${v.kind}`),
+      tool: t(`tools.${tab.kind}`),
       file: path,
     })
   );
-  if (ok) {
-    // keep project store path in sync for accept/git features when comparer
-    if (v.kind === "comparer" || v.kind === "editor") {
-      void store.openFile(path);
-    }
+  if (ok && (tab.kind === "comparer" || tab.kind === "editor")) {
+    void store.openFile(path);
   }
-}
-
-const dragViewId = ref<string | null>(null);
-
-function onViewTitleDragStart(id: string, e: DragEvent) {
-  dragViewId.value = id;
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", `view:${id}`);
-    e.dataTransfer.setData("application/x-paper-diff-view", id);
-  }
-}
-
-function onViewDropReorder(targetId: string, e: DragEvent) {
-  e.preventDefault();
-  const tool = e.dataTransfer?.getData("application/x-paper-diff-tool") as ToolKind;
-  if (tool) {
-    onToolDropOnView(tool, targetId);
-    return;
-  }
-  const viewId =
-    dragViewId.value ||
-    e.dataTransfer?.getData("application/x-paper-diff-view") ||
-    "";
-  if (viewId && viewId !== targetId) {
-    workspace.moveView(viewId, targetId);
-  }
-  const path =
-    e.dataTransfer?.getData("application/x-paper-diff-path") ||
-    e.dataTransfer?.getData("text/plain");
-  if (path && !path.startsWith("tool:") && !path.startsWith("view:")) {
-    onFileDropOnView(targetId, path);
-  }
-  dragViewId.value = null;
 }
 
 function formatCommitDate(iso?: string) {
@@ -908,11 +857,11 @@ function formatCommitDate(iso?: string) {
       </button>
       <button
         class="secondary"
-        :class="{ 'active-toggle': showBottom }"
-        :title="t('toolbar.toggleBottom')"
-        @click="layout.toggleBottom()"
+        type="button"
+        :title="t('tools.output')"
+        @click="workbench.openTool('output')"
       >
-        {{ t("toolbar.toggleBottom") }}
+        {{ t("tools.output") }}
       </button>
       <span
         v-if="agentProvider"
@@ -1515,64 +1464,19 @@ function formatCommitDate(iso?: string) {
         </template>
       </aside>
 
-      <!-- Center work area: multi-view tools (comparer / editor / pdf / word) -->
+      <!-- Center work area: VS Code-style columns + tabs -->
       <div
         class="work-views-host"
         :style="{ flex: '1 1 auto', minWidth: '200px', order: orderOf('editor') }"
       >
-        <div class="work-views-row">
-          <WorkViewPane
-            v-for="v in workViews"
-            :key="v.id"
-            :view="v"
-            :active="v.id === activeViewId"
-            @focus="workspace.focusView(v.id)"
-            @close="workspace.closeView(v.id)"
-            @title-drag-start="onViewTitleDragStart(v.id, $event)"
-            @title-drag-end="dragViewId = null"
-            @drop-tool="(kind) => onToolDropOnView(kind, v.id)"
-            @drop-file="(path) => onFileDropOnView(v.id, path)"
-            @invalid-drop="(msg) => workspace.toast(msg, 'warn')"
-            @dragover.prevent
-            @drop="onViewDropReorder(v.id, $event)"
-          />
-        </div>
+        <WorkbenchGrid
+          @file-drop="onWorkbenchFileDrop"
+          @invalid-drop="(msg) => workbench.toast(msg, 'warn')"
+        />
       </div>
     </div>
 
     <ToastStack />
-
-    <div
-      v-if="showBottom"
-      class="sash-h"
-      title="resize"
-      @mousedown="startResize('bottom', $event)"
-    />
-    <div
-      v-if="showBottom"
-      class="bottom-panel"
-      :style="{ height: bottomHeight + 'px' }"
-    >
-      <div
-        class="panel-header side-header pane-drag-handle"
-        :title="t('panels.dragBottomResize')"
-        @mousedown="startResize('bottom', $event)"
-      >
-        <span class="drag-grip" aria-hidden="true">⋯</span>
-        <span>{{ t("panels.bottomLog") }}</span>
-        <button
-          type="button"
-          class="header-hide"
-          :title="t('toolbar.toggleBottom')"
-          @click.stop="layout.toggleBottom()"
-        >
-          ▾
-        </button>
-      </div>
-      <div class="log-box flex-log">
-        {{ logText || t("panels.compileLog") }}
-      </div>
-    </div>
 
     <ConflictImportModal
       :open="conflictOpen"
@@ -1729,14 +1633,7 @@ function formatCommitDate(iso?: string) {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-}
-.work-views-row {
-  display: flex;
-  flex-direction: row;
   flex: 1 1 auto;
-  min-height: 0;
-  gap: 2px;
-  overflow: hidden;
 }
 .files-pane {
   display: flex;

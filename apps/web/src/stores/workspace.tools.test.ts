@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fileKindForPath, toolAcceptsPath } from "./workspace";
+import { fileKindForPath, toolAcceptsPath } from "./workbench";
 
 describe("toolAcceptsPath", () => {
   it("pdf tool only accepts pdf", () => {
@@ -18,6 +18,10 @@ describe("toolAcceptsPath", () => {
     expect(toolAcceptsPath("comparer", "main.tex")).toBe(true);
     expect(toolAcceptsPath("editor", "notes.md")).toBe(true);
     expect(toolAcceptsPath("comparer", "fig.png")).toBe(false);
+  });
+
+  it("output rejects files", () => {
+    expect(toolAcceptsPath("output", "a.tex")).toBe(false);
   });
 
   it("fileKindForPath", () => {
