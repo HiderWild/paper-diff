@@ -225,6 +225,7 @@ export default {
     noContainer: "预览容器未就绪",
     zoomReset: "重置",
     zoomHint: "Ctrl+滚轮 缩放",
+    panHint: "Ctrl+拖移（仅内容超出时）",
   },
   comparer: {
     pickTarget: "选择对照目标",

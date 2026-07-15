@@ -175,12 +175,10 @@ button.mini {
   padding: 0.5rem;
 }
 
-/* Do NOT max-width:100% — that breaks aspect when zoom > fit-width */
+/* Do NOT max-width:100% — that breaks aspect when zoom > fit-width.
+   Canvas display size is set in JS; keep box-shadow only here. */
 .pdf-host canvas {
-  max-width: none;
-  width: auto;
-  height: auto;
-  margin: 0 auto;
+  max-width: none !important;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 

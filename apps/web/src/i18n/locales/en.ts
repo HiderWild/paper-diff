@@ -228,6 +228,7 @@ export default {
     noContainer: "Preview host not ready",
     zoomReset: "Reset",
     zoomHint: "Ctrl+scroll to zoom",
+    panHint: "Ctrl+drag to pan when overflow",
   },
   comparer: {
     pickTarget: "Pick compare target",
