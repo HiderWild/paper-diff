@@ -14,7 +14,9 @@ const container = ref<HTMLDivElement | null>(null);
 const error = ref("");
 const loading = ref(false);
 const containerHasPages = ref(false);
-/** User zoom vs fit-width baseline */
+/** User zoom vs fit-width baseline (max 1600% = ×16) */
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 16;
 const zoom = ref(1);
 const zoomPct = ref(100);
 /** Ctrl/Meta held over host → pan cursor when overflow */
@@ -204,14 +206,14 @@ function onWheel(e: WheelEvent) {
   e.preventDefault();
   e.stopPropagation();
   const factor = e.deltaY > 0 ? 0.9 : 1.1;
-  const next = Math.min(4, Math.max(0.25, zoom.value * factor));
+  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom.value * factor));
   if (Math.abs(next - zoom.value) < 0.001) return;
   zoom.value = next;
   void rezoom();
 }
 
 function zoomBy(factor: number) {
-  zoom.value = Math.min(4, Math.max(0.25, zoom.value * factor));
+  zoom.value = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom.value * factor));
   void rezoom();
 }
 
@@ -380,9 +382,9 @@ if (typeof window !== "undefined") {
   display: flex;
   flex-direction: column;
   background: var(--surface-deep, #0b0f14);
-  padding: 0.35rem 0.5rem 0.5rem;
-  gap: 0.35rem;
-  /* symmetric scroll: content can extend both sides via centered layout */
+  /* no outer padding so sticky toolbar seats flush on top/left/right of tab */
+  padding: 0 0 0.5rem;
+  gap: 0;
   overscroll-behavior: contain;
 }
 .pdf-host.can-pan {
@@ -401,11 +403,15 @@ if (typeof window !== "undefined") {
   position: sticky;
   top: 0;
   left: 0;
+  right: 0;
   z-index: 2;
-  background: color-mix(in srgb, var(--panel-header) 92%, transparent);
-  padding: 0.25rem 0;
-  backdrop-filter: blur(4px);
+  background: var(--panel-header, #121a24);
+  border-bottom: 1px solid var(--border, #2d3a4d);
+  /* flush to host edges; no lateral gap */
+  margin: 0;
+  padding: 0.35rem 0.5rem;
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
 }
 .zoom-label {
@@ -421,9 +427,16 @@ if (typeof window !== "undefined") {
 .pdf-pages {
   /* Center block in host; when wider/taller than host, overflow is equal L/R & centered */
   flex: 0 0 auto;
-  margin: 0 auto;
+  margin: 0.5rem auto 0;
+  padding: 0 0.5rem;
+  box-sizing: content-box;
   width: max-content;
   min-width: min(100%, max-content);
+}
+.status-empty,
+.error {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
 }
 .pdf-pages :deep(.pdf-pages-inner) {
   display: flex;
@@ -441,13 +454,15 @@ if (typeof window !== "undefined") {
 }
 .status-empty {
   color: var(--muted);
-  padding: 0.5rem 0.25rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.25rem;
   font-size: 0.9rem;
 }
 .error {
   color: var(--danger);
   font-size: 0.85rem;
-  padding: 0.35rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
   white-space: pre-wrap;
 }
 .muted {
