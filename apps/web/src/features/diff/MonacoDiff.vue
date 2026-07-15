@@ -60,7 +60,10 @@ const arrows = ref<
   Array<GutterAction & { top: number; left: number; title: string; glyph: string }>
 >([]);
 
+/** Diff mode (comparer); null when single-pane editor mode. */
 let editor: monaco.editor.IStandaloneDiffEditor | null = null;
+/** Single editor mode (editor tab) — one line-number column only. */
+let codeEditor: monaco.editor.IStandaloneCodeEditor | null = null;
 let original: monaco.editor.ITextModel | null = null;
 let modified: monaco.editor.ITextModel | null = null;
 let sub: monaco.IDisposable | null = null;
@@ -97,7 +100,7 @@ function cancelPendingUnits() {
 /** Schedule buildDiffUnits: immediate for S/M; idle (with timeout fallback) for L. */
 function scheduleRecomputeUnits() {
   cancelPendingUnits();
-  if (!editor) return;
+  if (!editor || props.singlePane) return;
   if (resolvedTier.value === "L") {
     const run = () => {
       unitIdleHandle = null;
@@ -115,7 +118,12 @@ function scheduleRecomputeUnits() {
 }
 
 function recomputeUnitsNow() {
-  if (!editor) return;
+  if (!editor || props.singlePane) {
+    lastUnits = [];
+    emit("units", []);
+    arrows.value = [];
+    return;
+  }
   const opts = tierOpts.value;
   const changes = (editor.getLineChanges() || []) as LineChange[];
   const units = buildDiffUnits(
@@ -246,20 +254,28 @@ function placeArrows() {
 }
 
 function applyEditability() {
+  if (codeEditor) {
+    codeEditor.updateOptions({ readOnly: !props.editableLeft });
+    applyWordWrap();
+    return;
+  }
   if (!editor) return;
   editor.updateOptions({
     readOnly: !props.editableLeft,
     originalEditable: !!props.editableLeft,
-    renderSideBySide: !props.singlePane,
+    renderSideBySide: true,
   });
   applyWordWrap();
-  // Pane mode change moves the rail
   void nextTick(() => placeArrows());
 }
 
 function applyWordWrap() {
-  if (!editor) return;
   const wrap: "on" | "off" = props.wordWrap ? "on" : "off";
+  if (codeEditor) {
+    codeEditor.updateOptions({ wordWrap: wrap });
+    return;
+  }
+  if (!editor) return;
   const leftEd = editor.getOriginalEditor();
   const rightEd = editor.getModifiedEditor();
   leftEd.updateOptions({ wordWrap: wrap });
@@ -269,7 +285,7 @@ function applyWordWrap() {
 
 function bindViewListeners() {
   while (viewSubs.length) viewSubs.pop()?.dispose();
-  if (!editor) return;
+  if (!editor || props.singlePane) return;
   const leftEd = editor.getOriginalEditor();
   const rightEd = editor.getModifiedEditor();
   const onView = () => placeArrows();
@@ -282,7 +298,7 @@ function bindViewListeners() {
 }
 
 function applyDiffAlgorithm() {
-  if (!editor) return;
+  if (!editor || props.singlePane) return;
   editor.updateOptions({
     diffAlgorithm: tierOpts.value.diffAlgorithm,
   });
@@ -291,19 +307,59 @@ function applyDiffAlgorithm() {
 function mountEditor() {
   if (!host.value) return;
   original = monaco.editor.createModel(props.left, "plaintext");
+
+  // Editor tool: single CodeEditor → one line-number gutter (no diff overview)
+  if (props.singlePane) {
+    codeEditor = monaco.editor.create(host.value, {
+      model: original,
+      automaticLayout: true,
+      readOnly: !props.editableLeft,
+      theme: props.monacoTheme,
+      fontSize: 13,
+      wordWrap: props.wordWrap ? "on" : "off",
+      lineNumbers: "on",
+      glyphMargin: false,
+      folding: true,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      // Avoid residual mono-diff dual chrome
+      renderLineHighlight: "line",
+    });
+    contentSub = original.onDidChangeContent(() => {
+      if (suppressEmit || !props.editableLeft) return;
+      emit("leftChange", original!.getValue());
+    });
+    emit("units", []);
+    setTimeout(() => emit("ready"), 100);
+    return;
+  }
+
   modified = monaco.editor.createModel(props.right, "plaintext");
   editor = monaco.editor.createDiffEditor(host.value, {
     automaticLayout: true,
     readOnly: !props.editableLeft,
-    renderSideBySide: !props.singlePane,
+    renderSideBySide: true,
     originalEditable: !!props.editableLeft,
     theme: props.monacoTheme,
     diffAlgorithm: tierOpts.value.diffAlgorithm,
     ignoreTrimWhitespace: false,
     renderIndicators: true,
     fontSize: 13,
-    // leave space for center arrows overlay
     enableSplitViewResizing: true,
+    // Hide diff-specific overview that can look like a second line-number rail
+    renderOverviewRuler: true,
+    renderMarginRevertIcon: false,
+  });
+  // Single line-number column per pane (default); hide glyph margin noise
+  editor.getOriginalEditor().updateOptions({
+    glyphMargin: false,
+    folding: true,
+    lineNumbers: "on",
+  });
+  editor.getModifiedEditor().updateOptions({
+    glyphMargin: false,
+    folding: true,
+    lineNumbers: "on",
   });
   editor.setModel({ original, modified });
   applyWordWrap();
@@ -324,16 +380,20 @@ function mountEditor() {
 watch(
   () => [props.left, props.right, props.path] as const,
   () => {
-    if (!original || !modified) return;
+    if (!original) return;
     suppressEmit = true;
     try {
       if (original.getValue() !== props.left) original.setValue(props.left);
-      if (modified.getValue() !== props.right) modified.setValue(props.right);
+      if (modified && modified.getValue() !== props.right) {
+        modified.setValue(props.right);
+      }
     } finally {
       suppressEmit = false;
     }
-    applyDiffAlgorithm();
-    setTimeout(scheduleRecomputeUnits, 150);
+    if (!props.singlePane) {
+      applyDiffAlgorithm();
+      setTimeout(scheduleRecomputeUnits, 150);
+    }
   }
 );
 
@@ -369,6 +429,8 @@ onBeforeUnmount(() => {
   contentSub?.dispose();
   sub?.dispose();
   while (viewSubs.length) viewSubs.pop()?.dispose();
+  codeEditor?.dispose();
+  codeEditor = null;
   editor?.dispose();
   original?.dispose();
   modified?.dispose();
@@ -382,11 +444,11 @@ function setLeftContent(text: string) {
   } finally {
     suppressEmit = false;
   }
-  setTimeout(scheduleRecomputeUnits, 150);
+  if (!props.singlePane) setTimeout(scheduleRecomputeUnits, 150);
 }
 
 function revealLine(line: number) {
-  const ed = editor?.getOriginalEditor();
+  const ed = codeEditor || editor?.getOriginalEditor();
   if (!ed || !line || line < 1) return;
   ed.revealLineInCenter(line);
   ed.setPosition({ lineNumber: line, column: 1 });
