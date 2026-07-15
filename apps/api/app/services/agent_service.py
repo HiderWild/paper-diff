@@ -1,4 +1,4 @@
-"""Agent analyze / propose / apply / chat (stub provider by default)."""
+"""Agent analyze / propose / apply / chat (off by default; stub only if explicitly enabled)."""
 
 from __future__ import annotations
 
@@ -29,25 +29,27 @@ class AgentService:
         return ws
 
     def _provider_mode(self) -> str:
-        """Return stub | off | http."""
-        provider = (self.settings.agent_provider or "stub").strip().lower()
-        if provider in ("off", "disabled", "none"):
+        """Return off | http | stub (stub only when explicitly set)."""
+        provider = (self.settings.agent_provider or "off").strip().lower()
+        if provider in ("off", "disabled", "none", ""):
             return "off"
         if provider == "http":
-            if self.settings.agent_api_key:
+            if self.settings.agent_api_key or self.settings.agent_http_url:
                 return "http"
-            # no key → fall through to stub if allowed
-            if self.settings.agent_stub:
-                return "stub"
             return "off"
-        if provider == "stub" or self.settings.agent_stub:
+        if provider == "stub":
             return "stub"
+        # agent_stub alone is not enough — require provider=stub explicitly
         return "off"
 
     def _not_configured(self, project_id: str) -> dict:
         return {
             "status": "not_configured",
-            "message": "Agent provider not configured. Set PAPER_DIFF_AGENT_PROVIDER=stub|http.",
+            "message": (
+                "Agent provider not configured. "
+                "Set PAPER_DIFF_AGENT_PROVIDER=http with API key/url "
+                "(or stub only for explicit test use)."
+            ),
             "project_id": project_id,
         }
 

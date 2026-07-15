@@ -21,7 +21,9 @@
 - `PAPER_DIFF_DOCKER_ENABLED` — default true
 - `PAPER_DIFF_COMPILE_TIMEOUT_S` — default 120
 - `PAPER_DIFF_MAX_UPLOAD_MB` — zip size limit per side (default 500)
-- `PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP` — wipe workspace on API start (default **true**, for dev disk; set `false` to keep projects)
+- `PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP` — wipe workspace on API start (default **false**; set `true` only for disposable wipes)
+- `PAPER_DIFF_AGENT_PROVIDER` — `off` (default) | `http` | `stub` (tests only; do not use stub in product)
+- `PAPER_DIFF_AGENT_API_KEY` / `PAPER_DIFF_AGENT_HTTP_URL` — real provider when provider=http
 
 ## Architecture pointers
 

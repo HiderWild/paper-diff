@@ -75,6 +75,11 @@ def create_project(svc: ProjectService = Depends(projects)):
     return svc.create_project()
 
 
+@router.get("/projects")
+def list_projects(svc: ProjectService = Depends(projects)):
+    return svc.list_projects()
+
+
 @router.get("/projects/{project_id}")
 def get_project(project_id: str, svc: ProjectService = Depends(projects)):
     return svc.get_project(project_id)
@@ -741,14 +746,10 @@ def agent_sessions(project_id: str, svc: AgentService = Depends(agent)):
 
 @router.get("/health")
 def api_health(settings: Settings = Depends(get_settings)):
-    provider = (settings.agent_provider or "stub").strip().lower()
-    if provider in ("off", "disabled", "none"):
-        agent_provider = "off"
-    elif provider == "http":
-        agent_provider = "http" if (settings.agent_api_key or settings.agent_http_url) else (
-            "stub" if settings.agent_stub else "off"
-        )
-    elif provider == "stub" or settings.agent_stub:
+    provider = (settings.agent_provider or "off").strip().lower()
+    if provider == "http" and (settings.agent_api_key or settings.agent_http_url):
+        agent_provider = "http"
+    elif provider == "stub":
         agent_provider = "stub"
     else:
         agent_provider = "off"
@@ -758,4 +759,5 @@ def api_health(settings: Settings = Depends(get_settings)):
         "version": settings.api_version,
         "model": "v2",
         "agent_provider": agent_provider,
+        "clear_workspace_on_startup": settings.clear_workspace_on_startup,
     }

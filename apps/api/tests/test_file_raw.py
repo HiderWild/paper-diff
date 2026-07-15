@@ -42,6 +42,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP", "false")
     monkeypatch.setenv("PAPER_DIFF_DOCKER_ENABLED", "false")
     monkeypatch.setenv("PAPER_DIFF_AGENT_PROVIDER", "stub")
+    monkeypatch.setenv("PAPER_DIFF_AGENT_STUB", "true")
     from app.main import app
 
     return TestClient(app)

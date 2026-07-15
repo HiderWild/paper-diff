@@ -53,6 +53,43 @@ class ProjectService:
             pass
         return {"id": pid, "status": "empty", "model": "v2"}
 
+    def list_projects(self) -> dict:
+        """List persisted projects under workspace_root (for restore after restart)."""
+        root = self.settings.workspace_root
+        if not root.exists():
+            return {"projects": []}
+        projects = []
+        for child in sorted(root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not child.is_dir():
+                continue
+            meta_path = child / "meta.json"
+            if not meta_path.is_file():
+                continue
+            try:
+                ws = self._ws(child.name)
+                meta = ws.load_meta()
+            except Exception:
+                continue
+            zids = ws.list_zone_ids() if hasattr(ws, "list_zone_ids") else []
+            work_count = 0
+            try:
+                work_count = len(ws.list_files("work"))
+            except Exception:
+                pass
+            projects.append(
+                {
+                    "id": meta.get("id") or child.name,
+                    "status": meta.get("status", "empty"),
+                    "model": meta.get("model", "v2"),
+                    "root_file": meta.get("root_file"),
+                    "active_zone_id": meta.get("active_zone_id"),
+                    "zone_count": len(zids),
+                    "work_file_count": work_count,
+                    "updated_at": child.stat().st_mtime,
+                }
+            )
+        return {"projects": projects}
+
     def _safe_extract_zip(self, data: bytes, dest: Path, label: str = "zip") -> None:
         if not data:
             raise AppError("INVALID_ZIP", f"{label} is empty", status_code=400)
