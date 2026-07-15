@@ -698,6 +698,25 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   /** Flat list for tests / migration compat */
   const allTabs = computed(() => Object.values(tabs.value));
 
+  /**
+   * After openTool+bindPath, ToolBody mounts Monaco asynchronously.
+   * pendingReveal lets ToolBody consume once on mount / path load.
+   */
+  const pendingReveal = ref<{ path: string; line: number } | null>(null);
+
+  function requestReveal(path: string, line: number) {
+    if (!path || !line || line < 1) return;
+    pendingReveal.value = { path, line };
+  }
+
+  /** Consume pending reveal if it matches path; clears when taken. */
+  function takePendingReveal(path: string): number | null {
+    const p = pendingReveal.value;
+    if (!p || p.path !== path) return null;
+    pendingReveal.value = null;
+    return p.line;
+  }
+
   return {
     tabs,
     columns,
@@ -732,6 +751,9 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     ensureSeed,
     toolAcceptsPath,
     fileKindForPath,
+    pendingReveal,
+    requestReveal,
+    takePendingReveal,
   };
 });
 
