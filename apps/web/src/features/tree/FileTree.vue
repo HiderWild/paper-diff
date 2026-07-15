@@ -14,6 +14,8 @@ const props = defineProps<{
   currentPath: string | null;
   showDotFiles: boolean;
   busy?: boolean;
+  /** Allow dragging the toolbar title to rearrange workbench panes */
+  draggableTitle?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -22,6 +24,8 @@ const emit = defineEmits<{
   compareDir: [prefix: string];
   "update:showDotFiles": [value: boolean];
   hide: [];
+  titleDragStart: [e: DragEvent];
+  titleDragEnd: [];
 }>();
 
 const { t } = useI18n();
@@ -112,7 +116,15 @@ function expandTop() {
 
 <template>
   <div class="file-tree">
-    <div class="tree-toolbar">
+    <div
+      class="tree-toolbar"
+      :class="{ 'tree-toolbar-drag': draggableTitle }"
+      :draggable="!!draggableTitle"
+      :title="draggableTitle ? t('panels.dragToRearrange') : undefined"
+      @dragstart="draggableTitle && emit('titleDragStart', $event)"
+      @dragend="draggableTitle && emit('titleDragEnd')"
+    >
+      <span v-if="draggableTitle" class="drag-grip" aria-hidden="true">⋮⋮</span>
       <span class="tree-title">{{ t("panels.files") }}</span>
       <label class="dot-toggle" :title="t('tree.showDot')">
         <input
@@ -175,6 +187,19 @@ function expandTop() {
 </template>
 
 <style scoped>
+.tree-toolbar-drag {
+  cursor: grab;
+  user-select: none;
+}
+.tree-toolbar-drag:active {
+  cursor: grabbing;
+}
+.drag-grip {
+  color: var(--muted);
+  font-size: 0.65rem;
+  letter-spacing: -0.1em;
+  opacity: 0.7;
+}
 .file-tree {
   display: flex;
   flex-direction: column;

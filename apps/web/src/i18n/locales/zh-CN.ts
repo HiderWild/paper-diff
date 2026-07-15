@@ -65,6 +65,8 @@ export default {
     bottomLog: "输出",
     sideProject: "项目",
     sideZone: "比较区",
+    dragToRearrange: "拖动标题栏可调整布局顺序",
+    dragBottomResize: "拖动可调整底栏高度",
   },
   preview: {
     binaryImage: "二进制图片 — 无法在文本 diff 中显示",
