@@ -6,6 +6,19 @@ import MonacoDiff from "../../features/diff/MonacoDiff.vue";
 import DocxPreview from "../../features/preview/DocxPreview.vue";
 import ImagePreview from "../../features/preview/ImagePreview.vue";
 import PdfPane from "../../features/preview/PdfPane.vue";
+import MarkdownPreview from "../../features/viewer/MarkdownPreview.vue";
+import TablePreview from "../../features/viewer/TablePreview.vue";
+import {
+  registerExtraLanguages,
+} from "../../features/viewer/registerLanguages";
+import {
+  monacoLanguageFromPath,
+  viewerKindFromPath,
+  type ViewerKind,
+} from "../../features/viewer/languageFromPath";
+
+// Register extra Monarch languages (LaTeX, BibTeX) once per session.
+registerExtraLanguages();
 import type { DiffUnit } from "../../features/diff/sentenceMapper";
 import type { ViewTab } from "../../stores/workbench";
 import { useProjectStore } from "../../stores/project";
@@ -57,6 +70,15 @@ const units = ref<DiffUnit[]>([]);
 const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
 /** Fraction of width for the original Monaco pane (default 50%) */
 const splitRatio = ref(0.5);
+
+/** Viewer kind for the current editor path (md / csv / monaco). */
+const editorViewerKind = computed<ViewerKind>(() =>
+  props.tab.path ? viewerKindFromPath(props.tab.path) : "monaco"
+);
+/** Monaco language id for the current path. */
+const editorLanguage = computed(() =>
+  props.tab.path ? monacoLanguageFromPath(props.tab.path) : "plaintext"
+);
 
 function onSplitRatio(r: number) {
   if (!Number.isFinite(r) || r <= 0 || r >= 1) return;
@@ -474,6 +496,7 @@ function onAfterMutation(content: string | null) {
             '-r'
           "
           :path="tab.path || ''"
+          :language="editorLanguage"
           :left="displayLeft"
           :right="displayRight"
           :editable-left="effectiveEditable"
@@ -503,6 +526,7 @@ function onAfterMutation(content: string | null) {
             v-if="hasWorkSide"
             :key="tab.id + '-work-' + (tab.path || '') + '-t' + targetTick"
             :path="tab.path || ''"
+            :language="editorLanguage"
             :left="left"
             :right="left"
             :editable-left="true"
@@ -626,11 +650,60 @@ function onAfterMutation(content: string | null) {
           :work-url="imageUrls.work"
           :zone-url="imageUrls.zone"
         />
+        <MarkdownPreview
+          v-else-if="tab.kind === 'editor' && editorViewerKind === 'markdown'"
+          :key="tab.id + (tab.path || '') + '-md'"
+          :content="displayLeft"
+          :path="tab.path || ''"
+        >
+          <template #source>
+            <MonacoDiff
+              ref="diffRef"
+              :key="tab.id + (tab.path || '') + '-t' + targetTick + '-md-src'"
+              :path="tab.path || ''"
+              :language="editorLanguage"
+              :left="displayLeft"
+              :right="displayRight"
+              :editable-left="effectiveEditable"
+              :single-pane="true"
+              :monaco-theme="monacoTheme"
+              :word-wrap="wordWrap"
+              :show-gutter-actions="false"
+              @units="onUnits"
+              @left-change="onLeftChange"
+            />
+          </template>
+        </MarkdownPreview>
+        <TablePreview
+          v-else-if="tab.kind === 'editor' && editorViewerKind === 'table'"
+          :key="tab.id + (tab.path || '') + '-csv'"
+          :content="displayLeft"
+          :path="tab.path || ''"
+        >
+          <template #source>
+            <MonacoDiff
+              ref="diffRef"
+              :key="tab.id + (tab.path || '') + '-t' + targetTick + '-csv-src'"
+              :path="tab.path || ''"
+              :language="editorLanguage"
+              :left="displayLeft"
+              :right="displayRight"
+              :editable-left="effectiveEditable"
+              :single-pane="true"
+              :monaco-theme="monacoTheme"
+              :word-wrap="wordWrap"
+              :show-gutter-actions="false"
+              @units="onUnits"
+              @left-change="onLeftChange"
+            />
+          </template>
+        </TablePreview>
         <MonacoDiff
           v-else-if="tab.kind === 'editor'"
           ref="diffRef"
           :key="tab.id + (tab.path || '') + '-t' + targetTick + '-ed'"
           :path="tab.path || ''"
+          :language="editorLanguage"
           :left="displayLeft"
           :right="displayRight"
           :editable-left="effectiveEditable"
