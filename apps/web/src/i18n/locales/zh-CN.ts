@@ -78,6 +78,11 @@ export default {
     zoneImage: "比较区",
     loading: "加载中…",
     imageLoadError: "图片加载失败",
+    docxNotFound:
+      "无法加载 Word 文件（404）。若文件名曾显示为乱码，请用修复后的导入重新导入 zip/文件夹。",
+    docxUnsupported:
+      "该路径无法作为 Word 预览（扩展名不被允许或文件名编码异常）。",
+    docxEmpty: "Word 文件为空或下载失败。",
     docLegacyUnsupported:
       "暂不支持预览旧版 .doc（请在 Word 中另存为 .docx 后重试）。.docx 使用浏览器还原渲染，复杂版式可能与 Word 桌面版略有差异。",
   },

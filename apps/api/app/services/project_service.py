@@ -90,6 +90,44 @@ class ProjectService:
             )
         return {"projects": projects}
 
+    @staticmethod
+    def _decode_zip_filename(info: zipfile.ZipInfo) -> str:
+        """Recover Unicode path for zip entries.
+
+        Many Windows/Chinese zip tools store names as GBK/GB18030 bytes but
+        omit the UTF-8 flag (bit 11). Python then decodes via CP437 → mojibake
+        in the tree (e.g. 导出 → µ¼≥º) and file-raw looks up the wrong path.
+        """
+        name = (info.filename or "").replace("\\", "/")
+        # Official UTF-8 flag — trust the string
+        if info.flag_bits & 0x800:
+            return name
+
+        def score(s: str) -> int:
+            # Higher = more likely intended human filename
+            cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff")
+            repl = s.count("\ufffd")
+            return cjk * 10 - repl * 50 + (2 if s.isascii() else 0)
+
+        candidates: list[str] = [name]
+        raw: bytes | None = None
+        v = getattr(info, "orig_filename", None)
+        if isinstance(v, (bytes, bytearray)):
+            raw = bytes(v)
+        if raw is None:
+            try:
+                raw = name.encode("cp437")
+            except UnicodeEncodeError:
+                return name
+        for enc in ("utf-8", "gbk", "gb18030", "big5"):
+            try:
+                candidates.append(raw.decode(enc).replace("\\", "/"))
+            except UnicodeDecodeError:
+                continue
+        best = max(candidates, key=score)
+        # If nothing looks better than the original and original already has CJK, keep it
+        return best
+
     def _safe_extract_zip(self, data: bytes, dest: Path, label: str = "zip") -> None:
         if not data:
             raise AppError("INVALID_ZIP", f"{label} is empty", status_code=400)
@@ -113,7 +151,7 @@ class ProjectService:
             ) from e
         try:
             for info in zf.infolist():
-                name = info.filename.replace("\\", "/")
+                name = self._decode_zip_filename(info)
                 if name.endswith("/"):
                     continue
                 parts = [p for p in name.split("/") if p and p != "."]
@@ -868,7 +906,8 @@ class ProjectService:
         if suf not in RAW_PREVIEW_EXTS:
             raise AppError(
                 "UNSUPPORTED_MEDIA",
-                "only image/pdf paths are allowed for raw preview",
+                "only image/pdf/docx paths are allowed for raw preview "
+                f"(got extension {suf or '(none)'}; check filename encoding)",
                 status_code=415,
             )
         side_dir = ws._side_dir(side)

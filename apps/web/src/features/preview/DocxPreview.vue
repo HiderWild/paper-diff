@@ -32,6 +32,7 @@ function applyZoomStyle() {
 async function render(url: string) {
   error.value = "";
   loading.value = true;
+  hasContent.value = false;
   if (!host.value) {
     loading.value = false;
     return;
@@ -40,8 +41,21 @@ async function render(url: string) {
   abort = new AbortController();
   try {
     const res = await fetch(url, { signal: abort.signal });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const body = (await res.text()).slice(0, 280);
+      // 415/404 often mean bad path (e.g. mojibake Chinese zip names) or wrong type
+      throw new Error(
+        res.status === 404
+          ? t("preview.docxNotFound")
+          : res.status === 415
+            ? t("preview.docxUnsupported")
+            : `HTTP ${res.status}${body ? `: ${body}` : ""}`
+      );
+    }
     const buf = await res.arrayBuffer();
+    if (buf.byteLength < 4) {
+      throw new Error(t("preview.docxEmpty"));
+    }
     // Clear only after bytes ready to reduce flash
     host.value.innerHTML = "";
     await renderAsync(buf, host.value, undefined, {
@@ -59,6 +73,7 @@ async function render(url: string) {
   } catch (e) {
     if ((e as Error)?.name === "AbortError") return;
     error.value = e instanceof Error ? e.message : String(e);
+    hasContent.value = false;
   } finally {
     loading.value = false;
   }
@@ -147,6 +162,7 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   overflow: auto;
+  /* Viewer chrome (PDF-like); empty until pages render — not a "broken" state alone */
   background: #525659;
   display: flex;
   flex-direction: column;
