@@ -1,0 +1,403 @@
+"""Project lifecycle: create, import zips, read files, accept, undo, export."""
+
+from __future__ import annotations
+
+import io
+import shutil
+import uuid
+import zipfile
+from pathlib import Path
+
+from app.core.config import Settings
+from app.core.errors import AppError
+from app.domain.aligner import align_paths, is_text_path
+from app.domain.merge_engine import LineColRange, apply_replace, extract_range
+from app.domain.root_detect import detect_root
+from app.infra.workspace_fs import Workspace
+
+
+class ProjectService:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.settings.workspace_root.mkdir(parents=True, exist_ok=True)
+
+    def _ws(self, project_id: str) -> Workspace:
+        return Workspace(self.settings.workspace_root, project_id)
+
+    def create_project(self) -> dict:
+        pid = uuid.uuid4().hex[:12]
+        ws = self._ws(pid)
+        ws.ensure_dirs()
+        meta = {
+            "id": pid,
+            "status": "empty",
+            "root_file": None,
+            "revisions": {},
+            "accept_log": [],
+            "versions": {},
+        }
+        ws.save_meta(meta)
+        return {"id": pid, "status": "empty"}
+
+    def _safe_extract_zip(self, data: bytes, dest: Path) -> None:
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for info in zf.infolist():
+                name = info.filename.replace("\\", "/")
+                if name.endswith("/"):
+                    continue
+                parts = [p for p in name.split("/") if p and p != "."]
+                if any(p == ".." for p in parts):
+                    raise AppError("PATH_TRAVERSAL", "zip contains path traversal", status_code=400)
+                # strip single top-level folder if all entries share it
+                target = dest.joinpath(*parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(info) as src, open(target, "wb") as out:
+                    out.write(src.read())
+        # If dest has single dir and no files at top, hoist
+        children = list(dest.iterdir())
+        if len(children) == 1 and children[0].is_dir():
+            only = children[0]
+            tmp = dest.parent / f".hoist_{dest.name}"
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            only.rename(tmp)
+            shutil.rmtree(dest)
+            tmp.rename(dest)
+
+    def upload_versions(self, project_id: str, base_zip: bytes, revised_zip: bytes) -> dict:
+        ws = self._ws(project_id)
+        if not ws.project_dir.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        self._safe_extract_zip(base_zip, ws.base_dir)
+        self._safe_extract_zip(revised_zip, ws.revised_dir)
+        # init merged from base
+        ws.copy_tree(ws.base_dir, ws.merged_dir)
+
+        base_files = ws.list_files("base")
+        revised_files = ws.list_files("revised")
+        alignment = align_paths(base_files, revised_files)
+
+        def read_base(p: str) -> str:
+            return ws.read_text("base", p)
+
+        root = detect_root(base_files, read_base) or detect_root(
+            revised_files, lambda p: ws.read_text("revised", p)
+        )
+
+        revisions = {p: 0 for p in ws.list_files("merged") if is_text_path(p)}
+        meta = ws.load_meta()
+        meta.update(
+            {
+                "status": "ready",
+                "root_file": root,
+                "root_detection": "auto",
+                "revisions": revisions,
+                "accept_log": [],
+                "versions": {
+                    "base": {"source": "upload", "file_count": len(base_files)},
+                    "revised": {"source": "upload", "file_count": len(revised_files)},
+                    "merged": {"initialized_from": "base", "dirty": False},
+                },
+                "alignment": alignment,
+            }
+        )
+        ws.save_meta(meta)
+        return self.get_project(project_id)
+
+    def get_project(self, project_id: str) -> dict:
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        meta = ws.load_meta()
+        return {
+            "id": meta["id"],
+            "status": meta.get("status", "empty"),
+            "root_file": meta.get("root_file"),
+            "root_detection": meta.get("root_detection"),
+            "versions": meta.get("versions", {}),
+            "alignment": meta.get("alignment", {}),
+        }
+
+    def tree(self, project_id: str) -> dict:
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        return {
+            "base": ws.list_files("base"),
+            "revised": ws.list_files("revised"),
+            "merged": ws.list_files("merged"),
+        }
+
+    def file_pair(self, project_id: str, path: str) -> dict:
+        ws = self._ws(project_id)
+        meta = ws.load_meta()
+        if meta.get("status") != "ready":
+            raise AppError("VALIDATION_ERROR", "versions not uploaded", status_code=400)
+
+        def side_blob(side: str) -> dict | None:
+            try:
+                content = ws.read_text(side, path)
+            except AppError as e:
+                if e.code == "FILE_NOT_FOUND":
+                    return None
+                raise
+            return {
+                "content": content,
+                "sha256": ws.file_sha256(content),
+            }
+
+        base_b = side_blob("base")
+        rev_b = side_blob("revised")
+        merged_b = side_blob("merged")
+        if base_b is None and rev_b is None and merged_b is None:
+            # force path validation
+            ws.resolve_under(ws.merged_dir, path)
+            raise AppError("FILE_NOT_FOUND", f"file not found: {path}", status_code=404)
+
+        rev_num = meta.get("revisions", {}).get(path, 0)
+        return {
+            "path": path,
+            "encoding": "utf-8",
+            "base": base_b or {"content": "", "sha256": ws.file_sha256("")},
+            "revised": rev_b or {"content": "", "sha256": ws.file_sha256("")},
+            "merged": {
+                **(merged_b or {"content": "", "sha256": ws.file_sha256("")}),
+                "revision": rev_num,
+            },
+        }
+
+    def diff_index(self, project_id: str) -> dict:
+        ws = self._ws(project_id)
+        meta = ws.load_meta()
+        if meta.get("status") != "ready":
+            raise AppError("VALIDATION_ERROR", "versions not uploaded", status_code=400)
+        base_files = set(ws.list_files("base"))
+        rev_files = set(ws.list_files("revised"))
+        merged_files = set(ws.list_files("merged"))
+        all_paths = sorted(base_files | rev_files | merged_files)
+        files = []
+        for p in all_paths:
+            kind = "text" if is_text_path(p) else "binary"
+            in_b, in_r, in_m = p in base_files, p in rev_files, p in merged_files
+            if in_b and in_r:
+                if kind == "text":
+                    bc = ws.read_text("base", p)
+                    rc = ws.read_text("revised", p)
+                    status = "same" if bc == rc else "modified"
+                    b_sha = ws.file_sha256(bc)
+                    r_sha = ws.file_sha256(rc)
+                else:
+                    bb = ws.resolve_under(ws.base_dir, p).read_bytes()
+                    rb = ws.resolve_under(ws.revised_dir, p).read_bytes()
+                    status = "same" if bb == rb else "modified"
+                    b_sha = hashlib_hex(bb)
+                    r_sha = hashlib_hex(rb)
+            elif in_r and not in_b:
+                status = "added"
+                b_sha, r_sha = None, None
+            elif in_b and not in_r:
+                status = "removed"
+                b_sha, r_sha = None, None
+            else:
+                status = "merged_only"
+                b_sha, r_sha = None, None
+
+            m_sha = None
+            merged_equals_base = None
+            if in_m and kind == "text":
+                mc = ws.read_text("merged", p)
+                m_sha = ws.file_sha256(mc)
+                if in_b:
+                    merged_equals_base = mc == ws.read_text("base", p)
+
+            files.append(
+                {
+                    "path": p,
+                    "status": status,
+                    "kind": kind,
+                    "base_sha256": b_sha,
+                    "revised_sha256": r_sha,
+                    "merged_sha256": m_sha,
+                    "merged_equals_base": merged_equals_base,
+                    "revision": meta.get("revisions", {}).get(p, 0),
+                }
+            )
+        return {"files": files}
+
+    def accept(self, project_id: str, ops: list[dict]) -> dict:
+        ws = self._ws(project_id)
+        meta = ws.load_meta()
+        if not ops:
+            raise AppError("VALIDATION_ERROR", "no ops", status_code=422)
+        # MVP: all ops must be same file
+        file_path = ops[0]["file"]
+        for op in ops:
+            if op["file"] != file_path:
+                raise AppError(
+                    "VALIDATION_ERROR",
+                    "batch multi-file not supported in MVP",
+                    status_code=422,
+                )
+
+        merged = ws.read_text("merged", file_path)
+        revised = ws.read_text("revised", file_path)
+        current_rev = meta.get("revisions", {}).get(file_path, 0)
+
+        # apply ops in order; each expected revision checked against starting rev + i
+        content = merged
+        for i, op in enumerate(ops):
+            expected = op.get("expected_merged_revision", current_rev)
+            if expected != current_rev + i and i == 0:
+                # only strict on first op for simplicity; re-check file content revision
+                if expected != current_rev:
+                    raise AppError(
+                        "MERGE_CONFLICT",
+                        "merged revision mismatch",
+                        status_code=409,
+                        details={"expected": expected, "actual": current_rev},
+                    )
+            left = op["left_range"]
+            right = op["right_range"]
+            left_r = LineColRange(
+                start_line=left["start_line"],
+                start_col=left["start_col"],
+                end_line=left["end_line"],
+                end_col=left["end_col"],
+            )
+            right_r = LineColRange(
+                start_line=right["start_line"],
+                start_col=right["start_col"],
+                end_line=right["end_line"],
+                end_col=right["end_col"],
+            )
+            replacement = extract_range(revised, right_r)
+            # snapshot before first op
+            if i == 0:
+                snap_id = f"{file_path.replace('/', '__')}__{current_rev}"
+                snap_path = ws.snapshots_dir / f"{snap_id}.txt"
+                snap_path.write_text(content, encoding="utf-8")
+            content = apply_replace(content, left_r, replacement)
+
+        new_rev = current_rev + 1
+        ws.write_text("merged", file_path, content)
+        meta.setdefault("revisions", {})[file_path] = new_rev
+        meta.setdefault("accept_log", []).append(
+            {
+                "file": file_path,
+                "from_revision": current_rev,
+                "to_revision": new_rev,
+                "ops": ops,
+                "snapshot": f"{file_path.replace('/', '__')}__{current_rev}.txt",
+            }
+        )
+        if meta.get("versions", {}).get("merged"):
+            meta["versions"]["merged"]["dirty"] = True
+        ws.save_meta(meta)
+        return {
+            "applied": [op.get("op_id") for op in ops],
+            "rejected": [],
+            "file": file_path,
+            "merged": {
+                "content": content,
+                "sha256": ws.file_sha256(content),
+                "revision": new_rev,
+            },
+            "dirty": True,
+        }
+
+    def accept_all(self, project_id: str, file_path: str, expected_merged_revision: int) -> dict:
+        ws = self._ws(project_id)
+        meta = ws.load_meta()
+        current_rev = meta.get("revisions", {}).get(file_path, 0)
+        if expected_merged_revision != current_rev:
+            raise AppError(
+                "MERGE_CONFLICT",
+                "merged revision mismatch",
+                status_code=409,
+                details={"expected": expected_merged_revision, "actual": current_rev},
+            )
+        before = ws.read_text("merged", file_path)
+        snap_id = f"{file_path.replace('/', '__')}__{current_rev}"
+        (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
+        revised = ws.read_text("revised", file_path)
+        ws.write_text("merged", file_path, revised)
+        new_rev = current_rev + 1
+        meta.setdefault("revisions", {})[file_path] = new_rev
+        meta.setdefault("accept_log", []).append(
+            {
+                "file": file_path,
+                "from_revision": current_rev,
+                "to_revision": new_rev,
+                "ops": [{"type": "accept_all"}],
+                "snapshot": f"{snap_id}.txt",
+            }
+        )
+        if meta.get("versions", {}).get("merged"):
+            meta["versions"]["merged"]["dirty"] = True
+        ws.save_meta(meta)
+        return {
+            "file": file_path,
+            "merged": {
+                "content": revised,
+                "sha256": ws.file_sha256(revised),
+                "revision": new_rev,
+            },
+            "dirty": True,
+        }
+
+    def undo(self, project_id: str, steps: int = 1) -> dict:
+        ws = self._ws(project_id)
+        meta = ws.load_meta()
+        log = meta.get("accept_log", [])
+        if not log:
+            raise AppError("VALIDATION_ERROR", "nothing to undo", status_code=400)
+        last_file = None
+        last_content = None
+        last_rev = None
+        for _ in range(steps):
+            if not log:
+                break
+            entry = log.pop()
+            snap = entry["snapshot"]
+            file_path = entry["file"]
+            snap_path = ws.snapshots_dir / snap
+            if not snap_path.exists():
+                raise AppError("INTERNAL", f"missing snapshot {snap}", status_code=500)
+            content = snap_path.read_text(encoding="utf-8")
+            ws.write_text("merged", file_path, content)
+            meta.setdefault("revisions", {})[file_path] = entry["from_revision"]
+            last_file = file_path
+            last_content = content
+            last_rev = entry["from_revision"]
+        meta["accept_log"] = log
+        if not log and meta.get("versions", {}).get("merged"):
+            meta["versions"]["merged"]["dirty"] = False
+        ws.save_meta(meta)
+        return {
+            "file": last_file,
+            "merged": {
+                "content": last_content,
+                "sha256": ws.file_sha256(last_content or ""),
+                "revision": last_rev,
+            },
+        }
+
+    def export_merged_zip(self, project_id: str) -> bytes:
+        ws = self._ws(project_id)
+        if not ws.merged_dir.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in ws.list_files("merged"):
+                full = ws.resolve_under(ws.merged_dir, p)
+                zf.write(full, p)
+        return buf.getvalue()
+
+
+def hashlib_hex(data: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(data).hexdigest()
