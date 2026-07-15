@@ -678,14 +678,35 @@ function onTreeOpen(path: string) {
   void store.openFile(path);
   const fk = workbench.fileKindForPath(path);
   let tool: ToolKind =
-    fk === "pdf" ? "pdf" : fk === "word" ? "word" : "comparer";
+    fk === "pdf"
+      ? "pdf"
+      : fk === "word"
+        ? "word"
+        : fk === "image"
+          ? "editor"
+          : "comparer";
+
+  // PDF/Word always prefer dedicated preview tool (don't stick on wrong focused tab)
+  if (tool === "pdf" || tool === "word") {
+    const empty = workbench.allTabs.find((v) => v.kind === tool && !v.path);
+    if (empty) {
+      workbench.bindPath(empty.id, path);
+      return;
+    }
+    const any = workbench.allTabs.find((v) => v.kind === tool);
+    if (any) {
+      workbench.bindPath(any.id, path);
+      return;
+    }
+    workbench.openTool(tool, path);
+    return;
+  }
 
   const focused = workbench.focusedTab;
   if (focused && workbench.toolAcceptsPath(focused.kind, path)) {
     workbench.bindPath(focused.id, path);
     return;
   }
-  // Prefer empty matching kind tab
   const empty = workbench.allTabs.find((v) => v.kind === tool && !v.path);
   if (empty) {
     workbench.bindPath(empty.id, path);
@@ -698,15 +719,37 @@ function onTreeOpen(path: string) {
     workbench.bindPath(any.id, path);
     return;
   }
-  if (tool === "comparer" && (fk === "image" || fk === "other")) {
-    tool = "editor";
-  }
   workbench.openTool(tool, path);
 }
 
 function onWorkbenchFileDrop(tabId: string, path: string) {
-  const tab = workbench.getTab(tabId);
+  let tab = workbench.getTab(tabId);
   if (!tab) return;
+  if (!workbench.toolAcceptsPath(tab.kind, path)) {
+    // open/focus correct tool instead of dead drop
+    const fk = workbench.fileKindForPath(path);
+    const kind: ToolKind =
+      fk === "pdf" ? "pdf" : fk === "word" ? "word" : "comparer";
+    const empty = workbench.allTabs.find((v) => v.kind === kind && !v.path);
+    if (empty) {
+      tabId = empty.id;
+      tab = empty;
+    } else {
+      const opened = workbench.openTool(kind, path);
+      if (!opened) {
+        workbench.toast(
+          t("tools.unsupportedFile", {
+            tool: t(`tools.${tab.kind}`),
+            file: path,
+          }),
+          "warn"
+        );
+        return;
+      }
+      void store.openFile(path);
+      return;
+    }
+  }
   const ok = workbench.bindPathWithMessage(
     tabId,
     path,
@@ -715,7 +758,7 @@ function onWorkbenchFileDrop(tabId: string, path: string) {
       file: path,
     })
   );
-  if (ok && (tab.kind === "comparer" || tab.kind === "editor")) {
+  if (ok) {
     void store.openFile(path);
   }
 }
