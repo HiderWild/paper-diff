@@ -11,7 +11,9 @@ cd apps/web && npm run dev
 
 1. Open web UI (zh-CN default).
 2. **Import project** — single zip with `main.tex` (+ optional `fig.png`).
-3. Tree shows files; open `.tex` → Monaco left filled.
+3. Tree shows files; open `.tex` → Monaco left filled. Comparer title is **「比较器」** only when empty; with file shows **谁 ↔ 谁**.  
+3b. Click **⇄ 对调左右** → sides swap display.  
+3c. Click a project **`.pdf`** in the tree → PDF pane shows that file (title `PDF · path`), not only compile artifact.
 4. **Add compare zone** (zip or folder); activate → right side shows zone text; tree badges update.
 5. Accept a word/sentence chip → left updates; **Undo** restores.
 6. Select TeX root → **Compile** (Docker optional; without image expect clear error).

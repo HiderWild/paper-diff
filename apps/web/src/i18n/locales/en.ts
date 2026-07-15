@@ -47,9 +47,15 @@ export default {
   panels: {
     files: "Files",
     compileErrors: "Compile errors",
-    diffHeader: "Diff — left: project · right: compare zone",
-    diffHeaderPreview: "Diff — left: commit A · right: commit B (preview)",
+    comparer: "Comparer",
+    comparerEmpty: "Open a file to compare",
+    swapSides: "Swap sides",
+    diffHeader: "Comparer",
+    diffHeaderWith: "Comparer · {left} ↔ {right}",
+    diffHeaderPreview: "Comparer · commit {base} ↔ {revised}",
     pdfPreview: "PDF preview",
+    pdfOfFile: "PDF · {path}",
+    pdfCompile: "PDF · compile output",
     compileLog: "Compile log…",
     explorer: "Explorer",
     zones: "Zones",
@@ -57,6 +63,8 @@ export default {
     compile: "Compile",
     agent: "Agent",
     bottomLog: "Output",
+    sideProject: "project",
+    sideZone: "zone",
   },
   preview: {
     binaryImage: "Binary image — text diff unavailable",
@@ -147,7 +155,7 @@ export default {
     selectRoot: "Select a main .tex entry before compile",
   },
   pdf: {
-    empty: "No PDF yet — run Compile",
+    empty: "No PDF",
   },
   tree: {
     showDot: "Show dotfiles / folders",

@@ -47,9 +47,15 @@ export default {
   panels: {
     files: "文件",
     compileErrors: "编译错误",
-    diffHeader: "差异 — 左：项目 · 右：比较区",
-    diffHeaderPreview: "差异 — 左：提交 A · 右：提交 B（预览）",
+    comparer: "比较器",
+    comparerEmpty: "打开文件以比较",
+    swapSides: "对调左右",
+    diffHeader: "比较器",
+    diffHeaderWith: "比较器 · {left} ↔ {right}",
+    diffHeaderPreview: "比较器 · 提交 {base} ↔ {revised}",
     pdfPreview: "PDF 预览",
+    pdfOfFile: "PDF · {path}",
+    pdfCompile: "PDF · 编译产物",
     compileLog: "编译日志…",
     explorer: "资源",
     zones: "比较区",
@@ -57,6 +63,8 @@ export default {
     compile: "编译",
     agent: "智能体",
     bottomLog: "输出",
+    sideProject: "项目",
+    sideZone: "比较区",
   },
   preview: {
     binaryImage: "二进制图片 — 无法在文本 diff 中显示",
@@ -147,7 +155,7 @@ export default {
     selectRoot: "请先选择主 TeX 入口再编译",
   },
   pdf: {
-    empty: "尚无 PDF — 请先编译",
+    empty: "尚无 PDF",
   },
   tree: {
     showDot: "显示以 . 开头的目录/文件",

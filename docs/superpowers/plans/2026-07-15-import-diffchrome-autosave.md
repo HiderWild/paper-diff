@@ -20,6 +20,11 @@
 | R1 | 澄清并（可选）迁移「接受报告」入口 | P1 |
 | S1 | **全局自动保存**开关，**默认开启** | P0 |
 | S2 | 计时策略：无脏改不计时；有改动 3s 空闲后一次性落盘；新改动重置计时 | P0 |
+| C1 | 比较器标题默认只写 **「比较器」**；有内容时再写「谁 vs 谁」 | P0 |
+| C2 | 默认左=项目、右=比较区；**允许用户颠倒左右** | P0 |
+| C3 | 「导入项目后显示目录树」等文案 **仅出现在目录树空态**，不出现在比较器/其他栏 | P0 |
+| P1 | 目录树点击 **.pdf** → PDF 预览打开该文件（非强制「最新编译产物」） | P0 |
+| P2 | PDF 预览 **不加锁**；同一路径文件被更新时预览自动刷新 | P0 |
 
 ---
 
@@ -115,16 +120,37 @@
 
 比较区活动栏仍可保留「快捷再导入」，但与模态文案一致（可选本计划 I4：侧栏按钮也打开同一模态）。
 
-### 3.2 Diff 顶部 chrome（示意）
+### 3.2 比较器 chrome（示意）
+
+**无打开文件时标题仅：**
 
 ```
-┌ Diff — 左：项目 · 右：比较区 | dirty● | AutoSave 3s … ─┐
-│ [接受整文件] [撤销最近] [过滤: 句/词/块]   chips…        │
-│ ┌──────────── original (work 可编辑*) ──┬── revised ─┐ │
-│ │                                      │  (只读)     │ │
+┌ 比较器                                              ┐
+│ （空：不要写「导入项目后显示目录树」）                 │
 ```
 
-\* 两提交 preview / 无 zone 纯浏览：规则见 §5。
+**有内容时标题：**
+
+```
+┌ 比较器 · 项目 ↔ 比较区「imported」  [⇄ 对调]  dirty● ─┐
+│ [接受整文件]  chips…                                   │
+│ ┌──── 左（默认可编辑 work） ──┬── 右（zone 只读） ──┐ │
+```
+
+两提交预览：`比较器 · 提交 a1b2c3d ↔ e4f5g6h`。
+
+**对调：** 显示对调；Accept 时 range 映射回「work←zone」语义（见 §5.1）。
+
+### 3.2b PDF 预览
+
+| 动作 | 行为 |
+|------|------|
+| 树点击 `*.pdf` | 预览 **该路径** 的 work 文件（raw）；显示文件名 |
+| 编译成功 | 若当前预览源是 **编译产物** 或用户在看 artifacts/同源路径 → 用新 URL（cache-bust）刷新 |
+| 预览中文件被 PUT/重新导入 | 对同一 path 加 `?t=` 刷新 PdfPane |
+| 锁 | **无锁**；允许多次打开切换 |
+
+空态文案：`pdf.empty` = 「尚无 PDF」类短句，**禁止**复用 `tree.empty`。
 
 ### 3.3 自动保存
 
@@ -156,6 +182,25 @@
 | 仅 work（无 zone） | 可编辑（可单栏或右空） | 空/隐藏 | 关 | 同上 |
 | 两提交 git preview | **只读** | 只读 | 关 | 关 |
 | binary / image | 无 Monaco | — | 关 | 关 |
+| 左右颠倒 | 显示 zone / work | 见 §5.1 | 映射 Accept | 仍写 work |
+
+### 5.1 左右颠倒与 Accept
+
+Monaco 显示：
+
+- 默认：`left=work, right=zone`
+- 颠倒：`left=zone, right=work`（仅显示）
+
+Accept API 永远：`replacement = extract(zone, zone_range)` → `apply(work, work_range)`。
+
+颠倒时 unit 来自 swapped 两侧，提交 Accept 前 **对调 left_range/right_range**（unit.left 对应显示左=zone → 作为 right_range 源；unit.right 作为 left_range 目标）。
+
+### 5.2 PDF 打开语义
+
+- `openFile('foo.pdf')` → `pdfHref = work/file-raw?path=foo.pdf&t=…`，`pdfSource='file'`, `pdfPath='foo.pdf'`
+- `doCompile` 成功 → `pdfHref = artifacts/pdf?job_id=&t=`，`pdfSource='compile'`, `pdfPath=null`（或 root 对应产物名）
+- 若 `pdfSource==='file' && pdfPath` 且 work 该路径变更（导入/保存）→ 更新 `t`
+- PdfPane `watch(url)` 已重建渲染；确保 cache-bust 改变 url
 
 **Accept 与脏缓冲：**
 

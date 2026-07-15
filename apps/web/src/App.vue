@@ -47,6 +47,9 @@ const {
   imagePreview,
   csvPreviewResult,
   uploadProgress,
+  sidesSwapped,
+  pdfSource,
+  pdfTitle,
 } = storeToRefs(store);
 
 const {
@@ -195,8 +198,41 @@ const activeZoneName = computed(() => {
   return z?.name || "";
 });
 
+const comparerTitle = computed(() => {
+  if (gitPreviewPair.value) {
+    return t("panels.diffHeaderPreview", {
+      base: gitPreviewPair.value.baseRef.slice(0, 7),
+      revised: gitPreviewPair.value.revisedRef.slice(0, 7),
+    });
+  }
+  const hasContent = !!(pair.value || imagePreview.value || binaryPreview.value);
+  if (!hasContent) return t("panels.comparer");
+  const proj = t("panels.sideProject");
+  const zoneLabel = activeZoneName.value
+    ? `${t("panels.sideZone")}「${activeZoneName.value}」`
+    : t("panels.sideZone");
+  const left = sidesSwapped.value ? zoneLabel : proj;
+  const right = sidesSwapped.value ? proj : zoneLabel;
+  return t("panels.diffHeaderWith", { left, right });
+});
+
+const pdfPaneTitle = computed(() => {
+  if (pdfSource.value === "file" && pdfTitle.value) {
+    return t("panels.pdfOfFile", { path: pdfTitle.value });
+  }
+  if (pdfSource.value === "compile") return t("panels.pdfCompile");
+  return t("panels.pdfPreview");
+});
+
 watch(leftContent, (c) => {
   if (c != null) diffRef.value?.setLeftContent(c);
+});
+
+watch(sidesSwapped, () => {
+  // force unit recompute via key on Monaco or content rebind
+  if (pair.value) {
+    diffRef.value?.setLeftContent(leftContent.value);
+  }
 });
 
 onMounted(() => {
@@ -1160,14 +1196,20 @@ function formatCommitDate(iso?: string) {
         @mousedown="startResize('files', $event)"
       />
 
-      <!-- Editor (always grows) -->
+      <!-- Comparer (always grows) -->
       <section class="pane editor-pane">
-        <div class="panel-header">
-          {{
-            gitPreviewPair
-              ? t("panels.diffHeaderPreview")
-              : t("panels.diffHeader")
-          }}
+        <div class="panel-header side-header comparer-header">
+          <span>{{ comparerTitle }}</span>
+          <button
+            v-if="pair && !gitPreviewPair"
+            type="button"
+            class="mini secondary"
+            :title="t('panels.swapSides')"
+            :class="{ 'active-toggle': sidesSwapped }"
+            @click="store.toggleSidesSwapped()"
+          >
+            ⇄ {{ t("panels.swapSides") }}
+          </button>
         </div>
         <div v-if="pair && !binaryPreview && !imagePreview" class="unit-bar">
           <button
@@ -1234,7 +1276,11 @@ function formatCommitDate(iso?: string) {
         <MonacoDiff
           v-if="pair && !binaryPreview && !imagePreview"
           ref="diffRef"
-          :key="(currentPath || 'x') + (gitPreviewPair ? '-gp' : '')"
+          :key="
+            (currentPath || 'x') +
+            (gitPreviewPair ? '-gp' : '') +
+            (sidesSwapped ? '-sw' : '')
+          "
           :path="currentPath || ''"
           :left="leftContent"
           :right="rightContent"
@@ -1243,14 +1289,22 @@ function formatCommitDate(iso?: string) {
         <ImagePreview
           v-else-if="imagePreview"
           :path="imagePreview.path"
-          :work-url="imagePreview.workUrl"
-          :zone-url="imagePreview.zoneUrl"
+          :work-url="
+            sidesSwapped && imagePreview.zoneUrl
+              ? imagePreview.zoneUrl
+              : imagePreview.workUrl
+          "
+          :zone-url="
+            sidesSwapped
+              ? imagePreview.workUrl
+              : imagePreview.zoneUrl
+          "
         />
         <div v-else-if="binaryPreview" class="empty-editor binary-preview">
           <p class="muted">{{ binaryPreview.path }}</p>
           <p>{{ binaryPreview.message }}</p>
         </div>
-        <div v-else class="empty-editor">{{ t("tree.empty") }}</div>
+        <div v-else class="empty-editor">{{ t("panels.comparerEmpty") }}</div>
       </section>
 
       <div
@@ -1266,7 +1320,7 @@ function formatCommitDate(iso?: string) {
         :style="{ width: pdfWidth + 'px', flex: '0 0 auto' }"
       >
         <div class="panel-header side-header">
-          <span>{{ t("panels.pdfPreview") }}</span>
+          <span>{{ pdfPaneTitle }}</span>
           <button
             type="button"
             class="header-hide"
