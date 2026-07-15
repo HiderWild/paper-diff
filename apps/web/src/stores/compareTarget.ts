@@ -100,9 +100,14 @@ export function formatTargetLabel(t: CompareTarget | null): string {
 }
 
 /**
- * Prefer per-file override; else project default.
- * When only default exists and workPath is given, substitute path with workPath
- * so opening another file does not keep a stale compare path (M2).
+ * Prefer per-file override; else project default / session — **keep stored path**.
+ *
+ * Previously (M2) rewrote default path to workPath so "same relative path" pairs
+ * auto-bound. That caused refresh ghosts: work `a.tex` + zone only has `b.tex`
+ * still showed a compare label for `a.tex` while content load failed → empty pane.
+ *
+ * Explicit bindings only: byWorkPath[workPath], or default/session with its own path.
+ * Callers that need same-path convenience must set a file override when picking.
  */
 export function resolveTargetForWork(
   entry: ProjectMemory | null | undefined,
@@ -114,33 +119,9 @@ export function resolveTargetForWork(
   }
   const def = entry?.default ?? null;
   if (def) {
-    if (workPath) {
-      if (def.kind === "zone") {
-        return {
-          target: { kind: "zone", zoneId: def.zoneId, path: workPath },
-          scope: "project",
-        };
-      }
-      return {
-        target: { kind: "git", ref: def.ref, path: workPath },
-        scope: "project",
-      };
-    }
     return { target: def, scope: "project" };
   }
   if (session) {
-    if (workPath) {
-      if (session.kind === "zone") {
-        return {
-          target: { kind: "zone", zoneId: session.zoneId, path: workPath },
-          scope: "project",
-        };
-      }
-      return {
-        target: { kind: "git", ref: session.ref, path: workPath },
-        scope: "project",
-      };
-    }
     return { target: session, scope: "project" };
   }
   return { target: null, scope: "none" };

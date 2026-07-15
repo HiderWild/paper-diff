@@ -66,8 +66,13 @@ const singlePane = computed(() => {
   return false;
 });
 
-/** True once we intentionally loaded a right-hand target (even if empty file). */
+/**
+ * Compare side is "ready" only after a successful content load (even if empty string).
+ * Failed lookup / missing file must stay unresolved so UI shows pick panel, not a blank editor.
+ */
 const rightResolved = ref(false);
+/** Last successfully loaded compare target (for labels); cleared when load fails. */
+const loadedCompareTarget = ref<CompareTarget | null>(null);
 
 /** Work path + resolved compare target — show real red/green diff + arrows. */
 const compareReady = computed(() => {
@@ -75,9 +80,15 @@ const compareReady = computed(() => {
   return !!(props.tab.path && rightResolved.value);
 });
 
+/** Work side content successfully available (path bound and load finished with content or empty file). */
+const workLoaded = ref(false);
+
 /** Either side present — one-sided editor/viewer or empty dual drop. */
 const hasWorkSide = computed(
-  () => props.tab.kind === "comparer" && !!props.tab.path
+  () =>
+    props.tab.kind === "comparer" &&
+    !!props.tab.path &&
+    workLoaded.value
 );
 const hasCompareSide = computed(
   () => props.tab.kind === "comparer" && rightResolved.value
@@ -86,25 +97,22 @@ const hasAnySide = computed(
   () => hasWorkSide.value || hasCompareSide.value
 );
 
-/** Resolved compare target for labels (zone name / git short hash). */
-const resolvedTarget = computed<CompareTarget | null>(() => {
-  if (props.tab.kind !== "comparer") return null;
-  if (props.tab.path) {
-    return compareTarget.resolveForWork(project.projectId, props.tab.path);
-  }
-  return compareTarget.getForProject(project.projectId);
-});
-
+/** Labels only from *loaded* compare target — never ghost paths from failed memory. */
 const projectSideLabel = computed(() => {
-  if (props.tab.path) {
+  if (hasWorkSide.value && props.tab.path) {
     return `${t("comparer.fromProject")} · ${props.tab.path}`;
+  }
+  if (props.tab.path && !workLoaded.value) {
+    return `${t("comparer.fromProject")} · ${props.tab.path} · ${t("comparer.loadFailedShort")}`;
   }
   return t("comparer.fromProject");
 });
 
 const compareSideLabel = computed(() => {
-  const mem = resolvedTarget.value;
-  if (!mem) return t("comparer.emptyCompareHint");
+  const mem = loadedCompareTarget.value;
+  if (!mem || !rightResolved.value) {
+    return t("comparer.emptyCompareHint");
+  }
   if (mem.kind === "zone") {
     const z = zones.value.find((x) => x.id === mem.zoneId);
     const name = z?.name || mem.zoneId.slice(0, 8);
@@ -129,6 +137,8 @@ async function loadBoundPath(path: string | null) {
   left.value = "";
   right.value = "";
   rightResolved.value = false;
+  loadedCompareTarget.value = null;
+  workLoaded.value = false;
   error.value = "";
   imageUrls.value = null;
   rawUrl.value = null;
@@ -146,6 +156,7 @@ async function loadBoundPath(path: string | null) {
       const base = workFileRawUrl(pid, path);
       const sep = base.includes("?") ? "&" : "?";
       rawUrl.value = `${base}${sep}t=${Date.now()}`;
+      workLoaded.value = true;
       return;
     }
     if (props.tab.kind === "word") {
@@ -154,6 +165,7 @@ async function loadBoundPath(path: string | null) {
       const base = workFileRawUrl(pid, path);
       const sep = base.includes("?") ? "&" : "?";
       rawUrl.value = `${base}${sep}t=${Date.now()}`;
+      workLoaded.value = true;
       return;
     }
     if (props.tab.kind === "editor") {
@@ -163,6 +175,7 @@ async function loadBoundPath(path: string | null) {
           work: workFileRawUrl(pid, path),
           zone: null,
         };
+        workLoaded.value = true;
         return;
       }
       const pair = await getFilePair(pid, path);
@@ -172,6 +185,7 @@ async function loadBoundPath(path: string | null) {
         pair.merged.content;
       left.value = content;
       right.value = content;
+      workLoaded.value = true;
       if (props.active) {
         project.pair = pair;
         project.currentPath = path;
@@ -179,62 +193,72 @@ async function loadBoundPath(path: string | null) {
       return;
     }
     // comparer: left=work path (optional), right=remembered target (zone/git, optional)
-    // One-sided is allowed: show that side as editor/viewer until both are ready.
+    // Content load success gates UI labels and panes (no ghost sides after refresh).
     if (path) {
-      let workContent = "";
       try {
         const wf = await getWorkFileText(pid, path);
-        workContent = wf.content;
+        left.value = project.localBuffers[path] ?? wf.content;
+        workLoaded.value = true;
       } catch {
         try {
           const pair0 = await getFilePair(pid, path);
-          workContent = pair0.left?.content ?? pair0.merged.content;
+          left.value =
+            project.localBuffers[path] ??
+            pair0.left?.content ??
+            pair0.merged.content;
+          workLoaded.value = true;
         } catch {
-          workContent = "";
+          left.value = "";
+          workLoaded.value = false;
         }
       }
-      left.value = project.localBuffers[path] ?? workContent;
     } else {
       left.value = "";
+      workLoaded.value = false;
     }
 
-    // Only use remembered compare target (file / project default / session).
-    // Do NOT auto-seed active zone — empty compare side is intentional until user drops / "Add to compare" / vs…
+    // Explicit memory only (file override / project default path as stored — no rewrite)
     const mem: CompareTarget | null = path
       ? compareTarget.resolveForWork(project.projectId, path)
       : compareTarget.getForProject(project.projectId);
 
     if (mem?.kind === "git") {
-      const showPath = mem.path || path;
+      const showPath = mem.path;
       if (showPath) {
         try {
           const shown = await gitShow(pid, mem.ref, showPath);
           right.value = shown.content ?? "";
           rightResolved.value = true;
+          loadedCompareTarget.value = mem;
         } catch {
           right.value = "";
           rightResolved.value = false;
+          loadedCompareTarget.value = null;
         }
       }
     } else if (mem?.kind === "zone") {
-      const zPath = mem.path || path;
+      const zPath = mem.path;
       if (zPath) {
         try {
           const zf = await getZoneFileText(pid, mem.zoneId, zPath);
           right.value = zf.content;
           rightResolved.value = true;
+          loadedCompareTarget.value = mem;
         } catch {
+          // Zone file missing / zone deleted → empty pick side (label not sticky)
           right.value = "";
           rightResolved.value = false;
+          loadedCompareTarget.value = null;
         }
       }
     } else {
       right.value = "";
       rightResolved.value = false;
+      loadedCompareTarget.value = null;
     }
 
     // Keep pair meta for accept revision when same-path zone compare
-    if (path) {
+    if (path && workLoaded.value) {
       try {
         const pair = await getFilePair(pid, path);
         if (props.active) {

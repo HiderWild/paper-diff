@@ -275,6 +275,7 @@ export default {
     emptyProjectHint: "No project file bound yet. Open the explorer and choose one.",
     emptyCompareHint:
       "No compare target yet. Pick a file from a zone or a git commit.",
+    loadFailedShort: "load failed",
   },
   hoverAccept: {
     title: "Word / phrase change",

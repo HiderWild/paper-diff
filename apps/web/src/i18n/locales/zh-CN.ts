@@ -269,6 +269,7 @@ export default {
     pickFromGit: "从 Git 提交选择…",
     emptyProjectHint: "尚未绑定项目文件。打开资源树选择一个文件。",
     emptyCompareHint: "尚未绑定对照目标。可从对比区或某个 Git 提交中选择文件。",
+    loadFailedShort: "加载失败",
   },
   hoverAccept: {
     title: "词/短语差异",

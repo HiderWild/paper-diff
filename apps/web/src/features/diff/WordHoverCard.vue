@@ -190,8 +190,10 @@ onBeforeUnmount(() => {
 .word-hover-card {
   position: fixed;
   z-index: 220;
-  min-width: 14rem;
-  max-width: min(22rem, 90vw);
+  /* Fit short phrases; allow up to ~3× previous 22rem cap before forced wrap */
+  width: max-content;
+  min-width: 12rem;
+  max-width: min(66rem, 92vw);
   padding: 0.55rem 0.65rem 0.5rem;
   border-radius: 8px;
   background: var(--panel, #1a2332);
