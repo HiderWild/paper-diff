@@ -116,15 +116,31 @@ function nid(prefix: string): string {
   return `${prefix}-${idSeq}`;
 }
 
+export type BuildDiffUnitsOptions = {
+  /** Max line-change hunks to process; undefined/null = all */
+  maxHunks?: number | null;
+  /** When false, only emit hunk units (skip word/sentence). Default true. */
+  wordUnits?: boolean;
+};
+
 /** Build units from line changes + full left/right file text. */
 export function buildDiffUnits(
   leftText: string,
   rightText: string,
-  lineChanges: LineChange[]
+  lineChanges: LineChange[],
+  options?: BuildDiffUnitsOptions
 ): DiffUnit[] {
   idSeq = 0;
   const units: DiffUnit[] = [];
-  for (const lc of lineChanges) {
+  const maxHunks =
+    options?.maxHunks != null && options.maxHunks > 0
+      ? options.maxHunks
+      : null;
+  const withWordUnits = options?.wordUnits !== false;
+  const changes =
+    maxHunks != null ? lineChanges.slice(0, maxHunks) : lineChanges;
+
+  for (const lc of changes) {
     const left: LineColRange = {
       start_line: lc.originalStartLineNumber,
       start_col: 0,
@@ -168,6 +184,8 @@ export function buildDiffUnits(
       leftText: leftSlice,
       rightText: rightSlice,
     });
+
+    if (!withWordUnits) continue;
 
     const charChanges = lc.charChanges ?? [];
     if (charChanges.length) {

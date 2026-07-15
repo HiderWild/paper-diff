@@ -27,6 +27,7 @@ from app.schemas.dto import (
     GitImportRequest,
     GitRestoreRequest,
     GitZoneFromCommitRequest,
+    PutWorkFileRangeRequest,
     PutWorkFileRequest,
     RenameZoneRequest,
     SetRootRequest,
@@ -183,6 +184,22 @@ def work_file(project_id: str, path: str, svc: ProjectService = Depends(projects
     return svc.work_file(project_id, path)
 
 
+@router.get("/projects/{project_id}/work/file-meta")
+def work_file_meta(project_id: str, path: str, svc: ProjectService = Depends(projects)):
+    return svc.work_file_meta(project_id, path)
+
+
+@router.get("/projects/{project_id}/work/file-slice")
+def work_file_slice(
+    project_id: str,
+    path: str,
+    start_line: int = Query(..., ge=1),
+    end_line: int = Query(..., ge=1),
+    svc: ProjectService = Depends(projects),
+):
+    return svc.work_file_slice(project_id, path, start_line, end_line)
+
+
 @router.get("/projects/{project_id}/work/file-raw")
 def work_file_raw(project_id: str, path: str, svc: ProjectService = Depends(projects)):
     data, media_type = svc.work_file_raw(project_id, path)
@@ -197,6 +214,21 @@ def put_work_file(
     svc: ProjectService = Depends(projects),
 ):
     return svc.put_work_file(project_id, path, body.content)
+
+
+@router.put("/projects/{project_id}/work/file-range")
+def put_work_file_range(
+    project_id: str,
+    body: PutWorkFileRangeRequest,
+    svc: ProjectService = Depends(projects),
+):
+    return svc.put_work_file_range(
+        project_id,
+        body.path,
+        body.start_line,
+        body.end_line,
+        body.content,
+    )
 
 
 @router.get("/projects/{project_id}/work/export.zip")
@@ -386,6 +418,28 @@ def zone_file(
     return svc.zone_file(project_id, zone_id, path)
 
 
+@router.get("/projects/{project_id}/zones/{zone_id}/file-meta")
+def zone_file_meta(
+    project_id: str,
+    zone_id: str,
+    path: str,
+    svc: ZoneService = Depends(zones),
+):
+    return svc.zone_file_meta(project_id, zone_id, path)
+
+
+@router.get("/projects/{project_id}/zones/{zone_id}/file-slice")
+def zone_file_slice(
+    project_id: str,
+    zone_id: str,
+    path: str,
+    start_line: int = Query(..., ge=1),
+    end_line: int = Query(..., ge=1),
+    svc: ZoneService = Depends(zones),
+):
+    return svc.zone_file_slice(project_id, zone_id, path, start_line, end_line)
+
+
 @router.get("/projects/{project_id}/zones/{zone_id}/file-raw")
 def zone_file_raw(
     project_id: str,
@@ -478,6 +532,30 @@ def git_show(
     svc: GitService = Depends(git),
 ):
     return svc.show(project_id, ref=ref, path=path)
+
+
+@router.get("/projects/{project_id}/git/show-meta")
+def git_show_meta(
+    project_id: str,
+    ref: str = Query(...),
+    path: str = Query(...),
+    svc: GitService = Depends(git),
+):
+    return svc.show_meta(project_id, ref=ref, path=path)
+
+
+@router.get("/projects/{project_id}/git/show-slice")
+def git_show_slice(
+    project_id: str,
+    ref: str = Query(...),
+    path: str = Query(...),
+    start_line: int = Query(..., ge=1),
+    end_line: int = Query(..., ge=1),
+    svc: GitService = Depends(git),
+):
+    return svc.show_slice(
+        project_id, ref=ref, path=path, start_line=start_line, end_line=end_line
+    )
 
 
 @router.post("/projects/{project_id}/git/push")

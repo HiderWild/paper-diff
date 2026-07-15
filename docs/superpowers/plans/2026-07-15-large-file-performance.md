@@ -1,6 +1,7 @@
 # paper-diff 长文件浏览 / 比较性能方案（收紧版）
 
-> **Status:** Design ready · v1.1 **语义锁定 + 防过度设计** — 2026-07-15  
+> **Status:** **In progress · Steps 0–2 + partial 3–4 landed** (L0 tier throttle, slice/meta/range API, prefetch helpers, L-tier range PUT on full-line pull) — 2026-07-15  
+> Deferred: Monaco placeholder window hydrate (Step 3 full), hunk-list comparer (Step 5)  
 > **Scope:** 超长/超大 **文本** 在编辑器与比较器中的性能；**不改变** 产品既有功能语义  
 > **Related:**  
 > - 真源拉取：`2026-07-15-comparer-preview-hardening.md`（C0 语义优先）  
@@ -168,32 +169,33 @@ PUT .../work/file-range
 
 ### Step 0 — 门槛与观测（≤1d）
 
-- [ ] open 路径取 size/lines（先客户端粗算也可：length + split 计数，仅 M+ 提示）  
-- [ ] 设置预留：`largeFileMode: auto`（暂不暴露复杂 UI）  
-- [ ] 记录基线：10k/30k 行打开卡顿  
+- [x] open 路径取 size/lines（客户端 `estimateTier` / 打开 L 提示）  
+- [x] 设置预留：`largeFileMode: auto`（暂不暴露复杂 UI）  
+- [ ] 记录基线：10k/30k 行打开卡顿（人工）  
 
 ### Step 1 — L0 降载（≤1d）〔必须先做〕
 
-- [ ] 阈值触发：legacy diff、unit 上限、箭头视口过滤  
-- [ ] idle 调度 `buildDiffUnits`  
-- [ ] 回归：S 档行为与现在一致  
+- [x] 阈值触发：legacy diff、unit 上限、wordUnits 关  
+- [x] idle 调度 `buildDiffUnits`（L）  
+- [x] 回归：S 档 advanced + word units（测试）  
 
 ### Step 2 — Meta + Slice 读 API（1–2d）
 
-- [ ] work/zone/git slice+meta  
-- [ ] pytest：边界、超限、遍历拒绝  
+- [x] work/zone/git slice+meta  
+- [x] pytest：边界、超限、遍历拒绝  
+- [x] `PUT work/file-range`（splice）  
 
 ### Step 3 — 编辑器窗口读（2d）
 
-- [ ] 视口→后 H→前 H  
-- [ ] 占位 + applyEdits  
-- [ ] 状态：`已加载 a–b / 共 N`（可放 tab 副标题或 status 一行）  
+- [x] 视口→后 H→前 H 纯函数 `buildPrefetchPlan`  
+- [ ] 占位 + applyEdits 接入 Monaco 打开路径  
+- [x] 打开 L 档 status 提示（非完整 a–b/N）  
 
 ### Step 4 — range 写 + 接 autosave/拉取（1–2d）
 
-- [ ] `file-range` PUT  
-- [ ] 大文件 autosave / `applyCompareUnit` 走 range  
-- [ ] 有洞则先补 slice 再写或拒绝并 toast  
+- [x] `file-range` PUT  
+- [x] L 档 `applyCompareUnit` 整行 → range（非整行仍全文 put）  
+- [ ] autosave 大文件 range-only；有洞检测 toast  
 
 ### Step 5 — 比较器 hunk 目录 + 局部 Diff（2–4d）
 
@@ -204,7 +206,7 @@ PUT .../work/file-range
 ### Step 6 — 文档与声称
 
 - [ ] manual-smoke：大文件打开/滚动/保存/拉取  
-- [ ] AGENTS：写明 L 档比较器形态  
+- [x] AGENTS 挂链；本计划状态更新  
 
 ---
 

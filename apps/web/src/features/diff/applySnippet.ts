@@ -96,3 +96,61 @@ export function applyUnitToWorkText(
   });
   return applyRangeReplace(leftTextFull, workRange, replacement);
 }
+
+/**
+ * When unit replace spans full lines on the work side (start_col=0 and end at
+ * line end / past end), map to backend file-range line splice payload.
+ * Partial mid-line ranges return null → caller should full putWorkFile.
+ *
+ * Backend splice_text_lines replaces whole lines [start_line, end_line]
+ * with content.splitlines(); content may be multi-line (no need trailing \n
+ * except when intentional empty-line preservation is desired).
+ */
+export function lineRangePayloadForUnit(
+  leftTextFull: string,
+  unit: DiffUnit,
+  opts: {
+    rightTextFull: string;
+    sidesSwapped?: boolean;
+  }
+): { start_line: number; end_line: number; content: string } | null {
+  const { workRange, replacement } = resolveUnitReplacement(unit, {
+    leftTextFull,
+    rightTextFull: opts.rightTextFull,
+    sidesSwapped: opts.sidesSwapped,
+  });
+  const startLine = Math.max(1, workRange.start_line || 1);
+  const endLine = Math.max(startLine, workRange.end_line || startLine);
+  const startCol = Math.max(0, workRange.start_col || 0);
+  if (startCol !== 0) return null;
+
+  const lines = leftTextFull.split("\n");
+  // Pure insert at start of a line (empty span, col 0..0) → treat as replace that line?
+  // Backend needs inclusive range. For empty point insert at (L,0)-(L,0) we cannot
+  // use line-range safely without shifting content mid-line context; fall back.
+  const endCol = Math.max(0, workRange.end_col || 0);
+  if (startLine === endLine && startCol === endCol) return null;
+
+  const lastLineIdx = endLine - 1;
+  if (lastLineIdx < 0 || lastLineIdx >= lines.length) {
+    // end past last content line: allow only if covering through EOF start
+    if (endLine > lines.length && startLine <= lines.length && startCol === 0) {
+      // replace from startLine through end of file
+      return {
+        start_line: startLine,
+        end_line: Math.max(startLine, lines.length || startLine),
+        content: replacement,
+      };
+    }
+    return null;
+  }
+  const endLineLen = lines[lastLineIdx]?.length ?? 0;
+  // Full line: end_col at or past line length. Empty line: end_col===0===length.
+  if (endCol < endLineLen) return null;
+
+  return {
+    start_line: startLine,
+    end_line: endLine,
+    content: replacement,
+  };
+}

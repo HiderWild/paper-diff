@@ -99,6 +99,16 @@ class PutWorkFileRequest(BaseModel):
     content: str
 
 
+class PutWorkFileRangeRequest(BaseModel):
+    """1-based inclusive line range replace for large-file range write (L4)."""
+
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    content: str
+    base_sha256: str | None = None
+
+
 class ActivateZoneRequest(BaseModel):
     zone_id: str | None = None
 

@@ -448,6 +448,133 @@ export async function putWorkFile(
   );
 }
 
+/** Large-file meta / slice response shapes (1-based inclusive lines). */
+export type FileMeta = {
+  path: string;
+  byte_size: number;
+  line_count: number;
+  encoding?: string;
+  sha256?: string;
+  revision?: number;
+  binary?: boolean;
+};
+
+export type FileSlice = {
+  path: string;
+  start_line: number;
+  end_line: number;
+  line_count: number;
+  content: string;
+  sha256?: string;
+};
+
+export async function getWorkFileMeta(
+  projectId: string,
+  path: string
+): Promise<FileMeta> {
+  const q = new URLSearchParams({ path });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/file-meta?${q}`)
+  );
+}
+
+export async function getWorkFileSlice(
+  projectId: string,
+  path: string,
+  startLine: number,
+  endLine: number
+): Promise<FileSlice> {
+  const q = new URLSearchParams({
+    path,
+    start_line: String(startLine),
+    end_line: String(endLine),
+  });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/file-slice?${q}`)
+  );
+}
+
+export async function getZoneFileMeta(
+  projectId: string,
+  zoneId: string,
+  path: string
+): Promise<FileMeta> {
+  const q = new URLSearchParams({ path });
+  return parse(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/file-meta?${q}`
+    )
+  );
+}
+
+export async function getZoneFileSlice(
+  projectId: string,
+  zoneId: string,
+  path: string,
+  startLine: number,
+  endLine: number
+): Promise<FileSlice> {
+  const q = new URLSearchParams({
+    path,
+    start_line: String(startLine),
+    end_line: String(endLine),
+  });
+  return parse(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/file-slice?${q}`
+    )
+  );
+}
+
+export async function gitShowMeta(
+  projectId: string,
+  ref: string,
+  path: string
+): Promise<FileMeta & { ref?: string }> {
+  const q = new URLSearchParams({ ref, path });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/show-meta?${q}`)
+  );
+}
+
+export async function gitShowSlice(
+  projectId: string,
+  ref: string,
+  path: string,
+  startLine: number,
+  endLine: number
+): Promise<FileSlice & { ref?: string }> {
+  const q = new URLSearchParams({
+    ref,
+    path,
+    start_line: String(startLine),
+    end_line: String(endLine),
+  });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/show-slice?${q}`)
+  );
+}
+
+/** 1-based inclusive line range replace (L4 large-file write). */
+export async function putWorkFileRange(
+  projectId: string,
+  body: {
+    path: string;
+    start_line: number;
+    end_line: number;
+    content: string;
+    base_sha256?: string | null;
+  }
+): Promise<{ path?: string; revision?: number; content?: string }> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/file-range`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
+}
+
 export async function acceptOps(
   projectId: string,
   ops: Array<{

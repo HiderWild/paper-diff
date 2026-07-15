@@ -755,6 +755,50 @@ class ProjectService:
             "revision": rev,
         }
 
+    def work_file_meta(self, project_id: str, path: str) -> dict:
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        out = ws.file_meta("work", path)
+        rev = ws.load_meta().get("revisions", {}).get(path, 0)
+        out["revision"] = rev
+        return out
+
+    def work_file_slice(
+        self,
+        project_id: str,
+        path: str,
+        start_line: int,
+        end_line: int,
+    ) -> dict:
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        max_lines = int(getattr(self.settings, "max_file_slice_lines", 4000) or 4000)
+        return ws.file_slice("work", path, start_line, end_line, max_lines)
+
+    def put_work_file_range(
+        self,
+        project_id: str,
+        path: str,
+        start_line: int,
+        end_line: int,
+        content: str,
+    ) -> dict:
+        """Splice line range into work file (1-based inclusive); reuses undo snapshot."""
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        try:
+            before = ws.read_text("work", path)
+        except AppError as e:
+            if e.code == "FILE_NOT_FOUND":
+                before = ""
+            else:
+                raise
+        new_content = Workspace.splice_text_lines(before, start_line, end_line, content)
+        return self.put_work_file(project_id, path, new_content)
+
     def put_work_file(self, project_id: str, path: str, content: str) -> dict:
         ws = self._ws(project_id)
         if not ws.meta_path.exists():
