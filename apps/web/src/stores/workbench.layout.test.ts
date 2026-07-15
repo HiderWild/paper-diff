@@ -48,34 +48,36 @@ describe("workbench columns/tabs", () => {
     setActivePinia(createPinia());
   });
 
-  it("default layout has top row tools + bottom output", () => {
+  it("default layout may be empty (no forced comparer)", () => {
     const s = useWorkbenchStore();
-    expect(s.rows.length).toBeGreaterThanOrEqual(2);
-    const kinds = s.allTabs.map((t) => t.kind);
-    expect(kinds).toContain("comparer");
-    expect(kinds).toContain("pdf");
-    expect(kinds).toContain("output");
+    // Fresh store without forced default tools
+    expect(s.allTabs.length).toBe(0);
+    expect(s.rows.length).toBe(0);
   });
 
-  it("closing last tab in column removes column", () => {
+  it("openTool from empty workbench creates column+tab", () => {
     const s = useWorkbenchStore();
-    const out = s.allTabs.find((t) => t.kind === "output")!;
-    const colId = s.findColumnOfTab(out.id)!;
-    // close only tab in bottom column
-    s.closeTab(out.id);
+    const tab = s.openTool("comparer", "a.tex");
+    expect(tab).toBeTruthy();
+    expect(s.allTabs.some((t) => t.kind === "comparer")).toBe(true);
+    expect(s.rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("closing last tab leaves empty workbench (no auto comparer)", () => {
+    const s = useWorkbenchStore();
+    const tab = s.openTool("editor", "x.tex")!;
+    const colId = s.findColumnOfTab(tab.id)!;
+    s.closeTab(tab.id);
     expect(s.columns[colId]).toBeUndefined();
-    // bottom row should be gone or without that col
-    expect(
-      s.rows.every((r) => !r.columnIds.includes(colId))
-    ).toBe(true);
+    expect(s.rows.length).toBe(0);
+    expect(s.allTabs.length).toBe(0);
   });
 
   it("applyDrop split-right creates new column in same row", () => {
     const s = useWorkbenchStore();
+    const hostTab = s.openTool("comparer", null)!;
+    const host = s.findColumnOfTab(hostTab.id)!;
     const tab = s.openTool("editor", null)!;
-    const host = s.findColumnOfTab(
-      s.allTabs.find((t) => t.kind === "comparer")!.id
-    )!;
     const rowBefore = s.rows.find((r) => r.columnIds.includes(host))!;
     const n = rowBefore.columnIds.length;
     s.applyDrop(tab.id, { type: "split-right", columnId: host });
@@ -88,15 +90,15 @@ describe("workbench columns/tabs", () => {
 
   it("empty column auto-closed via prune", () => {
     const s = useWorkbenchStore();
-    const colId = Object.keys(s.columns)[0];
-    const col = s.columns[colId];
-    for (const tid of [...col.tabIds]) s.closeTab(tid);
+    const t = s.openTool("pdf", null)!;
+    const colId = s.findColumnOfTab(t.id)!;
+    s.closeTab(t.id);
     expect(s.columns[colId]).toBeUndefined();
   });
 
   it("bindPath rejects wrong type", () => {
     const s = useWorkbenchStore();
-    const pdf = s.allTabs.find((t) => t.kind === "pdf")!;
+    const pdf = s.openTool("pdf", null)!;
     expect(s.bindPath(pdf.id, "a.tex")).toBe(false);
     expect(s.bindPath(pdf.id, "a.pdf")).toBe(true);
   });

@@ -243,6 +243,8 @@ export default {
     rememberedFile: "已记住 · 本文件",
     rememberedProject: "已记住 · 项目默认",
     needActiveZone: "请先激活一个比较区，才能将文件放到对照侧。",
+    needBothSides:
+      "请设置两侧比较对象：左侧为项目文件，右侧通过「对照…」或拖入比较区/Git 文件。两侧齐全后显示差异与采纳。",
   },
   gutter: {
     pullLine: "拉取此行（对照 → 项目）",
@@ -257,6 +259,7 @@ export default {
     collapseAll: "全部折叠",
     expandTop: "展开顶层",
     newCompare: "新建比较",
+    newCompareFailed: "无法打开比较器",
   },
   store: {
     ready: "就绪",

@@ -768,23 +768,23 @@ function onTreeNewCompare(path: string, source: "work" | "zone" = "work") {
     return;
   }
   void store.openFile(path);
+  // Works with empty workbench: openTool creates a column if needed
   const tab = workbench.openTool("comparer", path);
-  if (!tab) return;
+  if (!tab) {
+    workbench.toast(t("tree.newCompareFailed"), "warn");
+    return;
+  }
   workbench.bindPath(tab.id, path);
-  if (source === "zone" && store.activeZoneId) {
-    compareTarget.setForProject(
-      store.projectId,
-      { kind: "zone", zoneId: store.activeZoneId, path },
-      path
-    );
-  } else if (source === "work" && store.activeZoneId) {
-    // Work on left; keep/seed zone same-path as default right if available
+  workbench.focusTab(tab.id);
+  if (store.activeZoneId) {
+    // Seed right side from active zone same path when available
     compareTarget.setForProject(
       store.projectId,
       { kind: "zone", zoneId: store.activeZoneId, path },
       path
     );
   }
+  void source;
 }
 
 function onWorkbenchFileDrop(

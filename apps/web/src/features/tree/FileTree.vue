@@ -150,23 +150,30 @@ function closeCtx() {
   ctxMenu.value = null;
 }
 
-function ctxNewCompare() {
+function ctxNewCompare(e?: Event) {
+  e?.preventDefault?.();
+  e?.stopPropagation?.();
   if (!ctxMenu.value) return;
   const p = ctxMenu.value.path;
-  closeCtx();
+  // Close after emit so parent runs before menu unmount teardown
   emit("newCompare", p);
+  // Defer close so click is not swallowed by capture listener racing us
+  requestAnimationFrame(() => closeCtx());
 }
 
-function onDocClick() {
+function onDocPointerDown(e: Event) {
+  const t = e.target as HTMLElement | null;
+  if (t?.closest?.(".tree-ctx-menu")) return;
   closeCtx();
 }
 
 watch(ctxMenu, (m) => {
   if (m) {
-    window.addEventListener("click", onDocClick, true);
+    // pointerdown bubble (not capture): menu buttons receive click first
+    window.addEventListener("pointerdown", onDocPointerDown, false);
     window.addEventListener("keydown", onEscClose, true);
   } else {
-    window.removeEventListener("click", onDocClick, true);
+    window.removeEventListener("pointerdown", onDocPointerDown, false);
     window.removeEventListener("keydown", onEscClose, true);
   }
 });
@@ -176,7 +183,7 @@ function onEscClose(e: KeyboardEvent) {
 }
 
 onBeforeUnmount(() => {
-  window.removeEventListener("click", onDocClick, true);
+  window.removeEventListener("pointerdown", onDocPointerDown, false);
   window.removeEventListener("keydown", onEscClose, true);
 });
 </script>
@@ -264,7 +271,12 @@ onBeforeUnmount(() => {
         @click.stop
         @contextmenu.prevent
       >
-        <button type="button" class="tree-ctx-item" @click="ctxNewCompare">
+        <button
+          type="button"
+          class="tree-ctx-item"
+          @pointerdown.stop.prevent="ctxNewCompare"
+          @click.stop.prevent="ctxNewCompare"
+        >
           {{ t("tree.newCompare") }}
         </button>
       </div>

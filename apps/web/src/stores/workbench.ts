@@ -48,7 +48,8 @@ export type DropIntent =
   | { type: "row-above-pair"; rowId: string }
   | { type: "row-below-pair"; rowId: string };
 
-const KEY = "paper-diff-workbench-v2";
+/** v3: empty default layout (no forced comparer/pdf tabs) */
+const KEY = "paper-diff-workbench-v3";
 const EDGE = 0.18; // side/top/bottom edge fraction for split-into-new-group
 const PAIR_TOP = 0.1; // upper 10% of a gap: "above both"
 
@@ -84,65 +85,13 @@ export function toolAcceptsPath(kind: ToolKind, path: string): boolean {
   return false;
 }
 
+/** Empty workbench: no tabs/columns forced. User opens tools via strip or tree. */
 function defaultState() {
-  const tabs: Record<string, ViewTab> = {};
-  const columns: Record<string, Column> = {};
-  const rows: LayoutRow[] = [];
-
-  const comparer: ViewTab = {
-    id: uid("tab"),
-    kind: "comparer",
-    path: null,
-  };
-  const pdf: ViewTab = { id: uid("tab"), kind: "pdf", path: null };
-  const output: ViewTab = {
-    id: uid("tab"),
-    kind: "output",
-    path: null,
-    title: "Output",
-  };
-  tabs[comparer.id] = comparer;
-  tabs[pdf.id] = pdf;
-  tabs[output.id] = output;
-
-  const colMain: Column = {
-    id: uid("col"),
-    tabIds: [comparer.id],
-    activeTabId: comparer.id,
-    size: 1,
-  };
-  const colPdf: Column = {
-    id: uid("col"),
-    tabIds: [pdf.id],
-    activeTabId: pdf.id,
-    size: 1,
-  };
-  const colOut: Column = {
-    id: uid("col"),
-    tabIds: [output.id],
-    activeTabId: output.id,
-    size: 1,
-  };
-  columns[colMain.id] = colMain;
-  columns[colPdf.id] = colPdf;
-  columns[colOut.id] = colOut;
-
-  rows.push({
-    id: uid("row"),
-    columnIds: [colMain.id, colPdf.id],
-    size: 3,
-  });
-  rows.push({
-    id: uid("row"),
-    columnIds: [colOut.id],
-    size: 1,
-  });
-
   return {
-    tabs,
-    columns,
-    rows,
-    focusedTabId: comparer.id as string | null,
+    tabs: {} as Record<string, ViewTab>,
+    columns: {} as Record<string, Column>,
+    rows: [] as LayoutRow[],
+    focusedTabId: null as string | null,
   };
 }
 
@@ -153,7 +102,8 @@ function load(): Persisted {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultState();
     const p = JSON.parse(raw) as Persisted;
-    if (!p.tabs || !p.columns || !Array.isArray(p.rows) || !p.rows.length) {
+    // Allow empty layout; only reset if corrupt shape
+    if (!p.tabs || !p.columns || !Array.isArray(p.rows)) {
       return defaultState();
     }
     return p;
@@ -278,19 +228,36 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   );
 
   function ensureSeed() {
-    if (!rows.value.length || !Object.keys(columns.value).length) {
-      const d = defaultState();
-      tabs.value = d.tabs;
-      columns.value = d.columns;
-      rows.value = d.rows;
-      focusedTabId.value = d.focusedTabId;
-      persist();
-    }
+    // Empty layout is valid; kept for call-site compatibility.
   }
 
-  /** Remove column if empty; remove empty rows; keep at least one column. */
+  /** One empty column so a tool can be opened into it. */
+  function ensureColumn(): string {
+    if (rows.value.length && Object.keys(columns.value).length) {
+      const first = rows.value[0]?.columnIds[0];
+      if (first && columns.value[first]) return first;
+    }
+    const col: Column = {
+      id: uid("col"),
+      tabIds: [],
+      activeTabId: null,
+      size: 1,
+    };
+    columns.value = { ...columns.value, [col.id]: col };
+    if (!rows.value.length) {
+      rows.value = [{ id: uid("row"), columnIds: [col.id], size: 1 }];
+    } else {
+      const r0 = rows.value[0];
+      rows.value = [
+        { ...r0, columnIds: [...r0.columnIds, col.id] },
+        ...rows.value.slice(1),
+      ];
+    }
+    return col.id;
+  }
+
+  /** Remove empty columns/rows. Allow fully empty workbench (no forced tab). */
   function pruneEmpty() {
-    // drop empty columns
     for (const id of Object.keys(columns.value)) {
       const c = columns.value[id];
       if (!c.tabIds.length) {
@@ -302,25 +269,9 @@ export const useWorkbenchStore = defineStore("workbench", () => {
         columns.value = next;
       }
     }
-    // drop empty rows
     rows.value = rows.value.filter((r) => r.columnIds.length > 0);
     if (!rows.value.length) {
-      // recreate minimal comparer
-      const tab: ViewTab = {
-        id: uid("tab"),
-        kind: "comparer",
-        path: null,
-      };
-      const col: Column = {
-        id: uid("col"),
-        tabIds: [tab.id],
-        activeTabId: tab.id,
-        size: 1,
-      };
-      tabs.value = { ...tabs.value, [tab.id]: tab };
-      columns.value = { ...columns.value, [col.id]: col };
-      rows.value = [{ id: uid("row"), columnIds: [col.id], size: 1 }];
-      focusedTabId.value = tab.id;
+      focusedTabId.value = null;
     }
   }
 
@@ -371,9 +322,8 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     return tab;
   }
 
-  /** Open tool: prefer focused column, else first column. */
+  /** Open tool: prefer focused column, else first column, else create empty column. */
   function openTool(kind: ToolKind, path: string | null = null) {
-    ensureSeed();
     let colId: string | null = null;
     if (focusedTabId.value) colId = findColumnOfTab(focusedTabId.value);
     if (!colId) {
@@ -381,12 +331,7 @@ export const useWorkbenchStore = defineStore("workbench", () => {
       colId = firstRow?.columnIds[0] ?? null;
     }
     if (!colId) {
-      const d = defaultState();
-      tabs.value = d.tabs;
-      columns.value = d.columns;
-      rows.value = d.rows;
-      focusedTabId.value = d.focusedTabId;
-      colId = findColumnOfTab(focusedTabId.value!)!;
+      colId = ensureColumn();
     }
     return addTabToColumn(colId, kind, path);
   }

@@ -9,14 +9,19 @@ import {
   type CompareTarget,
 } from "../../stores/compareTarget";
 
-const props = defineProps<{
-  path: string;
-  units: DiffUnit[];
-  /** Visible work-side full text (true left buffer) */
-  leftText?: string;
-  /** Visible compare-side full text (true right buffer; git/zone) */
-  rightText?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    path: string;
+    units: DiffUnit[];
+    /** Visible work-side full text (true left buffer) */
+    leftText?: string;
+    /** Visible compare-side full text (true right buffer; git/zone) */
+    rightText?: string;
+    /** When false, hide accept-all (both sides not ready) */
+    compareReady?: boolean;
+  }>(),
+  { compareReady: true }
+);
 
 const emit = defineEmits<{
   acceptUnit: [unit: DiffUnit];
@@ -169,6 +174,7 @@ watch(pickerOpen, (v) => {
         ⇄
       </button>
       <button
+        v-if="compareReady"
         type="button"
         class="mini"
         :disabled="busy || (!pair && rightText == null)"
