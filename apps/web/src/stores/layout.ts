@@ -14,10 +14,12 @@ export type LayoutState = {
   showPdf: boolean;
   showBottom: boolean;
   showDotFiles: boolean;
-  activity: "explorer" | "zones" | "git" | "compile" | "agent";
+  activity: "explorer" | "zones" | "git" | "compile" | "agent" | "settings";
   /** Left-to-right order of main workbench panes (VS Code-style rearrange). */
   mainOrder: MainPaneId[];
 };
+
+export type ActivityId = LayoutState["activity"];
 
 export const DEFAULT_MAIN_ORDER: MainPaneId[] = ["files", "editor", "pdf"];
 
@@ -61,7 +63,14 @@ function load(): LayoutState {
     parsed.bottomHeight = Math.min(320, Math.max(72, Number(parsed.bottomHeight) || 120));
     parsed.showFiles = parsed.showFiles !== false;
     parsed.showPdf = parsed.showPdf !== false;
-    const acts = new Set(["explorer", "zones", "git", "compile", "agent"]);
+    const acts = new Set([
+      "explorer",
+      "zones",
+      "git",
+      "compile",
+      "agent",
+      "settings",
+    ]);
     if (!acts.has(parsed.activity)) parsed.activity = "explorer";
     parsed.mainOrder = normalizeOrder(parsed.mainOrder);
     return parsed;

@@ -1,7 +1,9 @@
-:root {
+:root,
+:root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0f1419;
   --panel: #1a2332;
+  --panel-header: #121a24;
   --border: #2d3a4d;
   --text: #e7ecf3;
   --muted: #8b9bb4;
@@ -9,7 +11,27 @@
   --green: #22c55e;
   --red: #ef4444;
   --danger: #f87171;
+  --input-bg: #1e293b;
+  --secondary-btn: #334155;
+  --surface-deep: #0b0f14;
   font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --panel-header: #eef2f7;
+  --border: #d0d7e2;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --green: #16a34a;
+  --red: #dc2626;
+  --danger: #b91c1c;
+  --input-bg: #ffffff;
+  --secondary-btn: #e2e8f0;
+  --surface-deep: #e8edf5;
 }
 
 * {
@@ -41,7 +63,8 @@ button {
 }
 
 button.secondary {
-  background: #334155;
+  background: var(--secondary-btn);
+  color: var(--text);
 }
 
 button:disabled {
@@ -105,7 +128,7 @@ button.mini {
   letter-spacing: 0.04em;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
-  background: #121a24;
+  background: var(--panel-header);
   flex-shrink: 0;
 }
 
@@ -141,7 +164,7 @@ button.mini {
 
 .pdf-host {
   overflow: auto;
-  background: #0b0f14;
+  background: var(--surface-deep);
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -159,7 +182,7 @@ button.mini {
   overflow: auto;
   font-family: ui-monospace, Consolas, monospace;
   font-size: 0.75rem;
-  background: #0b0f14;
+  background: var(--surface-deep);
   border-top: 1px solid var(--border);
   padding: 0.5rem;
   color: var(--muted);
@@ -172,7 +195,7 @@ button.mini {
   gap: 0.35rem;
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid var(--border);
-  background: #121a24;
+  background: var(--panel-header);
   max-height: 120px;
   overflow: auto;
   flex-shrink: 0;
