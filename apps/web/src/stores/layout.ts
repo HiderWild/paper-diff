@@ -158,6 +158,15 @@ export const useLayoutStore = defineStore("layout", () => {
     showBottom.value = !showBottom.value;
   }
 
+  /** Ctrl+` style: open bottom output dock */
+  function openBottom() {
+    showBottom.value = true;
+  }
+
+  function setBottomVisible(v: boolean) {
+    showBottom.value = v;
+  }
+
   /** Move `from` pane before/after `to` (both must be main pane ids). */
   function reorderMain(from: MainPaneId, to: MainPaneId, place: "before" | "after" = "before") {
     if (from === to) return;
@@ -203,6 +212,8 @@ export const useLayoutStore = defineStore("layout", () => {
     toggleFiles,
     togglePdf,
     toggleBottom,
+    openBottom,
+    setBottomVisible,
     reorderMain,
     swapMain,
     moveMainToIndex,

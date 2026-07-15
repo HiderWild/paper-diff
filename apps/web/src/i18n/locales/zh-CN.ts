@@ -64,6 +64,7 @@ export default {
     agent: "智能体",
     settings: "设置",
     bottomLog: "输出",
+    bottomLocked: "固定 · Ctrl+`",
     sideProject: "项目",
     sideZone: "比较区",
     dragToRearrange: "拖动标题栏可调整布局顺序",
@@ -222,6 +223,8 @@ export default {
   pdf: {
     empty: "尚无 PDF — 从文件树打开或拖入 .pdf",
     noContainer: "预览容器未就绪",
+    zoomReset: "重置",
+    zoomHint: "Ctrl+滚轮 缩放",
   },
   tree: {
     showDot: "显示以 . 开头的目录/文件",

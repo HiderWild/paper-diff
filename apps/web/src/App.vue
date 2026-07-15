@@ -150,6 +150,11 @@ const commandItems = computed(() => {
       },
     },
     {
+      id: "toggleConsole",
+      label: t("panels.bottomLog") + " (Ctrl+`)",
+      run: () => layout.toggleBottom(),
+    },
+    {
       id: "toggleFiles",
       label: t("toolbar.toggleFiles"),
       run: () => layout.toggleFiles(),
@@ -189,7 +194,18 @@ function onGlobalKey(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
     e.preventDefault();
     commandOpen.value = !commandOpen.value;
-  } else if (e.key === "Escape") {
+    return;
+  }
+  // Ctrl+` / Cmd+` — toggle locked bottom output console
+  if (
+    (e.metaKey || e.ctrlKey) &&
+    (e.key === "`" || e.code === "Backquote" || e.key === "·")
+  ) {
+    e.preventDefault();
+    layout.toggleBottom();
+    return;
+  }
+  if (e.key === "Escape") {
     commandOpen.value = false;
   }
 }
@@ -1453,15 +1469,55 @@ function formatCommitDate(iso?: string) {
         </template>
       </aside>
 
-      <!-- Center work area: VS Code-style columns + tabs -->
+      <!-- Center: workbench columns + locked bottom output console -->
       <div
-        class="work-views-host"
+        class="center-stack"
         :style="{ flex: '1 1 auto', minWidth: '200px', order: orderOf('editor') }"
       >
-        <WorkbenchGrid
-          @file-drop="onWorkbenchFileDrop"
-          @invalid-drop="(msg) => workbench.toast(msg, 'warn')"
-        />
+        <div class="work-views-host">
+          <WorkbenchGrid
+            @file-drop="onWorkbenchFileDrop"
+            @invalid-drop="(msg) => workbench.toast(msg, 'warn')"
+          />
+        </div>
+
+        <!-- Locked output dock: not a workbench tab; cannot host foreign tools -->
+        <template v-if="showBottom">
+          <div
+            class="sash-h bottom-sash"
+            title="resize"
+            @mousedown="startResize('bottom', $event)"
+          />
+          <div
+            class="bottom-console"
+            :style="{ height: bottomHeight + 'px' }"
+            @dragover.prevent
+            @drop.prevent
+          >
+            <div
+              class="panel-header side-header bottom-console-header"
+              :title="t('panels.dragBottomResize')"
+              @mousedown="startResize('bottom', $event)"
+            >
+              <span class="drag-grip" aria-hidden="true">⋯</span>
+              <span>{{ t("panels.bottomLog") }}</span>
+              <span class="muted bottom-lock-hint">{{
+                t("panels.bottomLocked")
+              }}</span>
+              <button
+                type="button"
+                class="header-hide"
+                :title="t('toolbar.toggleBottom')"
+                @click.stop="layout.toggleBottom()"
+              >
+                ▾
+              </button>
+            </div>
+            <div class="log-box flex-log bottom-console-body">
+              {{ logText || t("panels.compileLog") }}
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -1626,6 +1682,13 @@ function formatCommitDate(iso?: string) {
 .pane-dragging {
   opacity: 0.55;
 }
+.center-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
 .work-views-host {
   display: flex;
   flex-direction: column;
@@ -1633,6 +1696,40 @@ function formatCommitDate(iso?: string) {
   min-width: 0;
   overflow: hidden;
   flex: 1 1 auto;
+}
+.bottom-console {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-deep);
+  overflow: hidden;
+}
+.bottom-console-header {
+  cursor: ns-resize;
+  user-select: none;
+}
+.bottom-lock-hint {
+  font-size: 0.65rem;
+  margin-left: auto;
+  margin-right: 0.35rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.bottom-console-body {
+  flex: 1 1 auto;
+  max-height: none;
+  overflow: auto;
+  border-top: none;
+}
+.bottom-sash {
+  flex: 0 0 5px;
+  cursor: row-resize;
+  background: transparent;
+}
+.bottom-sash:hover {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .files-pane {
   display: flex;
