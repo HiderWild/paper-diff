@@ -58,12 +58,25 @@ select {
 }
 
 button {
+  /* Clickable UI: pointing finger, not open hand */
   cursor: pointer;
   background: var(--accent);
   color: white;
   border: none;
   border-radius: 6px;
   padding: 0.4rem 0.75rem;
+}
+
+button:hover:not(:disabled) {
+  cursor: pointer;
+}
+
+/* True drag handles only (sashes / tab-bar gutters may still use grab) */
+.cursor-grab {
+  cursor: grab;
+}
+.cursor-grab:active {
+  cursor: grabbing;
 }
 
 button.secondary {

@@ -326,6 +326,9 @@ const edgeHint = computed(() => {
   cursor: pointer;
   flex: 0 1 auto;
 }
+.wb-tab:hover {
+  cursor: pointer;
+}
 .wb-tab.active {
   background: var(--panel);
   color: var(--text);

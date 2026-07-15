@@ -263,15 +263,21 @@ onBeforeUnmount(() => clearTipTimer());
   color: var(--muted);
   border: 1px solid transparent;
   border-radius: 4px;
-  cursor: grab;
+  /* Clickable control → pointing hand (not open palm / grab) */
+  cursor: pointer;
   overflow: hidden;
 }
 .tool-icon:hover {
   background: color-mix(in srgb, var(--accent) 18%, var(--panel));
   color: var(--text);
   border-color: var(--border);
+  cursor: pointer;
 }
 .tool-icon:active {
+  cursor: pointer;
+}
+/* Actual drag-in-progress only: optional grabbing after dragstart */
+.tool-icon.dragging {
   cursor: grabbing;
 }
 .glyph-svg {
