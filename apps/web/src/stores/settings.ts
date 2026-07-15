@@ -12,6 +12,8 @@ export type SettingsState = {
   /** When true, hide empty panes after last tool closes (reserved) */
   compactWorkbench: boolean;
   showToolTips: boolean;
+  /** Default ON: flush dirty work files after idle */
+  autoSave: boolean;
 };
 
 const DEFAULTS: SettingsState = {
@@ -19,6 +21,7 @@ const DEFAULTS: SettingsState = {
   locale: "zh-CN",
   compactWorkbench: false,
   showToolTips: true,
+  autoSave: true,
 };
 
 function load(): SettingsState {
@@ -42,6 +45,7 @@ function load(): SettingsState {
     if (parsed.locale !== "zh-CN" && parsed.locale !== "en") {
       parsed.locale = "zh-CN";
     }
+    if (typeof parsed.autoSave !== "boolean") parsed.autoSave = true;
     return parsed;
   } catch {
     return { ...DEFAULTS };
@@ -71,8 +75,12 @@ export const useSettingsStore = defineStore("settings", () => {
   const locale = ref<AppLocale>(initial.locale);
   const compactWorkbench = ref(initial.compactWorkbench);
   const showToolTips = ref(initial.showToolTips);
+  const autoSave = ref(initial.autoSave !== false);
 
   const resolvedTheme = computed(() => resolveTheme(theme.value));
+  const monacoTheme = computed(() =>
+    resolvedTheme.value === "light" ? "vs" : "vs-dark"
+  );
 
   function persist() {
     const s: SettingsState = {
@@ -80,6 +88,7 @@ export const useSettingsStore = defineStore("settings", () => {
       locale: locale.value,
       compactWorkbench: compactWorkbench.value,
       showToolTips: showToolTips.value,
+      autoSave: autoSave.value,
     };
     try {
       localStorage.setItem(KEY, JSON.stringify(s));
@@ -110,7 +119,7 @@ export const useSettingsStore = defineStore("settings", () => {
     }
   }
 
-  watch([theme, locale, compactWorkbench, showToolTips], persist, {
+  watch([theme, locale, compactWorkbench, showToolTips, autoSave], persist, {
     deep: true,
   });
 
@@ -122,7 +131,9 @@ export const useSettingsStore = defineStore("settings", () => {
     locale,
     compactWorkbench,
     showToolTips,
+    autoSave,
     resolvedTheme,
+    monacoTheme,
     setTheme,
     setAppLocale,
     init,

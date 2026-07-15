@@ -14,15 +14,29 @@ self.MonacoEnvironment = {
   },
 };
 
-const props = defineProps<{
-  left: string;
-  right: string;
-  path: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    left: string;
+    right: string;
+    path: string;
+    /** Work side (original/left) editable */
+    editableLeft?: boolean;
+    /** Hide right pane (single editor mode) */
+    singlePane?: boolean;
+    /** Monaco theme name */
+    monacoTheme?: string;
+  }>(),
+  {
+    editableLeft: false,
+    singlePane: false,
+    monacoTheme: "vs-dark",
+  }
+);
 
 const emit = defineEmits<{
   units: [DiffUnit[]];
   ready: [];
+  leftChange: [content: string];
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
@@ -30,12 +44,27 @@ let editor: monaco.editor.IStandaloneDiffEditor | null = null;
 let original: monaco.editor.ITextModel | null = null;
 let modified: monaco.editor.ITextModel | null = null;
 let sub: monaco.IDisposable | null = null;
+let contentSub: monaco.IDisposable | null = null;
+let suppressEmit = false;
 
 function recomputeUnits() {
   if (!editor) return;
   const changes = (editor.getLineChanges() || []) as LineChange[];
-  const units = buildDiffUnits(props.left, props.right, changes);
+  const units = buildDiffUnits(
+    original?.getValue() ?? props.left,
+    modified?.getValue() ?? props.right,
+    changes
+  );
   emit("units", units);
+}
+
+function applyEditability() {
+  if (!editor) return;
+  editor.updateOptions({
+    readOnly: !props.editableLeft,
+    originalEditable: !!props.editableLeft,
+    renderSideBySide: !props.singlePane,
+  });
 }
 
 function mountEditor() {
@@ -44,10 +73,10 @@ function mountEditor() {
   modified = monaco.editor.createModel(props.right, "plaintext");
   editor = monaco.editor.createDiffEditor(host.value, {
     automaticLayout: true,
-    readOnly: true,
-    renderSideBySide: true,
-    originalEditable: false,
-    theme: "vs-dark",
+    readOnly: !props.editableLeft,
+    renderSideBySide: !props.singlePane,
+    originalEditable: !!props.editableLeft,
+    theme: props.monacoTheme,
     diffAlgorithm: "advanced",
     ignoreTrimWhitespace: false,
     renderIndicators: true,
@@ -57,6 +86,10 @@ function mountEditor() {
   sub = editor.onDidUpdateDiff(() => {
     recomputeUnits();
   });
+  contentSub = original.onDidChangeContent(() => {
+    if (suppressEmit || !props.editableLeft) return;
+    emit("leftChange", original!.getValue());
+  });
   setTimeout(() => {
     recomputeUnits();
     emit("ready");
@@ -64,18 +97,36 @@ function mountEditor() {
 }
 
 watch(
-  () => [props.left, props.right, props.path],
+  () => [props.left, props.right, props.path] as const,
   () => {
     if (!original || !modified) return;
-    if (original.getValue() !== props.left) original.setValue(props.left);
-    if (modified.getValue() !== props.right) modified.setValue(props.right);
+    suppressEmit = true;
+    try {
+      if (original.getValue() !== props.left) original.setValue(props.left);
+      if (modified.getValue() !== props.right) modified.setValue(props.right);
+    } finally {
+      suppressEmit = false;
+    }
     setTimeout(recomputeUnits, 150);
+  }
+);
+
+watch(
+  () => [props.editableLeft, props.singlePane] as const,
+  () => applyEditability()
+);
+
+watch(
+  () => props.monacoTheme,
+  (th) => {
+    monaco.editor.setTheme(th || "vs-dark");
   }
 );
 
 onMounted(mountEditor);
 
 onBeforeUnmount(() => {
+  contentSub?.dispose();
   sub?.dispose();
   editor?.dispose();
   original?.dispose();
@@ -84,11 +135,15 @@ onBeforeUnmount(() => {
 });
 
 function setLeftContent(text: string) {
-  original?.setValue(text);
+  suppressEmit = true;
+  try {
+    original?.setValue(text);
+  } finally {
+    suppressEmit = false;
+  }
   setTimeout(recomputeUnits, 150);
 }
 
-/** Jump original (left) editor to 1-based line. */
 function revealLine(line: number) {
   const ed = editor?.getOriginalEditor();
   if (!ed || !line || line < 1) return;
@@ -97,7 +152,11 @@ function revealLine(line: number) {
   ed.focus();
 }
 
-defineExpose({ setLeftContent, recomputeUnits, revealLine });
+function getLeftContent() {
+  return original?.getValue() ?? props.left;
+}
+
+defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
 </script>
 
 <template>

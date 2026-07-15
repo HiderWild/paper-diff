@@ -90,6 +90,9 @@ export default {
     dropHint: "Drop a file from the tree here, or open {tool} from the toolbar",
     unsupportedFile:
       "This {tool} cannot open “{file}”. Choose another file. The target pane was not changed.",
+    dirtyAcceptConfirm:
+      "This file has unsaved edits. Accept-all will overwrite them. Continue?",
+    closeDirtyConfirm: "Save failed. Close the tab anyway?",
   },
   workbench: {
     dragColumn: "Drag empty tab-bar gutter to move the whole column",
@@ -125,6 +128,17 @@ export default {
       "Conflicting paths will be overwritten on confirm by default.",
     cancel: "Cancel",
     confirm: "Confirm import",
+    modeProject: "Import as project",
+    modeZone: "Import as compare zone",
+    modeSupplement: "Supplement project work",
+    replaceHint: "This will rebuild the project work tree from the payload.",
+    replaceWarning:
+      "Replace the current project work tree with this import? Existing files will be overwritten.",
+    zoneHint: "Creates a new compare zone; does not modify project work.",
+    advanced: "Advanced…",
+    advancedDual: "Dual ZIP (compat)",
+    advancedGit: "Git two-ref",
+    gitLocalHint: "Prefer a local repo path; remote without auth may fail.",
   },
   agent: {
     title: "Agent",
@@ -229,6 +243,7 @@ export default {
     acceptedAll: "Accepted all → rev {revision}",
     actionPath: "{action} {path}",
     undoOk: "Undo ok",
+    saved: "Saved {path}",
     compiling: "Compiling ({kind})…\n",
     compileTimeout: "Compile timeout",
     compileTimeoutError: "compile timeout waiting for job",
@@ -297,6 +312,10 @@ export default {
     showBottom: "Show bottom output",
     showToolTips: "Show tooltips",
     compactWorkbench: "Compact workbench (experimental)",
+    autoSave: "Auto-save (flush after 3s idle)",
+    openOutputTab: "Open output tool",
+    openPdfTab: "Open PDF tool",
+    exportAcceptLog: "Export accept log",
     aboutBody:
       "paper-diff: project / compare-zone workbench. Language and theme prefs are stored in this browser.",
   },

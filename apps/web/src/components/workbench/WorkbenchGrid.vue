@@ -82,6 +82,67 @@ function highlightFor(colId: string) {
   }
   return null;
 }
+
+/** Resize adjacent columns by dragging vertical gap */
+function onColSashDown(rowId: string, leftColId: string, rightColId: string, e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  const row = rows.value.find((r) => r.id === rowId);
+  if (!row) return;
+  const left = columns.value[leftColId];
+  const right = columns.value[rightColId];
+  if (!left || !right) return;
+  const startX = e.clientX;
+  const left0 = left.size;
+  const right0 = right.size;
+  const sum = left0 + right0;
+
+  function onMove(ev: MouseEvent) {
+    const dx = ev.clientX - startX;
+    // approx: 1 flex unit ≈ 200px heuristic scaled by sum
+    const delta = dx / 200;
+    let nl = Math.max(0.35, left0 + delta);
+    let nr = Math.max(0.35, sum - nl);
+    nl = sum - nr;
+    wb.setColumnSize(leftColId, nl);
+    wb.setColumnSize(rightColId, nr);
+  }
+  function onUp() {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    wb.persist();
+  }
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
+function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  const upper = rows.value.find((r) => r.id === upperRowId);
+  const lower = rows.value.find((r) => r.id === lowerRowId);
+  if (!upper || !lower) return;
+  const startY = e.clientY;
+  const u0 = upper.size;
+  const l0 = lower.size;
+  const sum = u0 + l0;
+  function onMove(ev: MouseEvent) {
+    const dy = ev.clientY - startY;
+    const delta = dy / 160;
+    let nu = Math.max(0.35, u0 + delta);
+    let nl = Math.max(0.35, sum - nu);
+    nu = sum - nl;
+    wb.setRowSize(upperRowId, nu);
+    wb.setRowSize(lowerRowId, nl);
+  }
+  function onUp() {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    wb.persist();
+  }
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
 </script>
 
 <template>
@@ -97,11 +158,11 @@ function highlightFor(colId: string) {
         }"
         @dragover="onRowGapDragOver(ri, $event)"
         @drop="onRowGapDrop(ri, $event)"
+        @pointerdown="
+          onRowSashDown(rows[ri - 1].id, row.id, $event)
+        "
       />
-      <div
-        class="wb-row"
-        :style="{ flex: `${row.size} 1 0` }"
-      >
+      <div class="wb-row" :style="{ flex: `${row.size} 1 0` }">
         <template v-for="(colId, ci) in row.columnIds" :key="colId">
           <div
             v-if="ci > 0"
@@ -118,6 +179,14 @@ function highlightFor(colId: string) {
             }"
             @dragover="onGapDragOver(row.id, ci, $event)"
             @drop="onGapDrop(row.id, ci, $event)"
+            @pointerdown="
+              onColSashDown(
+                row.id,
+                row.columnIds[ci - 1],
+                colId,
+                $event
+              )
+            "
           />
           <WorkbenchColumn
             v-if="columns[colId]"

@@ -38,8 +38,8 @@
 ## Completion tiers (use in status claims)
 
 - **L0 main path:** work + zones + accept + compile + local git — **done**
-- **L1 API↔UI wiring:** every public API has UI or is explicitly deferred — **partial** (accept-report export UI; advanced import restored via gap plan)
-- **L2 product depth:** real agent provider, upload progress, layout presets, **columns/tabs workbench skeleton**, **unified import modal skeleton**, docx preview — **partial** (sash/autosave/comparer chrome — see ux-gap-closure)
+- **L1 API↔UI wiring:** every public API has UI or is explicitly deferred — **partial** (accept-report via command palette; advanced import in modal)
+- **L2 product depth:** columns/tabs + sash, unified import (+ advanced dual/git/supplement), comparer chrome, autosave (default on), docx — **partial** (real agent provider, polish)
 - **L3 platform:** remote git auth, multi-tenant, virtualized tree — **deferred**
 - Merge line/col: `apps/api/app/domain/merge_engine.py`
 - Accept/import (work + dual-zip compat): `apps/api/app/services/project_service.py`

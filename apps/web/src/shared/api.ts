@@ -410,6 +410,21 @@ export async function getFilePair(
   );
 }
 
+export async function putWorkFile(
+  projectId: string,
+  path: string,
+  content: string
+): Promise<{ path?: string; revision?: number; content?: string }> {
+  const q = new URLSearchParams({ path });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/file?${q}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    })
+  );
+}
+
 export async function acceptOps(
   projectId: string,
   ops: Array<{
