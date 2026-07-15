@@ -9,6 +9,7 @@ import {
   type ToolKind,
   toolAcceptsPath,
 } from "../../stores/workbench";
+import { useProjectStore } from "../../stores/project";
 import ToolBody from "./ToolBody.vue";
 
 const props = defineProps<{
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const wb = useWorkbenchStore();
+const project = useProjectStore();
 const rootEl = ref<HTMLElement | null>(null);
 
 const tabList = computed(() =>
@@ -34,14 +36,13 @@ const activeTab = computed(() => {
   return id ? wb.tabs[id] : null;
 });
 
-function tabLabel(tab: { kind: ToolKind; path: string | null; title?: string }) {
+function tabLabel(tab: { kind: ToolKind; path: string | null; title?: string; id: string }) {
   const kind = t(`tools.${tab.kind}`);
   if (tab.kind === "output") return t("tools.output");
-  if (tab.path) {
-    const base = tab.path.split("/").pop() || tab.path;
-    return base;
-  }
-  return `${kind}`;
+  let base = kind;
+  if (tab.path) base = tab.path.split("/").pop() || tab.path;
+  if (tab.path && project.isDirty(tab.path)) return `• ${base}`;
+  return base;
 }
 
 function onTabDragStart(tabId: string, e: DragEvent) {
@@ -52,8 +53,7 @@ function onTabDragStart(tabId: string, e: DragEvent) {
   }
 }
 
-function onColumnChromeDragStart(e: DragEvent) {
-  // Only allow when dragging from empty tab-bar gutter
+function onGutterDragStart(e: DragEvent) {
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData(
@@ -62,6 +62,15 @@ function onColumnChromeDragStart(e: DragEvent) {
     );
     e.dataTransfer.setData("text/plain", `col:${props.column.id}`);
   }
+}
+
+async function onCloseTab(tabId: string) {
+  const tab = wb.tabs[tabId];
+  if (tab?.path && project.isDirty(tab.path)) {
+    const ok = await project.savePath(tab.path);
+    if (!ok && !confirm(t("tools.closeDirtyConfirm"))) return;
+  }
+  wb.closeTab(tabId);
 }
 
 function relativePoint(e: DragEvent) {
@@ -207,12 +216,7 @@ const edgeHint = computed(() => {
     @drop="onDrop"
     @dragleave="onDragLeave"
   >
-    <div
-      class="wb-tabbar"
-      draggable="true"
-      :title="t('workbench.dragColumn')"
-      @dragstart="onColumnChromeDragStart"
-    >
+    <div class="wb-tabbar">
       <button
         v-for="tab in tabList"
         :key="tab.id"
@@ -221,6 +225,7 @@ const edgeHint = computed(() => {
         :class="{
           active: tab.id === column.activeTabId,
           focused: tab.id === wb.focusedTabId,
+          dirty: !!(tab.path && project.isDirty(tab.path)),
         }"
         draggable="true"
         @click="wb.focusTab(tab.id)"
@@ -231,14 +236,23 @@ const edgeHint = computed(() => {
           class="wb-tab-close"
           role="button"
           :title="t('tools.close')"
-          @click.stop="wb.closeTab(tab.id)"
+          @click.stop="onCloseTab(tab.id)"
           >×</span
         >
       </button>
-      <span class="wb-tabbar-gutter" aria-hidden="true" />
+      <span
+        class="wb-tabbar-gutter"
+        draggable="true"
+        :title="t('workbench.dragColumn')"
+        @dragstart="onGutterDragStart"
+      />
     </div>
     <div class="wb-body" :class="{ 'edge-hint': edgeHint }" :data-edge="edgeHint || undefined">
-      <ToolBody v-if="activeTab" :tab="activeTab" />
+      <ToolBody
+        v-if="activeTab"
+        :tab="activeTab"
+        :active="activeTab.id === wb.focusedTabId"
+      />
       <div v-else class="empty">{{ t("workbench.emptyColumn") }}</div>
     </div>
   </section>
@@ -267,11 +281,14 @@ const edgeHint = computed(() => {
   min-height: 1.85rem;
   flex-shrink: 0;
   overflow-x: auto;
-  cursor: grab;
 }
 .wb-tabbar-gutter {
   flex: 1 1 auto;
   min-width: 1.5rem;
+  cursor: grab;
+}
+.wb-tabbar-gutter:active {
+  cursor: grabbing;
 }
 .wb-tab {
   display: inline-flex;

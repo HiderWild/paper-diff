@@ -138,8 +138,16 @@ const commandItems = computed(() => {
     },
     {
       id: "togglePdf",
-      label: t("toolbar.togglePdf"),
-      run: () => layout.togglePdf(),
+      label: t("tools.pdf"),
+      run: () => workbench.openTool("pdf"),
+    },
+    {
+      id: "exportReport",
+      label: t("settings.exportAcceptLog"),
+      run: () => {
+        const u = store.reportUrl();
+        if (u) window.open(u, "_blank");
+      },
     },
     {
       id: "toggleFiles",
@@ -304,8 +312,32 @@ async function onImportConfirm(payload: {
   files: File[];
   paths: string[];
   zip?: File | null;
+  advanced?: "dual" | "git" | "supplement" | null;
+  baseZip?: File | null;
+  revisedZip?: File | null;
+  git?: {
+    repo_url: string;
+    base_ref: string;
+    revised_ref: string;
+    subdir?: string;
+  };
 }) {
   importOpen.value = false;
+  if (payload.advanced === "dual" && payload.baseZip && payload.revisedZip) {
+    await store.doUpload(payload.baseZip, payload.revisedZip);
+    return;
+  }
+  if (payload.advanced === "git" && payload.git) {
+    await store.doGitImport(payload.git);
+    return;
+  }
+  if (payload.advanced === "supplement" && payload.files.length) {
+    await store.doSupplementFiles(payload.files, {
+      paths: payload.paths,
+      on_conflict: "overwrite",
+    });
+    return;
+  }
   if (payload.target === "project") {
     if (payload.method === "zip" && payload.zip) {
       await store.doImportWork(payload.zip);
@@ -314,7 +346,6 @@ async function onImportConfirm(payload: {
     }
     return;
   }
-  // zone
   if (payload.method === "zip" && payload.zip) {
     await store.doAddZoneZip(payload.zip, payload.name);
   } else if (payload.files.length) {
@@ -730,9 +761,6 @@ function formatCommitDate(iso?: string) {
           </option>
         </select>
       </label>
-      <button class="secondary" :disabled="busy || !pair" @click="onAcceptAll">
-        {{ t("toolbar.acceptFile") }}
-      </button>
       <button class="secondary" :disabled="busy || !projectId" @click="onUndo">
         {{ t("toolbar.undo") }}
       </button>
@@ -751,21 +779,6 @@ function formatCommitDate(iso?: string) {
       </button>
       <button class="secondary" :disabled="!projectId" @click="onExport">
         {{ t("toolbar.exportWork") }}
-      </button>
-      <input
-        ref="supplementInput"
-        type="file"
-        multiple
-        hidden
-        @change="onSupplementFilesSelected"
-      />
-      <button
-        class="secondary"
-        type="button"
-        :disabled="busy || !projectId"
-        @click="supplementInput?.click()"
-      >
-        {{ t("import.addFiles") }}
       </button>
       <select
         class="preset-select"
@@ -805,11 +818,11 @@ function formatCommitDate(iso?: string) {
       </button>
       <button
         class="secondary"
-        :class="{ 'active-toggle': showPdf }"
-        :title="t('toolbar.togglePdf')"
-        @click="layout.togglePdf()"
+        type="button"
+        :title="t('tools.pdf')"
+        @click="workbench.openTool('pdf')"
       >
-        {{ t("toolbar.togglePdf") }}
+        {{ t("tools.pdf") }}
       </button>
       <button
         class="secondary"

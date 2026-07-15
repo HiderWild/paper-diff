@@ -29,6 +29,15 @@ const emit = defineEmits<{
       files: File[];
       paths: string[];
       zip?: File | null;
+      advanced?: "dual" | "git" | "supplement" | null;
+      baseZip?: File | null;
+      revisedZip?: File | null;
+      git?: {
+        repo_url: string;
+        base_ref: string;
+        revised_ref: string;
+        subdir?: string;
+      };
     },
   ];
   analyze: [paths: string[]];
@@ -37,13 +46,22 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const method = ref<ImportMethod>("zip");
+/** standard | advanced-dual | advanced-git | supplement */
+const modeExtra = ref<"standard" | "dual" | "git" | "supplement">("standard");
 const name = ref(defaultImportName());
 const zipFile = ref<File | null>(null);
+const baseZip = ref<File | null>(null);
+const revisedZip = ref<File | null>(null);
 const fileList = ref<File[]>([]);
 const paths = ref<string[]>([]);
 const analyzing = ref(false);
 const localError = ref("");
 const previewReady = ref(false);
+const showAdvanced = ref(false);
+const gitRepo = ref("");
+const gitBase = ref("main");
+const gitRevised = ref("HEAD");
+const gitSubdir = ref("");
 
 const zipInput = ref<HTMLInputElement | null>(null);
 const folderInput = ref<HTMLInputElement | null>(null);
@@ -55,13 +73,25 @@ const title = computed(() =>
     : t("importModal.zoneTitle")
 );
 
-const canConfirm = computed(
+const canConfirm = computed(() => {
+  if (analyzing.value || props.busy || !name.value.trim()) return false;
+  if (modeExtra.value === "git") {
+    return !!(gitRepo.value && gitBase.value && gitRevised.value);
+  }
+  if (modeExtra.value === "dual") {
+    return !!(baseZip.value && revisedZip.value);
+  }
+  return (
+    previewReady.value && (paths.value.length > 0 || !!zipFile.value)
+  );
+});
+
+const isFullProjectZip = computed(
   () =>
-    previewReady.value &&
-    !analyzing.value &&
-    !props.busy &&
-    name.value.trim().length > 0 &&
-    (paths.value.length > 0 || !!zipFile.value)
+    props.target === "project" &&
+    modeExtra.value === "standard" &&
+    method.value === "zip" &&
+    !!zipFile.value
 );
 
 const displayPaths = computed(() => paths.value.slice(0, 80));
@@ -86,13 +116,22 @@ watch(
 
 function reset() {
   method.value = "zip";
+  modeExtra.value =
+    props.target === "zone" ? "standard" : "standard";
   name.value = defaultImportName();
   zipFile.value = null;
+  baseZip.value = null;
+  revisedZip.value = null;
   fileList.value = [];
   paths.value = [];
   analyzing.value = false;
   localError.value = "";
   previewReady.value = false;
+  showAdvanced.value = false;
+  gitRepo.value = "";
+  gitBase.value = "main";
+  gitRevised.value = "HEAD";
+  gitSubdir.value = "";
   if (zipInput.value) zipInput.value.value = "";
   if (folderInput.value) folderInput.value.value = "";
   if (filesInput.value) filesInput.value.value = "";
@@ -141,14 +180,39 @@ async function onFolderOrFiles(e: Event, m: "folder" | "files") {
 
 function confirm() {
   if (!canConfirm.value) return;
+  if (isFullProjectZip.value) {
+    const ok = window.confirm(t("importModal.replaceWarning"));
+    if (!ok) return;
+  }
   emit("confirm", {
-    target: props.target,
+    target:
+      modeExtra.value === "supplement" ? "project" : props.target,
     method: method.value,
     name: name.value.trim(),
     files: fileList.value,
     paths: paths.value,
     zip: zipFile.value,
+    advanced:
+      modeExtra.value === "standard" ? null : modeExtra.value,
+    baseZip: baseZip.value,
+    revisedZip: revisedZip.value,
+    git:
+      modeExtra.value === "git"
+        ? {
+            repo_url: gitRepo.value,
+            base_ref: gitBase.value,
+            revised_ref: gitRevised.value,
+            subdir: gitSubdir.value || undefined,
+          }
+        : undefined,
   });
+}
+
+function onBaseZip(e: Event) {
+  baseZip.value = (e.target as HTMLInputElement).files?.[0] || null;
+}
+function onRevisedZip(e: Event) {
+  revisedZip.value = (e.target as HTMLInputElement).files?.[0] || null;
 }
 </script>
 
@@ -167,7 +231,29 @@ function confirm() {
         <input v-model="name" type="text" maxlength="80" autocomplete="off" />
       </label>
 
-      <div class="method-row" role="radiogroup">
+      <div v-if="target === 'zone' || target === 'project'" class="mode-extra">
+        <button
+          v-if="target === 'zone' || true"
+          type="button"
+          class="method-chip"
+          :class="{ active: modeExtra === 'standard' }"
+          @click="modeExtra = 'standard'"
+        >
+          {{ target === "project" ? t("importModal.modeProject") : t("importModal.modeZone") }}
+        </button>
+        <button
+          v-if="target === 'zone' || target === 'project'"
+          type="button"
+          class="method-chip"
+          :class="{ active: modeExtra === 'supplement' }"
+          :disabled="target === 'project' && false"
+          @click="modeExtra = 'supplement'; method = 'files'"
+        >
+          {{ t("importModal.modeSupplement") }}
+        </button>
+      </div>
+
+      <div class="method-row" role="radiogroup" v-if="modeExtra === 'standard' || modeExtra === 'supplement'">
         <button
           type="button"
           class="method-chip"
@@ -225,6 +311,12 @@ function confirm() {
 
       <p v-if="analyzing" class="muted">{{ t("importModal.analyzing") }}</p>
       <p v-if="localError" class="error">{{ localError }}</p>
+      <p v-if="isFullProjectZip" class="warn">
+        {{ t("importModal.replaceHint") }}
+      </p>
+      <p v-if="target === 'zone' && modeExtra === 'standard'" class="muted">
+        {{ t("importModal.zoneHint") }}
+      </p>
 
       <section v-if="previewReady" class="preview">
         <h4>{{ t("importModal.preview") }}</h4>
@@ -252,6 +344,61 @@ function confirm() {
           {{ t("importModal.conflictNote") }}
         </p>
       </section>
+
+      <button
+        type="button"
+        class="secondary mini adv-toggle"
+        @click="showAdvanced = !showAdvanced"
+      >
+        {{ t("importModal.advanced") }}
+      </button>
+      <div v-if="showAdvanced" class="advanced-box">
+        <button
+          type="button"
+          class="method-chip"
+          :class="{ active: modeExtra === 'dual' }"
+          @click="modeExtra = 'dual'"
+        >
+          {{ t("importModal.advancedDual") }}
+        </button>
+        <button
+          type="button"
+          class="method-chip"
+          :class="{ active: modeExtra === 'git' }"
+          @click="modeExtra = 'git'"
+        >
+          {{ t("importModal.advancedGit") }}
+        </button>
+        <div v-if="modeExtra === 'dual'" class="adv-fields">
+          <label class="field">
+            {{ t("toolbar.base") }}
+            <input type="file" accept=".zip" @change="onBaseZip" />
+          </label>
+          <label class="field">
+            {{ t("toolbar.revised") }}
+            <input type="file" accept=".zip" @change="onRevisedZip" />
+          </label>
+        </div>
+        <div v-if="modeExtra === 'git'" class="adv-fields">
+          <label class="field">
+            {{ t("toolbar.gitRepoPlaceholder") }}
+            <input v-model="gitRepo" type="text" />
+          </label>
+          <label class="field">
+            {{ t("toolbar.baseRefPlaceholder") }}
+            <input v-model="gitBase" type="text" />
+          </label>
+          <label class="field">
+            {{ t("toolbar.revisedRefPlaceholder") }}
+            <input v-model="gitRevised" type="text" />
+          </label>
+          <label class="field">
+            {{ t("toolbar.subdirPlaceholder") }}
+            <input v-model="gitSubdir" type="text" />
+          </label>
+          <p class="hint">{{ t("importModal.gitLocalHint") }}</p>
+        </div>
+      </div>
 
       <footer class="modal-actions">
         <button type="button" class="secondary" @click="emit('close')">
@@ -392,9 +539,38 @@ function confirm() {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+  margin-top: 0.75rem;
 }
 .error {
   color: var(--danger);
   font-size: 0.85rem;
+}
+.mode-extra {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+.adv-toggle {
+  margin: 0.5rem 0;
+}
+.advanced-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.adv-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0;
 }
 </style>

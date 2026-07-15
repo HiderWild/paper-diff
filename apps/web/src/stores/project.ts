@@ -41,6 +41,7 @@ import {
   listProjects,
   listZones,
   pdfUrl,
+  putWorkFile,
   renameZone,
   setRoot,
   supplementWorkFiles,
@@ -64,6 +65,7 @@ import {
 } from "../shared/api";
 import type { DiffUnit } from "../features/diff/sentenceMapper";
 import { i18n } from "../i18n";
+import { useSettingsStore } from "./settings";
 
 function t(
   key: string,
@@ -72,12 +74,18 @@ function t(
   return String(i18n.global.t(key, params ?? {}));
 }
 
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export const useProjectStore = defineStore("project", () => {
   const projectId = ref<string | null>(null);
   const files = ref<DiffIndexFile[]>([]);
   const currentPath = ref<string | null>(null);
   const pair = ref<FilePair | null>(null);
   const units = ref<DiffUnit[]>([]);
+  /** paths with unsaved local edits */
+  const dirtyPaths = ref<Record<string, boolean>>({});
+  /** last known local buffer per path (work side) */
+  const localBuffers = ref<Record<string, string>>({});
   const status = ref(t("store.ready"));
   const error = ref("");
   const logText = ref("");
@@ -732,6 +740,11 @@ export const useProjectStore = defineStore("project", () => {
             revision: res.merged.revision,
           },
         };
+        clearDirty(res.file);
+        localBuffers.value = {
+          ...localBuffers.value,
+          [res.file]: res.merged.content,
+        };
       }
       await refreshIndex();
       status.value = t("store.undoOk");
@@ -742,6 +755,83 @@ export const useProjectStore = defineStore("project", () => {
     } finally {
       busy.value = false;
     }
+  }
+
+  function markDirty(path: string, content: string) {
+    if (!path) return;
+    localBuffers.value = { ...localBuffers.value, [path]: content };
+    dirtyPaths.value = { ...dirtyPaths.value, [path]: true };
+    // keep pair merged in sync for accept revision UX when path is current
+    if (pair.value && currentPath.value === path) {
+      pair.value = {
+        ...pair.value,
+        merged: {
+          ...pair.value.merged,
+          content,
+        },
+      };
+    }
+    const settings = useSettingsStore();
+    if (!settings.autoSave || !projectId.value) return;
+    const prev = saveTimers.get(path);
+    if (prev) clearTimeout(prev);
+    saveTimers.set(
+      path,
+      setTimeout(() => {
+        saveTimers.delete(path);
+        void savePath(path);
+      }, 3000)
+    );
+  }
+
+  function clearDirty(path: string) {
+    if (!dirtyPaths.value[path]) return;
+    const next = { ...dirtyPaths.value };
+    delete next[path];
+    dirtyPaths.value = next;
+    const tmr = saveTimers.get(path);
+    if (tmr) {
+      clearTimeout(tmr);
+      saveTimers.delete(path);
+    }
+  }
+
+  function isDirty(path: string | null | undefined) {
+    return !!(path && dirtyPaths.value[path]);
+  }
+
+  async function savePath(path: string): Promise<boolean> {
+    if (!projectId.value || !path) return false;
+    const content = localBuffers.value[path];
+    if (content == null) return false;
+    try {
+      await putWorkFile(projectId.value, path, content);
+      clearDirty(path);
+      status.value = t("store.saved", { path });
+      // refresh revision if current
+      if (currentPath.value === path) {
+        try {
+          const p = await getFilePair(projectId.value, path);
+          pair.value = p;
+        } catch {
+          /* ignore pair refresh */
+        }
+      }
+      return true;
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+      return false;
+    }
+  }
+
+  async function flushAll(): Promise<boolean> {
+    const paths = Object.keys(dirtyPaths.value).filter((p) => dirtyPaths.value[p]);
+    let ok = true;
+    for (const p of paths) {
+      const r = await savePath(p);
+      if (!r) ok = false;
+    }
+    return ok;
   }
 
   function scheduleAutoCompile() {
@@ -1335,12 +1425,19 @@ export const useProjectStore = defineStore("project", () => {
     pdfSource,
     pdfPath,
     pdfTitle,
+    dirtyPaths,
+    localBuffers,
     modifiedCount,
     pairLeftContent,
     pairRightContent,
     isCsvPath,
     isPdfPath,
     toggleSidesSwapped,
+    markDirty,
+    clearDirty,
+    isDirty,
+    savePath,
+    flushAll,
     refreshPdfIfFile,
     ensureProject,
     refreshIndex,

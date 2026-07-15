@@ -6,6 +6,7 @@ import {
   useSettingsStore,
   type ThemeMode,
 } from "../../stores/settings";
+import { useWorkbenchStore } from "../../stores/workbench";
 import type { AppLocale } from "../../i18n";
 
 defineEmits<{
@@ -15,9 +16,10 @@ defineEmits<{
 const { t } = useI18n();
 const settings = useSettingsStore();
 const layout = useLayoutStore();
-const { theme, locale, compactWorkbench, showToolTips } =
+const workbench = useWorkbenchStore();
+const { theme, locale, compactWorkbench, showToolTips, autoSave } =
   storeToRefs(settings);
-const { showDotFiles, showBottom, showPdf, showFiles } = storeToRefs(layout);
+const { showDotFiles, showFiles } = storeToRefs(layout);
 
 function onTheme(e: Event) {
   settings.setTheme((e.target as HTMLSelectElement).value as ThemeMode);
@@ -74,14 +76,6 @@ function onLocale(e: Event) {
           {{ t("settings.showFiles") }}
         </label>
         <label class="settings-check">
-          <input v-model="showPdf" type="checkbox" />
-          {{ t("settings.showPdfPane") }}
-        </label>
-        <label class="settings-check">
-          <input v-model="showBottom" type="checkbox" />
-          {{ t("settings.showBottom") }}
-        </label>
-        <label class="settings-check">
           <input v-model="showDotFiles" type="checkbox" />
           {{ t("tree.showDot") }}
         </label>
@@ -90,9 +84,27 @@ function onLocale(e: Event) {
           {{ t("settings.showToolTips") }}
         </label>
         <label class="settings-check">
+          <input v-model="autoSave" type="checkbox" />
+          {{ t("settings.autoSave") }}
+        </label>
+        <label class="settings-check">
           <input v-model="compactWorkbench" type="checkbox" />
           {{ t("settings.compactWorkbench") }}
         </label>
+        <button
+          type="button"
+          class="secondary reset-btn"
+          @click="workbench.openTool('output')"
+        >
+          {{ t("settings.openOutputTab") }}
+        </button>
+        <button
+          type="button"
+          class="secondary reset-btn"
+          @click="workbench.openTool('pdf')"
+        >
+          {{ t("settings.openPdfTab") }}
+        </button>
         <button
           type="button"
           class="secondary reset-btn"
