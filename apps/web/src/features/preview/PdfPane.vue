@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -13,40 +13,85 @@ const host = ref<HTMLDivElement | null>(null);
 const container = ref<HTMLDivElement | null>(null);
 const error = ref("");
 const loading = ref(false);
-/** True after at least one successful paint of current document */
 const containerHasPages = ref(false);
-/** User zoom multiplier (1 = fit-width baseline * 1) */
+/** User zoom vs fit-width baseline */
 const zoom = ref(1);
 const zoomPct = ref(100);
+/** Ctrl/Meta held over host → pan cursor when overflow */
+const ctrlHeld = ref(false);
+const panning = ref(false);
+const overflow = ref(false);
+
+const canPanCursor = computed(
+  () => ctrlHeld.value && overflow.value && !panning.value
+);
 
 let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
 let pdfDoc: PDFDocumentProxy | null = null;
 let renderGen = 0;
 let pagesData: ArrayBuffer | null = null;
 
+/** Center scroll so overflow is equal on both sides (horizontal + vertical). */
+function centerOverflow() {
+  const el = host.value;
+  if (!el) return;
+  const maxL = el.scrollWidth - el.clientWidth;
+  const maxT = el.scrollHeight - el.clientHeight;
+  if (maxL > 0) el.scrollLeft = maxL / 2;
+  else el.scrollLeft = 0;
+  if (maxT > 0) el.scrollTop = maxT / 2;
+  // keep top when only slight vertical overflow is normal page stack
+}
+
+function clampScroll() {
+  const el = host.value;
+  if (!el) return;
+  const maxL = Math.max(0, el.scrollWidth - el.clientWidth);
+  const maxT = Math.max(0, el.scrollHeight - el.clientHeight);
+  el.scrollLeft = Math.min(maxL, Math.max(0, el.scrollLeft));
+  el.scrollTop = Math.min(maxT, Math.max(0, el.scrollTop));
+}
+
+function refreshOverflow() {
+  const el = host.value;
+  if (!el) {
+    overflow.value = false;
+    return;
+  }
+  overflow.value =
+    el.scrollWidth > el.clientWidth + 1 ||
+    el.scrollHeight > el.clientHeight + 1;
+}
+
+function canPan(): boolean {
+  refreshOverflow();
+  return overflow.value;
+}
+
 function fitScaleForPage(
   page: Awaited<ReturnType<PDFDocumentProxy["getPage"]>>
 ) {
   const base = page.getViewport({ scale: 1 });
-  const hostW = container.value?.clientWidth || host.value?.clientWidth || 720;
+  // Use host width (tab viewport), not growing content width
+  const hostW = host.value?.clientWidth || 720;
   return Math.min(1.6, Math.max(0.5, (hostW - 24) / base.width));
 }
 
-async function paintPages() {
+async function paintPages(opts?: { preserveScroll?: boolean }) {
   if (!pdfDoc || !container.value) return;
   const gen = renderGen;
-  // Build off-DOM then swap to avoid flicker / "loading" jump
-  const frag = document.createDocumentFragment();
+  const hostEl = host.value;
+  const prevCenterX =
+    hostEl && hostEl.scrollWidth > hostEl.clientWidth
+      ? (hostEl.scrollLeft + hostEl.clientWidth / 2) / hostEl.scrollWidth
+      : 0.5;
+  const prevCenterY =
+    hostEl && hostEl.scrollHeight > hostEl.clientHeight
+      ? (hostEl.scrollTop + hostEl.clientHeight / 2) / hostEl.scrollHeight
+      : 0;
+
   const wrap = document.createElement("div");
   wrap.className = "pdf-pages-inner";
-  // Intrinsic size container: allow content wider than the tab (scroll, don't squash)
-  wrap.style.display = "flex";
-  wrap.style.flexDirection = "column";
-  wrap.style.alignItems = "flex-start";
-  wrap.style.gap = "0.5rem";
-  wrap.style.width = "max-content";
-  wrap.style.minWidth = "100%";
-  wrap.style.margin = "0 auto";
 
   const maxPages = Math.min(pdfDoc.numPages, 40);
   for (let i = 1; i <= maxPages; i++) {
@@ -55,7 +100,6 @@ async function paintPages() {
     const fit = fitScaleForPage(page);
     const scale = fit * zoom.value;
     const viewport = page.getViewport({ scale });
-    // Cap render resolution for memory (display still uses CSS size 1:1)
     const maxEdge = 4096;
     const renderScale =
       Math.max(viewport.width, viewport.height) > maxEdge
@@ -67,7 +111,6 @@ async function paintPages() {
     if (!ctx) continue;
     canvas.width = Math.floor(renderVp.width);
     canvas.height = Math.floor(renderVp.height);
-    // Layout size must match aspect of viewport (not constrained by parent)
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
     canvas.style.maxWidth = "none";
@@ -77,11 +120,29 @@ async function paintPages() {
     await page.render({ canvasContext: ctx, viewport: renderVp }).promise;
   }
   if (gen !== renderGen || !container.value) return;
-  frag.appendChild(wrap);
   container.value.innerHTML = "";
-  container.value.appendChild(frag);
+  container.value.appendChild(wrap);
   zoomPct.value = Math.round(zoom.value * 100);
-  containerHasPages.value = container.value.childElementCount > 0;
+  containerHasPages.value = wrap.childElementCount > 0;
+
+  await nextTick();
+  if (!hostEl) return;
+  if (opts?.preserveScroll) {
+    const maxL = Math.max(0, hostEl.scrollWidth - hostEl.clientWidth);
+    const maxT = Math.max(0, hostEl.scrollHeight - hostEl.clientHeight);
+    hostEl.scrollLeft = Math.min(
+      maxL,
+      Math.max(0, prevCenterX * hostEl.scrollWidth - hostEl.clientWidth / 2)
+    );
+    hostEl.scrollTop = Math.min(
+      maxT,
+      Math.max(0, prevCenterY * hostEl.scrollHeight - hostEl.clientHeight / 2)
+    );
+  } else {
+    centerOverflow();
+  }
+  clampScroll();
+  refreshOverflow();
 }
 
 async function loadUrl(url: string) {
@@ -98,7 +159,6 @@ async function loadUrl(url: string) {
     error.value = t("pdf.noContainer");
     return;
   }
-  // Keep previous canvases until first new page paints? For URL change, clear after fetch.
   try {
     try {
       loadingTask?.destroy();
@@ -122,7 +182,7 @@ async function loadUrl(url: string) {
     pdfDoc = await loadingTask.promise;
     if (gen !== renderGen) return;
     if (container.value) container.value.innerHTML = "";
-    await paintPages();
+    await paintPages({ preserveScroll: false });
   } catch (e) {
     if (gen === renderGen) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -134,13 +194,12 @@ async function loadUrl(url: string) {
 
 async function rezoom() {
   if (!pdfDoc || !pagesData) return;
-  // Silent: never toggle loading banner (avoids layout jump)
   renderGen++;
-  await paintPages();
+  await paintPages({ preserveScroll: true });
 }
 
 function onWheel(e: WheelEvent) {
-  // Ctrl/Cmd + wheel (trackpad pinch often sets ctrlKey on browsers)
+  // Ctrl/Cmd + wheel = zoom (pinch often sets ctrlKey)
   if (!(e.ctrlKey || e.metaKey)) return;
   e.preventDefault();
   e.stopPropagation();
@@ -161,6 +220,82 @@ function zoomReset() {
   void rezoom();
 }
 
+// —— Ctrl-drag pan (only when content overflows) ——
+let panStartX = 0;
+let panStartY = 0;
+let panScrollL = 0;
+let panScrollT = 0;
+let panPointerId: number | null = null;
+
+function onPointerDown(e: PointerEvent) {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (!canPan()) return;
+  // Only primary button
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const el = host.value;
+  if (!el) return;
+  panning.value = true;
+  panStartX = e.clientX;
+  panStartY = e.clientY;
+  panScrollL = el.scrollLeft;
+  panScrollT = el.scrollTop;
+  panPointerId = e.pointerId;
+  try {
+    el.setPointerCapture(e.pointerId);
+  } catch {
+    /* ignore */
+  }
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!panning.value || !host.value) return;
+  if (panPointerId != null && e.pointerId !== panPointerId) return;
+  if (!(e.ctrlKey || e.metaKey)) {
+    endPan(e);
+    return;
+  }
+  e.preventDefault();
+  const el = host.value;
+  const maxL = Math.max(0, el.scrollWidth - el.clientWidth);
+  const maxT = Math.max(0, el.scrollHeight - el.clientHeight);
+  // Drag content with pointer: move right → content moves right → scrollLeft decreases
+  const dx = e.clientX - panStartX;
+  const dy = e.clientY - panStartY;
+  el.scrollLeft = Math.min(maxL, Math.max(0, panScrollL - dx));
+  el.scrollTop = Math.min(maxT, Math.max(0, panScrollT - dy));
+}
+
+function endPan(e?: PointerEvent) {
+  if (!panning.value) return;
+  panning.value = false;
+  const el = host.value;
+  if (el && panPointerId != null) {
+    try {
+      el.releasePointerCapture(panPointerId);
+    } catch {
+      /* ignore */
+    }
+  }
+  panPointerId = null;
+  clampScroll();
+  void e;
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === "Control" || e.key === "Meta") ctrlHeld.value = true;
+}
+function onKeyUp(e: KeyboardEvent) {
+  if (e.key === "Control" || e.key === "Meta") {
+    ctrlHeld.value = false;
+    endPan();
+  }
+}
+function onBlur() {
+  ctrlHeld.value = false;
+  endPan();
+}
+
 watch(
   () => props.url,
   (u) => {
@@ -174,6 +309,7 @@ watch(
       loading.value = false;
       zoom.value = 1;
       zoomPct.value = 100;
+      containerHasPages.value = false;
     }
   },
   { immediate: true }
@@ -182,17 +318,41 @@ watch(
 onBeforeUnmount(() => {
   renderGen++;
   pdfDoc = null;
+  window.removeEventListener("keydown", onKeyDown);
+  window.removeEventListener("keyup", onKeyUp);
+  window.removeEventListener("blur", onBlur);
   try {
     loadingTask?.destroy();
   } catch {
     /* ignore */
   }
 });
+
+// track Ctrl for cursor affordance
+if (typeof window !== "undefined") {
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", onBlur);
+}
 </script>
 
 <template>
-  <div ref="host" class="pdf-host" @wheel="onWheel">
-    <div class="pdf-toolbar">
+  <div
+    ref="host"
+    class="pdf-host"
+    :class="{
+      'can-pan': canPanCursor,
+      panning: panning,
+    }"
+    @wheel="onWheel"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="endPan"
+    @pointercancel="endPan"
+    @lostpointercapture="endPan()"
+    @scroll.passive="refreshOverflow"
+  >
+    <div class="pdf-toolbar" @pointerdown.stop>
       <button type="button" class="mini secondary" @click="zoomBy(0.9)">−</button>
       <span class="zoom-label">{{ zoomPct }}%</span>
       <button type="button" class="mini secondary" @click="zoomBy(1.1)">+</button>
@@ -200,13 +360,10 @@ onBeforeUnmount(() => {
         {{ t("pdf.zoomReset") }}
       </button>
       <span class="hint muted">{{ t("pdf.zoomHint") }}</span>
+      <span class="hint muted">{{ t("pdf.panHint") }}</span>
     </div>
     <div v-if="!url" class="status-empty">{{ t("pdf.empty") }}</div>
-    <!-- Only show loading on initial open when nothing is painted yet -->
-    <div
-      v-if="loading && !containerHasPages"
-      class="status-empty"
-    >
+    <div v-if="loading && !containerHasPages" class="status-empty">
       {{ t("preview.loading") }}
     </div>
     <div v-if="error" class="error">{{ error }}</div>
@@ -219,17 +376,26 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
-  /* both axes: zoom may exceed tab width/height */
   overflow: auto;
   display: flex;
   flex-direction: column;
   background: var(--surface-deep, #0b0f14);
   padding: 0.35rem 0.5rem 0.5rem;
   gap: 0.35rem;
+  /* symmetric scroll: content can extend both sides via centered layout */
+  overscroll-behavior: contain;
+}
+.pdf-host.can-pan {
+  cursor: grab;
+}
+.pdf-host.panning {
+  cursor: grabbing;
+  user-select: none;
 }
 .pdf-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.35rem;
   flex-shrink: 0;
   position: sticky;
@@ -239,9 +405,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--panel-header) 92%, transparent);
   padding: 0.25rem 0;
   backdrop-filter: blur(4px);
-  /* toolbar stays tab-width while content scrolls horizontally */
   width: 100%;
-  min-width: min(100%, 100%);
   box-sizing: border-box;
 }
 .zoom-label {
@@ -255,18 +419,25 @@ onBeforeUnmount(() => {
   margin-left: 0.35rem;
 }
 .pdf-pages {
-  /* outer scrollport child: grow with content, do not shrink to tab */
+  /* Center block in host; when wider/taller than host, overflow is equal L/R & centered */
   flex: 0 0 auto;
-  align-self: flex-start;
-  min-width: 100%;
+  margin: 0 auto;
+  width: max-content;
+  min-width: min(100%, max-content);
+}
+.pdf-pages :deep(.pdf-pages-inner) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
   width: max-content;
 }
 .pdf-pages :deep(canvas) {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
   background: #fff;
   max-width: none !important;
-  width: auto !important;
-  height: auto !important;
+  /* keep intrinsic style width/height from JS — never force 100% */
+  display: block;
 }
 .status-empty {
   color: var(--muted);
