@@ -392,19 +392,25 @@ class GitService:
             "mode": mode,
         }
 
-    def show(
+    def _show_raw(
         self,
         project_id: str,
         ref: str,
         path: str,
-    ) -> dict:
-        """Show file content at ref. Local mode prefers work/<path>."""
+    ) -> tuple[bytes, str, bool]:
+        """Return (raw_bytes, display_path, binary)."""
         if not ref:
             raise AppError("VALIDATION_ERROR", "ref required", status_code=422)
         if not path:
             raise AppError("VALIDATION_ERROR", "path required", status_code=422)
+        # Path safety: deny traversal-style segments before resolving in git.
+        clean = path.replace("\\", "/").lstrip("/")
+        parts = [p for p in clean.split("/") if p and p != "."]
+        if any(p == ".." for p in parts):
+            raise AppError("PATH_TRAVERSAL", "path traversal denied", status_code=400)
+
         repo, subdir, mode = self._resolve_repo(project_id)
-        rel = path.replace("\\", "/").lstrip("/")
+        rel = clean
         candidates: list[str] = []
         if mode == "local":
             if rel.startswith("work/"):
@@ -443,6 +449,16 @@ class GitService:
             display = display[5:]
 
         binary = b"\x00" in raw[:8192]
+        return raw, display, binary
+
+    def show(
+        self,
+        project_id: str,
+        ref: str,
+        path: str,
+    ) -> dict:
+        """Show file content at ref. Local mode prefers work/<path>."""
+        raw, display, binary = self._show_raw(project_id, ref, path)
         if binary:
             return {
                 "path": display,
@@ -452,23 +468,69 @@ class GitService:
                 "binary": True,
                 "size": len(raw),
             }
-        content = None
-        encoding = "utf-8"
-        for enc in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
-            try:
-                content = raw.decode(enc)
-                encoding = enc
-                break
-            except UnicodeDecodeError:
-                continue
-        if content is None:
-            content = raw.decode("utf-8", errors="replace")
+        content, encoding = Workspace.decode_text_bytes(raw)
         return {
             "path": display,
             "ref": ref,
             "content": content,
             "encoding": encoding,
             "binary": False,
+        }
+
+    def show_meta(
+        self,
+        project_id: str,
+        ref: str,
+        path: str,
+    ) -> dict:
+        raw, display, binary = self._show_raw(project_id, ref, path)
+        if binary:
+            return {
+                "path": display,
+                "ref": ref,
+                "byte_size": len(raw),
+                "line_count": None,
+                "encoding": None,
+                "binary": True,
+            }
+        content, encoding = Workspace.decode_text_bytes(raw)
+        return {
+            "path": display,
+            "ref": ref,
+            "byte_size": len(raw),
+            "line_count": Workspace.text_line_count(content),
+            "encoding": encoding,
+            "binary": False,
+            "sha256": Workspace(
+                self.settings.workspace_root, project_id
+            ).file_sha256(content),
+        }
+
+    def show_slice(
+        self,
+        project_id: str,
+        ref: str,
+        path: str,
+        start_line: int,
+        end_line: int,
+    ) -> dict:
+        raw, display, binary = self._show_raw(project_id, ref, path)
+        if binary:
+            raise AppError(
+                "UNSUPPORTED_MEDIA",
+                "cannot slice binary git blob",
+                status_code=415,
+            )
+        content, _encoding = Workspace.decode_text_bytes(raw)
+        max_lines = int(getattr(self.settings, "max_file_slice_lines", 4000) or 4000)
+        sliced = Workspace.slice_text_lines(content, start_line, end_line, max_lines)
+        return {
+            "path": display,
+            "ref": ref,
+            "start_line": sliced["start_line"],
+            "end_line": sliced["end_line"],
+            "line_count": sliced["line_count"],
+            "content": sliced["content"],
         }
 
     def push(self, project_id: str) -> dict:

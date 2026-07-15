@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyRangeReplace,
   applyUnitToWorkText,
+  lineRangePayloadForUnit,
   resolveUnitReplacement,
 } from "./applySnippet";
 import type { DiffUnit } from "./sentenceMapper";
@@ -150,5 +151,59 @@ describe("resolveUnitReplacement / applyUnitToWorkText", () => {
     });
     const out = applyUnitToWorkText(left, u, { rightTextFull: right });
     expect(out).toBe("Hello cosmos\n");
+  });
+});
+
+describe("lineRangePayloadForUnit", () => {
+  it("returns null for mid-line (partial col) ranges", () => {
+    const left = "Hello world\n";
+    const right = "Hello cosmos\n";
+    const u: DiffUnit = {
+      id: "u1",
+      granularity: "hunk",
+      left: { start_line: 1, start_col: 6, end_line: 1, end_col: 11 },
+      right: { start_line: 1, start_col: 6, end_line: 1, end_col: 12 },
+      leftText: "world",
+      rightText: "cosmos",
+    };
+    expect(
+      lineRangePayloadForUnit(left, u, { rightTextFull: right })
+    ).toBeNull();
+  });
+
+  it("maps full-line hunk to start/end lines + replacement", () => {
+    const left = "L1\nOLD\nL3\n";
+    const right = "L1\nNEWLINE\nL3\n";
+    const u: DiffUnit = {
+      id: "u1",
+      granularity: "hunk",
+      left: { start_line: 2, start_col: 0, end_line: 2, end_col: 3 },
+      right: { start_line: 2, start_col: 0, end_line: 2, end_col: 7 },
+      leftText: "OLD",
+      rightText: "NEWLINE",
+    };
+    expect(lineRangePayloadForUnit(left, u, { rightTextFull: right })).toEqual({
+      start_line: 2,
+      end_line: 2,
+      content: "NEWLINE",
+    });
+  });
+
+  it("maps multi-line full span", () => {
+    const left = "a\nb\nc\nd\n";
+    const right = "a\nXY\nd\n";
+    const u: DiffUnit = {
+      id: "u1",
+      granularity: "hunk",
+      left: { start_line: 2, start_col: 0, end_line: 3, end_col: 1 },
+      right: { start_line: 2, start_col: 0, end_line: 2, end_col: 2 },
+      leftText: "b\nc",
+      rightText: "XY",
+    };
+    expect(lineRangePayloadForUnit(left, u, { rightTextFull: right })).toEqual({
+      start_line: 2,
+      end_line: 3,
+      content: "XY",
+    });
   });
 });

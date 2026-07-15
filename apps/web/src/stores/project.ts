@@ -42,6 +42,7 @@ import {
   listZones,
   pdfUrl,
   putWorkFile,
+  putWorkFileRange,
   renameZone,
   setRoot,
   supplementWorkFiles,
@@ -64,7 +65,14 @@ import {
   type Zone,
 } from "../shared/api";
 import type { DiffUnit } from "../features/diff/sentenceMapper";
-import { applyUnitToWorkText } from "../features/diff/applySnippet";
+import {
+  applyUnitToWorkText,
+  lineRangePayloadForUnit,
+} from "../features/diff/applySnippet";
+import {
+  countLines,
+  estimateTier,
+} from "../features/diff/largeFileTier";
 import { i18n } from "../i18n";
 import { useSettingsStore } from "./settings";
 import {
@@ -356,7 +364,22 @@ export const useProjectStore = defineStore("project", () => {
     try {
       void compareFile(projectId.value, path).catch(() => undefined);
       pair.value = await getFilePair(projectId.value, path);
-      status.value = path;
+      // Light L-tier status hint (still full-load for now; meta/slice later).
+      const leftText =
+        pair.value?.left?.content ??
+        pair.value?.merged?.content ??
+        pair.value?.base?.content ??
+        "";
+      const rightText =
+        pair.value?.right?.content ?? pair.value?.revised?.content ?? "";
+      const tier = estimateTier(
+        Math.max(leftText.length, rightText.length),
+        Math.max(countLines(leftText), countLines(rightText))
+      );
+      status.value =
+        tier === "L"
+          ? `${path} · large (${countLines(leftText)} lines)`
+          : path;
       if (isCsvPath(path) && pair.value) {
         void doCsvPreview();
       }
@@ -655,6 +678,7 @@ export const useProjectStore = defineStore("project", () => {
   /**
    * Apply the visible compare-side unit into the work file via PUT.
    * Guarantees "what you see is what you pull" for git / non-active zone.
+   * L-tier full-line hunks use file-range PUT to avoid shipping whole file.
    */
   async function applyCompareUnit(
     unit: DiffUnit,
@@ -669,11 +693,32 @@ export const useProjectStore = defineStore("project", () => {
     busy.value = true;
     error.value = "";
     try {
+      const swapped = opts.sidesSwapped ?? sidesSwapped.value;
       const next = applyUnitToWorkText(opts.leftTextFull, unit, {
         rightTextFull: opts.rightTextFull,
-        sidesSwapped: opts.sidesSwapped ?? sidesSwapped.value,
+        sidesSwapped: swapped,
       });
-      await putWorkFile(projectId.value, opts.workPath, next);
+      const leftTier = estimateTier(
+        opts.leftTextFull.length,
+        countLines(opts.leftTextFull)
+      );
+      const rangePayload =
+        leftTier === "L"
+          ? lineRangePayloadForUnit(opts.leftTextFull, unit, {
+              rightTextFull: opts.rightTextFull,
+              sidesSwapped: swapped,
+            })
+          : null;
+      if (rangePayload) {
+        await putWorkFileRange(projectId.value, {
+          path: opts.workPath,
+          start_line: rangePayload.start_line,
+          end_line: rangePayload.end_line,
+          content: rangePayload.content,
+        });
+      } else {
+        await putWorkFile(projectId.value, opts.workPath, next);
+      }
       clearDirty(opts.workPath);
       localBuffers.value = { ...localBuffers.value, [opts.workPath]: next };
       if (currentPath.value === opts.workPath) {

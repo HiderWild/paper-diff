@@ -32,16 +32,14 @@ function lineSliceFromHunkText(
   return lines[idx] ?? "";
 }
 
-function singleLineRange(
-  line: number,
-  textOnLine: string,
-  fallbackEndCol: number
-): LineColRange {
+function singleLineRange(line: number, textOnLine: string): LineColRange {
+  // Full single line: start_col=0, end_col=line length (0 is valid for empty lines).
+  // Never inherit parent hunk end_col — that breaks L-tier range PUT detection.
   return {
     start_line: line,
     start_col: 0,
     end_line: line,
-    end_col: textOnLine.length > 0 ? textOnLine.length : Math.max(0, fallbackEndCol),
+    end_col: textOnLine.length,
   };
 }
 
@@ -95,8 +93,8 @@ export function gutterActionsFromUnits(units: DiffUnit[]): GutterAction[] {
       const lineUnit: DiffUnit = {
         id: `${h.id}-L${ln}`,
         granularity: "hunk",
-        left: singleLineRange(ln, leftLineText, h.left.end_col),
-        right: singleLineRange(rightLine, rightLineText, h.right.end_col),
+        left: singleLineRange(ln, leftLineText),
+        right: singleLineRange(rightLine, rightLineText),
         leftText: leftLineText,
         rightText: rightLineText,
         parentId: h.id,

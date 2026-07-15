@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
@@ -9,6 +9,11 @@ import {
   type LineChange,
 } from "./sentenceMapper";
 import { gutterActionsFromUnits, type GutterAction } from "./gutterActions";
+import {
+  diffOptionsForTier,
+  estimatePairTier,
+  type FileTier,
+} from "./largeFileTier";
 
 self.MonacoEnvironment = {
   getWorker() {
@@ -28,6 +33,8 @@ const props = withDefaults(
     showGutterActions?: boolean;
     /** Word wrap on both sides (Alt/Option+Z) */
     wordWrap?: boolean;
+    /** Override content tier; omit to derive from left+right size */
+    fileTier?: FileTier;
   }>(),
   {
     editableLeft: false,
@@ -61,22 +68,74 @@ let contentSub: monaco.IDisposable | null = null;
 const viewSubs: monaco.IDisposable[] = [];
 let suppressEmit = false;
 let lastUnits: DiffUnit[] = [];
+/** Cancel pending idle unit build when content changes / unmount. */
+let unitIdleHandle: number | null = null;
+let unitTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
 const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
 /** Max vertical offset (px) for one secondary arrow when primary is already on the line. */
 const SECONDARY_OFFSET_PX = 16;
 
-function recomputeUnits() {
+const resolvedTier = computed<FileTier>(() => {
+  if (props.fileTier) return props.fileTier;
+  return estimatePairTier(props.left, props.right);
+});
+
+const tierOpts = computed(() => diffOptionsForTier(resolvedTier.value));
+
+function cancelPendingUnits() {
+  if (unitIdleHandle != null && typeof cancelIdleCallback === "function") {
+    cancelIdleCallback(unitIdleHandle);
+  }
+  unitIdleHandle = null;
+  if (unitTimeoutHandle != null) {
+    clearTimeout(unitTimeoutHandle);
+    unitTimeoutHandle = null;
+  }
+}
+
+/** Schedule buildDiffUnits: immediate for S/M; idle (with timeout fallback) for L. */
+function scheduleRecomputeUnits() {
+  cancelPendingUnits();
   if (!editor) return;
+  if (resolvedTier.value === "L") {
+    const run = () => {
+      unitIdleHandle = null;
+      unitTimeoutHandle = null;
+      recomputeUnitsNow();
+    };
+    if (typeof requestIdleCallback === "function") {
+      unitIdleHandle = requestIdleCallback(run, { timeout: 800 });
+    } else {
+      unitTimeoutHandle = setTimeout(run, 50);
+    }
+    return;
+  }
+  recomputeUnitsNow();
+}
+
+function recomputeUnitsNow() {
+  if (!editor) return;
+  const opts = tierOpts.value;
   const changes = (editor.getLineChanges() || []) as LineChange[];
   const units = buildDiffUnits(
     original?.getValue() ?? props.left,
     modified?.getValue() ?? props.right,
-    changes
+    changes,
+    {
+      maxHunks: opts.maxUnits,
+      wordUnits: opts.wordUnits,
+    }
   );
   lastUnits = units;
   emit("units", units);
   void nextTick(() => placeArrows());
+}
+
+/** Public / exposed recompute (synchronous). */
+function recomputeUnits() {
+  cancelPendingUnits();
+  recomputeUnitsNow();
 }
 
 /**
@@ -222,6 +281,13 @@ function bindViewListeners() {
   );
 }
 
+function applyDiffAlgorithm() {
+  if (!editor) return;
+  editor.updateOptions({
+    diffAlgorithm: tierOpts.value.diffAlgorithm,
+  });
+}
+
 function mountEditor() {
   if (!host.value) return;
   original = monaco.editor.createModel(props.left, "plaintext");
@@ -232,7 +298,7 @@ function mountEditor() {
     renderSideBySide: !props.singlePane,
     originalEditable: !!props.editableLeft,
     theme: props.monacoTheme,
-    diffAlgorithm: "advanced",
+    diffAlgorithm: tierOpts.value.diffAlgorithm,
     ignoreTrimWhitespace: false,
     renderIndicators: true,
     fontSize: 13,
@@ -242,7 +308,7 @@ function mountEditor() {
   editor.setModel({ original, modified });
   applyWordWrap();
   sub = editor.onDidUpdateDiff(() => {
-    recomputeUnits();
+    scheduleRecomputeUnits();
   });
   contentSub = original.onDidChangeContent(() => {
     if (suppressEmit || !props.editableLeft) return;
@@ -250,7 +316,7 @@ function mountEditor() {
   });
   bindViewListeners();
   setTimeout(() => {
-    recomputeUnits();
+    scheduleRecomputeUnits();
     emit("ready");
   }, 200);
 }
@@ -266,7 +332,16 @@ watch(
     } finally {
       suppressEmit = false;
     }
-    setTimeout(recomputeUnits, 150);
+    applyDiffAlgorithm();
+    setTimeout(scheduleRecomputeUnits, 150);
+  }
+);
+
+watch(
+  () => resolvedTier.value,
+  () => {
+    applyDiffAlgorithm();
+    scheduleRecomputeUnits();
   }
 );
 
@@ -290,6 +365,7 @@ watch(
 onMounted(mountEditor);
 
 onBeforeUnmount(() => {
+  cancelPendingUnits();
   contentSub?.dispose();
   sub?.dispose();
   while (viewSubs.length) viewSubs.pop()?.dispose();
@@ -306,7 +382,7 @@ function setLeftContent(text: string) {
   } finally {
     suppressEmit = false;
   }
-  setTimeout(recomputeUnits, 150);
+  setTimeout(scheduleRecomputeUnits, 150);
 }
 
 function revealLine(line: number) {

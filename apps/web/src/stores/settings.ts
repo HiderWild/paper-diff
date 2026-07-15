@@ -6,6 +6,9 @@ export type ThemeMode = "system" | "dark" | "light";
 
 const KEY = "paper-diff-settings-v1";
 
+/** Large-file handling; only `auto` is wired (internal default, no complex UI). */
+export type LargeFileMode = "auto";
+
 export type SettingsState = {
   theme: ThemeMode;
   locale: AppLocale;
@@ -16,6 +19,11 @@ export type SettingsState = {
   autoSave: boolean;
   /** Monaco word wrap (Alt/Option+Z) */
   wordWrap: boolean;
+  /**
+   * Large-file tier strategy. Reserved for future force-S/M/L;
+   * only `auto` is supported (detect from content size/lines).
+   */
+  largeFileMode: LargeFileMode;
 };
 
 const DEFAULTS: SettingsState = {
@@ -25,6 +33,7 @@ const DEFAULTS: SettingsState = {
   showToolTips: true,
   autoSave: true,
   wordWrap: false,
+  largeFileMode: "auto",
 };
 
 function load(): SettingsState {
@@ -50,6 +59,7 @@ function load(): SettingsState {
     }
     if (typeof parsed.autoSave !== "boolean") parsed.autoSave = true;
     if (typeof parsed.wordWrap !== "boolean") parsed.wordWrap = false;
+    if (parsed.largeFileMode !== "auto") parsed.largeFileMode = "auto";
     return parsed;
   } catch {
     return { ...DEFAULTS };
@@ -81,6 +91,9 @@ export const useSettingsStore = defineStore("settings", () => {
   const showToolTips = ref(initial.showToolTips);
   const autoSave = ref(initial.autoSave !== false);
   const wordWrap = ref(!!initial.wordWrap);
+  const largeFileMode = ref<LargeFileMode>(
+    initial.largeFileMode === "auto" ? "auto" : "auto"
+  );
 
   const resolvedTheme = computed(() => resolveTheme(theme.value));
   const monacoTheme = computed(() =>
@@ -95,6 +108,7 @@ export const useSettingsStore = defineStore("settings", () => {
       showToolTips: showToolTips.value,
       autoSave: autoSave.value,
       wordWrap: wordWrap.value,
+      largeFileMode: largeFileMode.value,
     };
     try {
       localStorage.setItem(KEY, JSON.stringify(s));
@@ -134,7 +148,15 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   watch(
-    [theme, locale, compactWorkbench, showToolTips, autoSave, wordWrap],
+    [
+      theme,
+      locale,
+      compactWorkbench,
+      showToolTips,
+      autoSave,
+      wordWrap,
+      largeFileMode,
+    ],
     persist,
     { deep: true }
   );
@@ -149,6 +171,7 @@ export const useSettingsStore = defineStore("settings", () => {
     showToolTips,
     autoSave,
     wordWrap,
+    largeFileMode,
     resolvedTheme,
     monacoTheme,
     setTheme,

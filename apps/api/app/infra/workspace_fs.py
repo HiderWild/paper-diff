@@ -207,3 +207,170 @@ class Workspace:
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
+
+    # --- Text line meta / slice / range (large-file L1/L4) ---
+
+    @staticmethod
+    def decode_text_bytes(raw: bytes) -> tuple[str, str]:
+        """Decode with same fallbacks as read_text; return (text, encoding)."""
+        for enc in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
+            try:
+                return raw.decode(enc), enc
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", errors="replace"), "utf-8"
+
+    @staticmethod
+    def text_lines(content: str) -> list[str]:
+        """Logical lines (splitlines); empty file → []."""
+        if not content:
+            return []
+        return content.splitlines()
+
+    @staticmethod
+    def text_line_count(content: str) -> int:
+        return len(Workspace.text_lines(content))
+
+    @staticmethod
+    def validate_line_slice(
+        start_line: int,
+        end_line: int,
+        max_lines: int,
+    ) -> None:
+        if start_line < 1:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "start_line must be >= 1",
+                status_code=422,
+            )
+        if end_line < start_line:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "end_line must be >= start_line",
+                status_code=422,
+            )
+        requested = end_line - start_line + 1
+        if requested > max_lines:
+            raise AppError(
+                "SLICE_TOO_LARGE",
+                f"slice exceeds max of {max_lines} lines",
+                status_code=422,
+                details={"max_lines": max_lines, "requested": requested},
+            )
+
+    @staticmethod
+    def slice_text_lines(
+        content: str,
+        start_line: int,
+        end_line: int,
+        max_lines: int,
+    ) -> dict:
+        """Return 1-based inclusive line window (clamped to file bounds)."""
+        Workspace.validate_line_slice(start_line, end_line, max_lines)
+        lines = Workspace.text_lines(content)
+        line_count = len(lines)
+        if start_line > line_count:
+            return {
+                "start_line": start_line,
+                "end_line": min(end_line, line_count) if line_count else start_line - 1,
+                "line_count": line_count,
+                "content": "",
+            }
+        actual_end = min(end_line, line_count)
+        selected = lines[start_line - 1 : actual_end]
+        return {
+            "start_line": start_line,
+            "end_line": actual_end,
+            "line_count": line_count,
+            "content": "\n".join(selected),
+        }
+
+    @staticmethod
+    def splice_text_lines(
+        content: str,
+        start_line: int,
+        end_line: int,
+        replacement: str,
+    ) -> str:
+        """Replace 1-based inclusive line range with multi-line replacement text."""
+        if start_line < 1:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "start_line must be >= 1",
+                status_code=422,
+            )
+        if end_line < start_line:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "end_line must be >= start_line",
+                status_code=422,
+            )
+        lines = Workspace.text_lines(content)
+        line_count = len(lines)
+        if start_line > line_count + 1:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "start_line beyond end of file",
+                status_code=422,
+                details={"line_count": line_count, "start_line": start_line},
+            )
+        if start_line <= line_count and end_line > line_count:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "end_line beyond end of file",
+                status_code=422,
+                details={"line_count": line_count, "end_line": end_line},
+            )
+        # Append-only: start_line == line_count + 1 (ignore end for pure append insert)
+        if start_line == line_count + 1:
+            new_mid = replacement.splitlines() if replacement else []
+            result = lines + new_mid
+        else:
+            new_mid = replacement.splitlines() if replacement else []
+            result = lines[: start_line - 1] + new_mid + lines[end_line:]
+        if not result:
+            return ""
+        out = "\n".join(result)
+        # Preserve trailing newline convention of common text/tex files
+        if content.endswith("\n") or replacement.endswith("\n"):
+            if not out.endswith("\n"):
+                out += "\n"
+        return out
+
+    def read_text_decoded(self, side: str, rel_path: str) -> tuple[str, str, int]:
+        """Read text file → (content, encoding, byte_size)."""
+        side_dir = self._side_dir(side)
+        path = self.resolve_under(side_dir, rel_path)
+        if not path.is_file():
+            raise AppError("FILE_NOT_FOUND", f"file not found: {rel_path}", status_code=404)
+        raw = path.read_bytes()
+        text, enc = self.decode_text_bytes(raw)
+        return text, enc, len(raw)
+
+    def file_meta(self, side: str, rel_path: str) -> dict:
+        text, enc, byte_size = self.read_text_decoded(side, rel_path)
+        return {
+            "path": rel_path,
+            "byte_size": byte_size,
+            "line_count": self.text_line_count(text),
+            "encoding": enc,
+            "sha256": self.file_sha256(text),
+        }
+
+    def file_slice(
+        self,
+        side: str,
+        rel_path: str,
+        start_line: int,
+        end_line: int,
+        max_lines: int,
+    ) -> dict:
+        text, _enc, _byte_size = self.read_text_decoded(side, rel_path)
+        sliced = self.slice_text_lines(text, start_line, end_line, max_lines)
+        return {
+            "path": rel_path,
+            "start_line": sliced["start_line"],
+            "end_line": sliced["end_line"],
+            "line_count": sliced["line_count"],
+            "content": sliced["content"],
+        }

@@ -236,6 +236,24 @@ class ZoneService:
             "size": p.stat().st_size,
         }
 
+    def zone_file_meta(self, project_id: str, zone_id: str, path: str) -> dict:
+        ws = self._require_project(project_id)
+        self._load_zone_meta(ws, zone_id)
+        return ws.file_meta(f"zone:{zone_id}", path)
+
+    def zone_file_slice(
+        self,
+        project_id: str,
+        zone_id: str,
+        path: str,
+        start_line: int,
+        end_line: int,
+    ) -> dict:
+        ws = self._require_project(project_id)
+        self._load_zone_meta(ws, zone_id)
+        max_lines = int(getattr(self.settings, "max_file_slice_lines", 4000) or 4000)
+        return ws.file_slice(f"zone:{zone_id}", path, start_line, end_line, max_lines)
+
     def clone_work_as_zone(self, project_id: str, name: str | None = None) -> dict:
         ws = self._require_project(project_id)
         zm = self.create_zone(
