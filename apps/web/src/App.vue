@@ -1609,7 +1609,7 @@ function formatCommitDate(iso?: string) {
   flex-direction: column;
   min-height: 0;
   border-top: 1px solid var(--border);
-  background: #0b0f14;
+  background: var(--surface-deep);
   overflow: hidden;
 }
 .flex-log {
@@ -1625,7 +1625,7 @@ function formatCommitDate(iso?: string) {
   letter-spacing: 0.04em;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
-  background: #121a24;
+  background: var(--panel-header);
   flex-shrink: 0;
 }
 .side-header {
@@ -1644,7 +1644,7 @@ function formatCommitDate(iso?: string) {
   line-height: 1.2;
 }
 .header-hide:hover {
-  background: #243044;
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel-header));
   color: var(--text);
 }
 
@@ -1712,7 +1712,7 @@ function formatCommitDate(iso?: string) {
   border-radius: 0;
 }
 .err-item:hover {
-  background: #243044;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .zone-actions {
@@ -1733,7 +1733,7 @@ function formatCommitDate(iso?: string) {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.35rem 0.45rem;
-  background: #121a24;
+  background: var(--panel-header);
 }
 .zone-item.active {
   border-color: var(--accent);
