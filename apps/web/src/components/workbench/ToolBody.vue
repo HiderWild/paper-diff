@@ -33,7 +33,7 @@ const { t } = useI18n();
 const project = useProjectStore();
 const settings = useSettingsStore();
 const compareTarget = useCompareTargetStore();
-const { monacoTheme } = storeToRefs(settings);
+const { monacoTheme, wordWrap } = storeToRefs(settings);
 const { sidesSwapped } = storeToRefs(project);
 const targetTick = ref(0);
 
@@ -282,6 +282,7 @@ function onAfterMutation(content: string | null) {
           :editable-left="effectiveEditable"
           :single-pane="singlePane"
           :monaco-theme="monacoTheme"
+          :word-wrap="wordWrap"
           :show-gutter-actions="tab.kind === 'comparer'"
           @units="onUnits"
           @left-change="onLeftChange"

@@ -26,12 +26,15 @@ const props = withDefaults(
     monacoTheme?: string;
     /** Show between-pane pull arrows */
     showGutterActions?: boolean;
+    /** Word wrap on both sides (Alt/Option+Z) */
+    wordWrap?: boolean;
   }>(),
   {
     editableLeft: false,
     singlePane: false,
     monacoTheme: "vs-dark",
     showGutterActions: true,
+    wordWrap: false,
   }
 );
 
@@ -190,7 +193,18 @@ function applyEditability() {
     originalEditable: !!props.editableLeft,
     renderSideBySide: !props.singlePane,
   });
+  applyWordWrap();
   // Pane mode change moves the rail
+  void nextTick(() => placeArrows());
+}
+
+function applyWordWrap() {
+  if (!editor) return;
+  const wrap: "on" | "off" = props.wordWrap ? "on" : "off";
+  const leftEd = editor.getOriginalEditor();
+  const rightEd = editor.getModifiedEditor();
+  leftEd.updateOptions({ wordWrap: wrap });
+  rightEd.updateOptions({ wordWrap: wrap });
   void nextTick(() => placeArrows());
 }
 
@@ -226,6 +240,7 @@ function mountEditor() {
     enableSplitViewResizing: true,
   });
   editor.setModel({ original, modified });
+  applyWordWrap();
   sub = editor.onDidUpdateDiff(() => {
     recomputeUnits();
   });
@@ -265,6 +280,11 @@ watch(
   (th) => {
     monaco.editor.setTheme(th || "vs-dark");
   }
+);
+
+watch(
+  () => props.wordWrap,
+  () => applyWordWrap()
 );
 
 onMounted(mountEditor);

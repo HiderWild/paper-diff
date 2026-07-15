@@ -336,6 +336,8 @@ export default {
     showToolTips: "显示工具提示（悬停说明）",
     compactWorkbench: "紧凑工作区（实验）",
     autoSave: "自动保存（3 秒空闲后写入）",
+    wordWrap: "自动换行",
+    wordWrapHint: "编辑器/比较器按视口宽度换行（Alt/Option+Z 切换）",
     openOutputTab: "打开输出工具",
     openPdfTab: "打开 PDF 工具",
     exportAcceptLog: "导出接受日志",

@@ -17,7 +17,7 @@ const { t } = useI18n();
 const settings = useSettingsStore();
 const layout = useLayoutStore();
 const workbench = useWorkbenchStore();
-const { theme, locale, compactWorkbench, showToolTips, autoSave } =
+const { theme, locale, compactWorkbench, showToolTips, autoSave, wordWrap } =
   storeToRefs(settings);
 const { showDotFiles, showFiles } = storeToRefs(layout);
 
@@ -86,6 +86,11 @@ function onLocale(e: Event) {
         <label class="settings-check">
           <input v-model="autoSave" type="checkbox" />
           {{ t("settings.autoSave") }}
+        </label>
+        <label class="settings-check" :title="t('settings.wordWrapHint')">
+          <input v-model="wordWrap" type="checkbox" />
+          {{ t("settings.wordWrap") }}
+          <span class="muted"> (Alt+Z)</span>
         </label>
         <label class="settings-check">
           <input v-model="compactWorkbench" type="checkbox" />
