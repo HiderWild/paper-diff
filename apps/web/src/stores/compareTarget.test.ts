@@ -66,7 +66,7 @@ describe("compareTarget memory (M1–M2)", () => {
     expect(cmp.getMemoryScope("p1", "b.tex")).toBe("file");
   });
 
-  it("resolveForWork prefers byWorkPath then default with path rewrite", () => {
+  it("resolveForWork prefers byWorkPath; default keeps its own path (no rewrite)", () => {
     const entry: ProjectMemory = {
       default: { kind: "git", ref: "deadbeef", path: "old.tex" },
       byWorkPath: {
@@ -77,14 +77,14 @@ describe("compareTarget memory (M1–M2)", () => {
       target: { kind: "git", ref: "aaa", path: "a.tex" },
       scope: "file",
     });
-    // New file uses default ref but path = work path (M2)
+    // Opening c.tex does NOT invent compare path c.tex — keeps project default path
     expect(resolveTargetForWork(entry, "c.tex", null)).toEqual({
-      target: { kind: "git", ref: "deadbeef", path: "c.tex" },
+      target: { kind: "git", ref: "deadbeef", path: "old.tex" },
       scope: "project",
     });
   });
 
-  it("store resolveForWork matches G/W/T: file A git, file B zone", () => {
+  it("store resolveForWork: file overrides vs project default path preserved", () => {
     const cmp = useCompareTargetStore();
     cmp.setForProject(
       "p1",
@@ -106,11 +106,11 @@ describe("compareTarget memory (M1–M2)", () => {
       zoneId: "Z",
       path: "b.tex",
     });
-    // New path C: project default (last set = zone Z) with path rewritten
+    // c.tex has no override → last project default (zone Z @ b.tex), path not rewritten
     expect(cmp.resolveForWork("p1", "c.tex")).toEqual({
       kind: "zone",
       zoneId: "Z",
-      path: "c.tex",
+      path: "b.tex",
     });
   });
 });

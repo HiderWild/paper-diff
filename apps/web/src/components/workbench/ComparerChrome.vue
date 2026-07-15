@@ -93,6 +93,7 @@ const memoryBadge = computed(() => {
 });
 
 const targetLabel = computed(() => {
+  // Prefer memory for picker chrome; do not invent readiness here — body owns load state.
   const cur =
     currentTarget() ||
     (props.path
@@ -113,15 +114,13 @@ const projectLabel = computed(() => {
 });
 
 const title = computed(() => {
-  const left = sidesSwapped.value ? targetLabel.value : projectLabel.value;
-  const right = sidesSwapped.value ? projectLabel.value : targetLabel.value;
-  if (!props.path && !props.compareReady) {
-    return t("panels.comparer");
-  }
+  // Only claim dual-side title when compareReady; avoid ghost "vs" after failed reload
   if (!props.compareReady) {
     if (props.path) return projectLabel.value;
-    return targetLabel.value;
+    return t("panels.comparer");
   }
+  const left = sidesSwapped.value ? targetLabel.value : projectLabel.value;
+  const right = sidesSwapped.value ? projectLabel.value : targetLabel.value;
   return t("panels.diffHeaderWith", { left, right });
 });
 
