@@ -108,6 +108,8 @@ export default {
     logFilterWarnings: "警告",
     logSevError: "错误",
     logSevWarning: "警告",
+    logRaw: "原始日志",
+    jumpSource: "打开源文件",
   },
   tools: {
     strip: "工具",

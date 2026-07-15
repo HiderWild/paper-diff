@@ -108,6 +108,8 @@ export default {
     logFilterWarnings: "Warnings",
     logSevError: "Error",
     logSevWarning: "Warn",
+    logRaw: "Raw log",
+    jumpSource: "Open source",
   },
   tools: {
     strip: "Tools",

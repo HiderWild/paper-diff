@@ -10,6 +10,7 @@ import MarkdownPreview from "../../features/viewer/MarkdownPreview.vue";
 import TablePreview from "../../features/viewer/TablePreview.vue";
 import NotebookPreview from "../../features/viewer/NotebookPreview.vue";
 import LatexLogPreview from "../../features/viewer/LatexLogPreview.vue";
+import CompileOutputPanel from "../../features/viewer/CompileOutputPanel.vue";
 import { registerExtraLanguages } from "../../features/viewer/registerLanguages";
 import {
   monacoLanguageFromPath,
@@ -18,6 +19,7 @@ import {
 } from "../../features/viewer/languageFromPath";
 import type { DiffUnit } from "../../features/diff/sentenceMapper";
 import type { ViewTab } from "../../stores/workbench";
+import { useWorkbenchStore } from "../../stores/workbench";
 import { useProjectStore } from "../../stores/project";
 import { useSettingsStore } from "../../stores/settings";
 import {
@@ -53,6 +55,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const project = useProjectStore();
+const workbench = useWorkbenchStore();
 const settings = useSettingsStore();
 const compareTarget = useCompareTargetStore();
 const { monacoTheme, wordWrap, wordHoverAccept } = storeToRefs(settings);
@@ -87,6 +90,53 @@ function onJumpLogLine(line: number) {
     // Next tick after source mode shows Monaco
     setTimeout(() => ed.revealLine?.(line), 60);
   }
+}
+
+function tryConsumePendingReveal(path: string | null) {
+  if (!path || props.tab.kind !== "editor") return;
+  const line = workbench.takePendingReveal(path);
+  if (line == null) return;
+  setTimeout(() => {
+    const ed = diffRef.value as { revealLine?: (n: number) => void } | null;
+    ed?.revealLine?.(line);
+  }, 200);
+}
+
+/** Open TeX (or other) source from latex log issue. */
+function onJumpSource(err: {
+  file?: string | null;
+  line?: number | null;
+  message: string;
+}) {
+  if (!err.file) {
+    if (err.line) onJumpLogLine(err.line);
+    return;
+  }
+  const path = err.file.replace(/^\.\//, "").replace(/\\/g, "/");
+  const files = project.files || [];
+  const match =
+    files.find((f) => f.path === path) ||
+    files.find((f) => path.endsWith(f.path) || f.path.endsWith(path));
+  const resolved = match?.path || path;
+  if (err.line && err.line > 0) workbench.requestReveal(resolved, err.line);
+  void project.openFile(resolved);
+  // Prefer empty/matching editor tool
+  const empty = workbench.allTabs.find((v) => v.kind === "editor" && !v.path);
+  if (empty) {
+    workbench.bindPath(empty.id, resolved);
+    return;
+  }
+  const focused = workbench.focusedTab;
+  if (focused && focused.kind === "editor") {
+    workbench.bindPath(focused.id, resolved);
+    return;
+  }
+  const any = workbench.allTabs.find((v) => v.kind === "editor");
+  if (any) {
+    workbench.bindPath(any.id, resolved);
+    return;
+  }
+  workbench.openTool("editor", resolved);
 }
 
 function onSplitRatio(r: number) {
@@ -373,6 +423,7 @@ async function loadBoundPath(path: string | null) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     loading.value = false;
+    tryConsumePendingReveal(path);
   }
 }
 
@@ -456,8 +507,12 @@ function onAfterMutation(content: string | null) {
 
 <template>
   <div class="tool-body">
-    <div v-if="tab.kind === 'output'" class="log-box flex-log output-body">
-      {{ project.logText || t("panels.compileLog") }}
+    <div v-if="tab.kind === 'output'" class="output-body">
+      <CompileOutputPanel
+        :log-text="project.logText || ''"
+        :api-errors="project.lastCompileErrors"
+        @jump="onJumpSource"
+      />
     </div>
     <template v-else>
       <ComparerChrome
@@ -737,6 +792,7 @@ function onAfterMutation(content: string | null) {
           :content="displayLeft"
           :path="tab.path || ''"
           @jump-log-line="onJumpLogLine"
+          @jump-source="onJumpSource"
         >
           <template #source>
             <MonacoDiff
@@ -801,8 +857,12 @@ function onAfterMutation(content: string | null) {
 }
 .output-body {
   flex: 1;
+  min-height: 0;
   max-height: none;
   border-top: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 /* One-sided / empty comparer: project | compare columns (swap flips order) */
 .comparer-ready {

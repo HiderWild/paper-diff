@@ -12,6 +12,7 @@ import SettingsPanel from "./features/settings/SettingsPanel.vue";
 import FileTree from "./features/tree/FileTree.vue";
 import ZoneExplorer from "./features/zones/ZoneExplorer.vue";
 import GitPickModal from "./features/git/GitPickModal.vue";
+import CompileOutputPanel from "./features/viewer/CompileOutputPanel.vue";
 import { useLayoutStore, type ActivityId, type MainPaneId } from "./stores/layout";
 import { useProjectStore } from "./stores/project";
 import { useSettingsStore } from "./stores/settings";
@@ -428,6 +429,16 @@ function onExport() {
   if (u) window.open(u, "_blank");
 }
 
+// After compile fills log/errors, surface the bottom Output dock
+watch(
+  () => [logText.value, lastCompileErrors.value.length] as const,
+  ([text, n]) => {
+    if ((text && text.length > 40) || n > 0) {
+      layout.openBottom();
+    }
+  }
+);
+
 function jumpError(err: {
   file?: string | null;
   line?: number | null;
@@ -437,15 +448,32 @@ function jumpError(err: {
     const path = err.file.replace(/^\.\//, "").replace(/\\/g, "/");
     const match =
       files.value.find((f) => f.path === path) ||
-      files.value.find((f) => path.endsWith(f.path));
-    if (match) {
-      void store.openFile(match.path).then(() => {
-        if (err.line)
-          setTimeout(() => diffRef.value?.revealLine(err.line!), 250);
-      });
+      files.value.find((f) => path.endsWith(f.path) || f.path.endsWith(path));
+    const resolved = match?.path || path;
+    if (err.line && err.line > 0) {
+      workbench.requestReveal(resolved, err.line);
+    }
+    void store.openFile(resolved);
+    // Open in editor tool (workbench tabs)
+    const empty = workbench.allTabs.find((v) => v.kind === "editor" && !v.path);
+    if (empty) {
+      workbench.bindPath(empty.id, resolved);
       return;
     }
+    const focused = workbench.focusedTab;
+    if (focused && focused.kind === "editor") {
+      workbench.bindPath(focused.id, resolved);
+      return;
+    }
+    const any = workbench.allTabs.find((v) => v.kind === "editor");
+    if (any) {
+      workbench.bindPath(any.id, resolved);
+      return;
+    }
+    workbench.openTool("editor", resolved);
+    return;
   }
+  // No file: try legacy single-diff reveal if still mounted
   if (err.line) diffRef.value?.revealLine(err.line);
 }
 
@@ -1194,18 +1222,7 @@ function formatCommitDate(iso?: string) {
             @title-drag-start="onPaneDragStart('files', $event)"
             @title-drag-end="onPaneDragEnd"
           />
-          <div v-if="lastCompileErrors.length" class="err-list">
-            <div class="panel-header">{{ t("panels.compileErrors") }}</div>
-            <button
-              v-for="(e, i) in lastCompileErrors"
-              :key="i"
-              class="err-item"
-              type="button"
-              @click="jumpError(e)"
-            >
-              {{ e.file || "?" }}:{{ e.line || "?" }} — {{ e.message }}
-            </button>
-          </div>
+          <!-- Compile errors also appear in bottom Output dock (parsed log). -->
         </template>
 
         <template v-else-if="activity === 'zones'">
@@ -1658,8 +1675,12 @@ function formatCommitDate(iso?: string) {
                 ▾
               </button>
             </div>
-            <div class="log-box flex-log bottom-console-body">
-              {{ logText || t("panels.compileLog") }}
+            <div class="flex-log bottom-console-body">
+              <CompileOutputPanel
+                :log-text="logText || ''"
+                :api-errors="lastCompileErrors"
+                @jump="jumpError"
+              />
             </div>
           </div>
         </template>
@@ -1878,9 +1899,12 @@ function formatCommitDate(iso?: string) {
 }
 .bottom-console-body {
   flex: 1 1 auto;
+  min-height: 0;
   max-height: none;
-  overflow: auto;
+  overflow: hidden;
   border-top: none;
+  display: flex;
+  flex-direction: column;
 }
 .bottom-sash {
   flex: 0 0 5px;
