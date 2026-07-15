@@ -62,6 +62,9 @@ export default {
     namePrompt: "比较区名称",
     deleteConfirm: "删除此比较区？",
     fileCount: "{n} 个文件",
+    activated: "已激活比较区：{name}",
+    deactivated: "已清除比较区",
+    snapshotOk: "已创建快照：{name}",
   },
   fileActions: {
     add: "添加→项目",
@@ -136,6 +139,7 @@ export default {
     unbound: "本地 Git 尚未就绪（请先导入项目）",
     discard: "丢弃未提交更改",
     discardConfirm: "丢弃项目中所有未提交的更改？",
+    discarded: "已丢弃未提交更改",
     log: "历史",
     dirtyFiles: "变更文件",
     clean: "工作区干净",
