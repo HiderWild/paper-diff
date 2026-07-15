@@ -92,38 +92,6 @@ const memoryBadge = computed(() => {
   return "";
 });
 
-const targetLabel = computed(() => {
-  // Prefer memory for picker chrome; do not invent readiness here — body owns load state.
-  const cur =
-    currentTarget() ||
-    (props.path
-      ? targets.resolveForWork(projectId.value, props.path)
-      : targets.getForProject(projectId.value));
-  if (!cur) return t("comparer.emptyCompareHint");
-  if (cur.kind === "zone") {
-    const z = zones.value.find((x) => x.id === cur.zoneId);
-    const name = z?.name || cur.zoneId.slice(0, 8);
-    return `${t("comparer.fromZone")}「${name}」 · ${cur.path}`;
-  }
-  return `${t("comparer.fromGit", { ref: cur.ref.slice(0, 10) })} · ${cur.path}`;
-});
-
-const projectLabel = computed(() => {
-  if (props.path) return `${t("comparer.fromProject")} · ${props.path}`;
-  return t("comparer.fromProject");
-});
-
-const title = computed(() => {
-  // Only claim dual-side title when compareReady; avoid ghost "vs" after failed reload
-  if (!props.compareReady) {
-    if (props.path) return projectLabel.value;
-    return t("panels.comparer");
-  }
-  const left = sidesSwapped.value ? targetLabel.value : projectLabel.value;
-  const right = sidesSwapped.value ? projectLabel.value : targetLabel.value;
-  return t("panels.diffHeaderWith", { left, right });
-});
-
 function currentTarget(): CompareTarget | null {
   if (targetKind.value === "zone") {
     if (!zoneId.value) return null;
@@ -178,39 +146,41 @@ watch(pickerOpen, (v) => {
 
 <template>
   <div class="cmp-chrome">
+    <!-- Toolbar only: side sources are labeled on each pane in ToolBody -->
     <div class="cmp-title-row">
-      <span class="cmp-title">{{ title }}</span>
-      <span class="cmp-path muted">{{ path || targetLabel }}</span>
+      <span class="cmp-tools-label muted">{{ t("panels.comparer") }}</span>
       <span v-if="memoryBadge" class="mem-badge muted" :title="memoryBadge">{{
         memoryBadge
       }}</span>
-      <button
-        type="button"
-        class="mini secondary"
-        :title="t('comparer.pickTarget')"
-        @click="pickerOpen = !pickerOpen"
-      >
-        {{ t("comparer.vs") }}…
-      </button>
-      <button
-        type="button"
-        class="mini secondary"
-        :class="{ 'active-toggle': sidesSwapped }"
-        :title="t('panels.swapSides')"
-        :disabled="busy"
-        @click="store.toggleSidesSwapped()"
-      >
-        ⇄
-      </button>
-      <button
-        v-if="compareReady"
-        type="button"
-        class="mini"
-        :disabled="busy || (!pair && rightText == null)"
-        @click="onAcceptAll"
-      >
-        {{ t("toolbar.acceptFile") }}
-      </button>
+      <div class="cmp-actions">
+        <button
+          type="button"
+          class="mini secondary"
+          :title="t('comparer.pickTarget')"
+          @click="pickerOpen = !pickerOpen"
+        >
+          {{ t("comparer.vs") }}…
+        </button>
+        <button
+          type="button"
+          class="mini secondary"
+          :class="{ 'active-toggle': sidesSwapped }"
+          :title="t('panels.swapSides')"
+          :disabled="busy"
+          @click="store.toggleSidesSwapped()"
+        >
+          ⇄
+        </button>
+        <button
+          v-if="compareReady"
+          type="button"
+          class="mini"
+          :disabled="busy || (!pair && rightText == null)"
+          @click="onAcceptAll"
+        >
+          {{ t("toolbar.acceptFile") }}
+        </button>
+      </div>
     </div>
 
     <div v-if="pickerOpen" class="target-picker">
@@ -291,19 +261,20 @@ watch(pickerOpen, (v) => {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.35rem 0.55rem;
+  padding: 0.3rem 0.55rem;
   font-size: 0.8rem;
 }
-.cmp-title {
+.cmp-tools-label {
   font-weight: 600;
-}
-.cmp-path {
-  flex: 1;
-  min-width: 4rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.cmp-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
 }
 .mem-badge {
   flex-shrink: 0;
