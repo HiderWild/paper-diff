@@ -14,9 +14,9 @@ const container = ref<HTMLDivElement | null>(null);
 const error = ref("");
 const loading = ref(false);
 const containerHasPages = ref(false);
-/** User zoom vs fit-width baseline (max 1600% = ×16) */
+/** User zoom vs fit-width baseline (max 800% = ×8) */
 const ZOOM_MIN = 0.25;
-const ZOOM_MAX = 16;
+const ZOOM_MAX = 8;
 const zoom = ref(1);
 const zoomPct = ref(100);
 /** Ctrl/Meta held over host → pan cursor when overflow */
