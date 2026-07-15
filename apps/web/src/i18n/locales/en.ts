@@ -77,6 +77,18 @@ export default {
     docLegacyUnsupported:
       "Legacy .doc is not previewable here — re-save as .docx in Word. .docx is rendered in-browser and may differ slightly from desktop Word.",
   },
+  tools: {
+    strip: "Tools",
+    comparer: "Comparer",
+    editor: "Editor",
+    pdf: "PDF preview",
+    word: "Word preview",
+    empty: "empty",
+    close: "Close",
+    dropHint: "Drop a file from the tree here, or open {tool} from the toolbar",
+    unsupportedFile:
+      "This {tool} cannot open “{file}”. Choose another file. The target pane was not changed.",
+  },
   import: {
     addFiles: "Add files to project",
     conflictTitle: "File conflicts",

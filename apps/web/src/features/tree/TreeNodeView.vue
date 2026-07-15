@@ -70,7 +70,17 @@ const emit = defineEmits<{
       :class="{ active: currentPath === node.path }"
       :style="{ paddingLeft: `${6 + depth * 12}px` }"
       :title="node.path"
+      draggable="true"
       @click="emit('open', node.path)"
+      @dragstart="
+        ($event as DragEvent).dataTransfer?.setData(
+          'application/x-paper-diff-path',
+          node.path
+        );
+        ($event as DragEvent).dataTransfer?.setData('text/plain', node.path);
+        if (($event as DragEvent).dataTransfer)
+          ($event as DragEvent).dataTransfer!.effectAllowed = 'copy';
+      "
     >
       <span class="chevron placeholder" />
       <span
