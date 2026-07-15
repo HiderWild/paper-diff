@@ -272,12 +272,15 @@ export default {
   },
   hoverAccept: {
     title: "词/短语差异",
+    titleSentence: "句级差异",
     work: "工作区",
     compare: "对照",
     apply: "采纳此处",
+    applySentence: "采纳整句",
     dismiss: "关闭",
     insertHint: "将在工作区插入对照文本",
     deleteHint: "将从工作区删除该片段",
+    appliedToast: "已采纳词/句级修改 · 可撤销",
   },
   gitPick: {
     title: "从 Git 提交选择对照文件",
@@ -388,6 +391,9 @@ export default {
     autoSave: "自动保存（3 秒空闲后写入）",
     wordWrap: "自动换行",
     wordWrapHint: "编辑器/比较器按视口宽度换行（Alt/Option+Z 切换）",
+    wordHoverAccept: "词/短语悬停采纳",
+    wordHoverAcceptHint:
+      "小文件比较时，悬停高亮词/短语可局部采纳（对照→工作区）。大文件默认关闭词单元。",
     openOutputTab: "打开输出工具",
     openPdfTab: "打开 PDF 工具",
     exportAcceptLog: "导出接受日志",

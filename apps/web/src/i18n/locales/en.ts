@@ -278,12 +278,15 @@ export default {
   },
   hoverAccept: {
     title: "Word / phrase change",
+    titleSentence: "Sentence change",
     work: "Work",
     compare: "Compare",
     apply: "Apply here",
+    applySentence: "Apply sentence",
     dismiss: "Dismiss",
     insertHint: "Inserts the compare text into work",
     deleteHint: "Deletes this span from work",
+    appliedToast: "Applied word/sentence change · undo available",
   },
   gitPick: {
     title: "Pick compare file from git",
@@ -395,6 +398,9 @@ export default {
     autoSave: "Auto-save (flush after 3s idle)",
     wordWrap: "Word wrap",
     wordWrapHint: "Wrap editor/comparer lines to viewport (toggle Alt/Option+Z)",
+    wordHoverAccept: "Word/phrase hover accept",
+    wordHoverAcceptHint:
+      "On small files, hover highlighted words/phrases to pull compare → work. Large-file tiers keep word units off.",
     openOutputTab: "Open output tool",
     openPdfTab: "Open PDF tool",
     exportAcceptLog: "Export accept log",

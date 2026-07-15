@@ -1,6 +1,6 @@
 # Word / phrase hover-accept plan
 
-**Status:** Phase 1–4 MVP landed (hover card + decorations + pullUnit; S-tier)  
+**Status:** Feature complete for plan DoD (Phase 0–5). See status log.  
 **Product:** paper-diff text comparer (Monaco Diff only)  
 **Related:** `MonacoDiff.vue`, `sentenceMapper.ts`, `applySnippet.ts`, project store accept/undo, large-file tiers  
 
@@ -254,3 +254,4 @@ Prefer **vertical slices** after Phase 1: each PR should leave main usable (feat
 |------|------|
 | 2026-07-15 | Plan authored after Monaco API / architecture Q&A; implementation not started. |
 | 2026-07-15 | Implemented: `wordHover.ts` + tests, `WordHoverCard.vue`, decorations + mouse hover in `MonacoDiff`, `sidesSwapped` + S-tier via `tierOpts.wordUnits`, i18n. Phase 5 polish deferred. |
+| 2026-07-15 | Closed remaining: fixtures catalog, insert/delete apply tests, Esc/Enter + card hover stability, sentence hover, applied toast, settings `wordHoverAccept`, M-tier policy documented, matrix doc. |

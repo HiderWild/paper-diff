@@ -91,6 +91,8 @@ export function diffOptionsForTier(tier: FileTier): DiffOptionsForTier {
         wordUnits: true,
       };
     case "M":
+      // v1: keep wordUnits off for M (same as L) — hover-accept is S-tier only.
+      // Enabling word units on M needs viewport-limited decoration work first.
       return {
         diffAlgorithm: "legacy",
         maxUnits: DEFAULT_MAX_UNITS,

@@ -14,11 +14,47 @@ export type WordCardModel = {
   isInsert: boolean;
   /** True if compare span is empty (delete from work) */
   isDelete: boolean;
+  /** word | sentence | other */
+  kind: "word" | "sentence" | "other";
 };
 
 /** Word-level units only. */
 export function wordUnitsOf(units: DiffUnit[]): DiffUnit[] {
   return units.filter((u) => u.granularity === "word");
+}
+
+/** Sentence-level units (aggregated phrases). */
+export function sentenceUnitsOf(units: DiffUnit[]): DiffUnit[] {
+  return units.filter((u) => u.granularity === "sentence");
+}
+
+/**
+ * Hit-test word first (smallest), else sentence if includeSentence.
+ */
+export function hitTestHoverUnit(
+  units: DiffUnit[],
+  trueSide: TrueSide,
+  line: number,
+  col0: number,
+  sidesSwapped = false,
+  includeSentence = true
+): DiffUnit | null {
+  const word = hitTestWordUnit(units, trueSide, line, col0, sidesSwapped);
+  if (word) return word;
+  if (!includeSentence) return null;
+  const sentences = sentenceUnitsOf(units);
+  let best: DiffUnit | null = null;
+  let bestSpan = Number.POSITIVE_INFINITY;
+  for (const u of sentences) {
+    const r = unitRangeForTrueSide(u, trueSide, sidesSwapped);
+    if (!rangeContains(r, line, col0)) continue;
+    const span = rangeSpanChars(r);
+    if (span < bestSpan) {
+      bestSpan = span;
+      best = u;
+    }
+  }
+  return best;
 }
 
 /**
@@ -120,7 +156,13 @@ export function unitCardModel(
   const isDelete =
     compareRange.start_line === compareRange.end_line &&
     compareRange.start_col === compareRange.end_col;
-  return { unit, workText, compareText, isInsert, isDelete };
+  const kind =
+    unit.granularity === "word"
+      ? "word"
+      : unit.granularity === "sentence"
+        ? "sentence"
+        : "other";
+  return { unit, workText, compareText, isInsert, isDelete, kind };
 }
 
 /** Cap decorations for performance. */
