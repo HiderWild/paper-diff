@@ -35,7 +35,7 @@
 - **Import modal + diff chrome + autosave (draft, largely superseded):** `docs/superpowers/plans/2026-07-15-import-diffchrome-autosave.md`
 - **UX gap closure v1.1 (scaffold landed; remaining P0 mixed):** `docs/superpowers/plans/2026-07-15-ux-gap-closure.md`
 - **Comparer + preview hardening (true-source pull / arrows / word zoom — execute next):** `docs/superpowers/plans/2026-07-15-comparer-preview-hardening.md`
-- **Large-file browse/compare performance (windowed load + hunk map):** `docs/superpowers/plans/2026-07-15-large-file-performance.md`
+- **Large-file performance v1.1 (tiered; semantic lock; no over-design):** `docs/superpowers/plans/2026-07-15-large-file-performance.md`
 
 ## Completion tiers (use in status claims)
 
