@@ -93,27 +93,34 @@ const memoryBadge = computed(() => {
 });
 
 const targetLabel = computed(() => {
-  const cur = currentTarget();
-  if (!cur) return t("panels.sideZone");
+  const cur =
+    currentTarget() ||
+    (props.path
+      ? targets.resolveForWork(projectId.value, props.path)
+      : targets.getForProject(projectId.value));
+  if (!cur) return t("comparer.emptyCompareHint");
   if (cur.kind === "zone") {
     const z = zones.value.find((x) => x.id === cur.zoneId);
-    return `${z?.name || cur.zoneId.slice(0, 8)} · ${cur.path}`;
+    const name = z?.name || cur.zoneId.slice(0, 8);
+    return `${t("comparer.fromZone")}「${name}」 · ${cur.path}`;
   }
-  return `git ${cur.ref.slice(0, 10)} · ${cur.path}`;
+  return `${t("comparer.fromGit", { ref: cur.ref.slice(0, 10) })} · ${cur.path}`;
+});
+
+const projectLabel = computed(() => {
+  if (props.path) return `${t("comparer.fromProject")} · ${props.path}`;
+  return t("comparer.fromProject");
 });
 
 const title = computed(() => {
-  const left = sidesSwapped.value ? targetLabel.value : t("panels.sideProject");
-  const right = sidesSwapped.value ? t("panels.sideProject") : targetLabel.value;
+  const left = sidesSwapped.value ? targetLabel.value : projectLabel.value;
+  const right = sidesSwapped.value ? projectLabel.value : targetLabel.value;
   if (!props.path && !props.compareReady) {
     return t("panels.comparer");
   }
   if (!props.compareReady) {
-    // One-sided: show which side is bound
-    if (props.path) {
-      return `${t("panels.sideProject")} · ${props.path}`;
-    }
-    return `${t("panels.sideZone")} · ${targetLabel.value}`;
+    if (props.path) return projectLabel.value;
+    return targetLabel.value;
   }
   return t("panels.diffHeaderWith", { left, right });
 });

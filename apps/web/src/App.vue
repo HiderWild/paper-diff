@@ -11,6 +11,7 @@ import WorkbenchGrid from "./components/workbench/WorkbenchGrid.vue";
 import SettingsPanel from "./features/settings/SettingsPanel.vue";
 import FileTree from "./features/tree/FileTree.vue";
 import ZoneExplorer from "./features/zones/ZoneExplorer.vue";
+import GitPickModal from "./features/git/GitPickModal.vue";
 import { useLayoutStore, type ActivityId, type MainPaneId } from "./stores/layout";
 import { useProjectStore } from "./stores/project";
 import { useSettingsStore } from "./stores/settings";
@@ -109,6 +110,9 @@ const agentChatInput = ref("");
 const commandOpen = ref(false);
 const commandQuery = ref("");
 const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
+/** Git commit/file picker for comparer compare-side */
+const gitPickOpen = ref(false);
+const gitPickTabId = ref<string | null>(null);
 
 const layoutPresets = [
   { id: "default", label: "toolbar.presetDefault" },
@@ -618,6 +622,45 @@ function openActivity(a: ActivityId) {
     void store.refreshGitLog();
   }
   if (a === "zones") void store.refreshZones();
+}
+
+function onComparerPickProject(tabId: string) {
+  workbench.focusTab(tabId);
+  openActivity("explorer");
+}
+
+function onComparerPickZone(tabId: string) {
+  workbench.focusTab(tabId);
+  openActivity("zones");
+}
+
+function onComparerPickGit(tabId: string) {
+  workbench.focusTab(tabId);
+  gitPickTabId.value = tabId;
+  gitPickOpen.value = true;
+}
+
+function onGitPickConfirm(payload: {
+  ref: string;
+  path: string;
+  short?: string;
+}) {
+  gitPickOpen.value = false;
+  const tabId = gitPickTabId.value;
+  gitPickTabId.value = null;
+  const tab = tabId
+    ? workbench.getTab(tabId)
+    : workbench.focusedTab?.kind === "comparer"
+      ? workbench.focusedTab
+      : null;
+  // Persist compare target (git ref + path); content loads via gitShow in ToolBody
+  compareTarget.setForProject(
+    store.projectId,
+    { kind: "git", ref: payload.ref, path: payload.path },
+    tab?.path || undefined
+  );
+  if (tab) workbench.focusTab(tab.id);
+  void payload.short;
 }
 
 async function onZoneFromCommit(ref: string) {
@@ -1627,6 +1670,9 @@ function formatCommitDate(iso?: string) {
                 onWorkbenchFileDrop(tabId, path, side, zoneId)
             "
             @invalid-drop="(msg) => workbench.toast(msg, 'warn')"
+            @pick-project="onComparerPickProject"
+            @pick-zone="onComparerPickZone"
+            @pick-git="onComparerPickGit"
           />
         </div>
 
@@ -1689,6 +1735,18 @@ function formatCommitDate(iso?: string) {
       @close="importOpen = false"
       @analyze="onImportAnalyze"
       @confirm="onImportConfirm"
+    />
+
+    <GitPickModal
+      :open="gitPickOpen"
+      :project-id="projectId"
+      :preferred-path="
+        gitPickTabId
+          ? workbench.getTab(gitPickTabId)?.path || currentPath
+          : currentPath
+      "
+      @close="gitPickOpen = false"
+      @confirm="onGitPickConfirm"
     />
 
     <div

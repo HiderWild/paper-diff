@@ -15,6 +15,9 @@ const emit = defineEmits<{
     zoneId?: string | null,
   ];
   invalidDrop: [message: string];
+  pickProject: [tabId: string];
+  pickZone: [tabId: string];
+  pickGit: [tabId: string];
 }>();
 
 const wb = useWorkbenchStore();
@@ -270,6 +273,9 @@ function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
                   emit('fileDrop', tabId, path, side, zoneId)
               "
               @invalid-drop="(msg) => emit('invalidDrop', msg)"
+              @pick-project="(tabId) => emit('pickProject', tabId)"
+              @pick-zone="(tabId) => emit('pickZone', tabId)"
+              @pick-git="(tabId) => emit('pickGit', tabId)"
             />
           </div>
         </template>

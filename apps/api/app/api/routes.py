@@ -534,6 +534,18 @@ def git_show(
     return svc.show(project_id, ref=ref, path=path)
 
 
+@router.get("/projects/{project_id}/git/ls-tree")
+def git_ls_tree(
+    project_id: str,
+    ref: str = Query(...),
+    path: str | None = Query(default=None),
+    recursive: bool = Query(default=True),
+    svc: GitService = Depends(git),
+):
+    """List paths at a commit (for Git file picker). Content is not extracted to disk."""
+    return svc.ls_tree(project_id, ref=ref, path=path, recursive=recursive)
+
+
 @router.get("/projects/{project_id}/git/show-meta")
 def git_show_meta(
     project_id: str,

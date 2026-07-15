@@ -29,12 +29,21 @@ const props = defineProps<{
   active: boolean;
 }>();
 
+const emit = defineEmits<{
+  /** Jump activity bar to project explorer */
+  pickProject: [];
+  /** Jump activity bar to zones panel */
+  pickZone: [];
+  /** Open git commit/file picker modal */
+  pickGit: [];
+}>();
+
 const { t } = useI18n();
 const project = useProjectStore();
 const settings = useSettingsStore();
 const compareTarget = useCompareTargetStore();
 const { monacoTheme, wordWrap } = storeToRefs(settings);
-const { sidesSwapped } = storeToRefs(project);
+const { sidesSwapped, zones, activeZoneId } = storeToRefs(project);
 const targetTick = ref(0);
 
 const left = ref("");
@@ -76,6 +85,38 @@ const hasCompareSide = computed(
 const hasAnySide = computed(
   () => hasWorkSide.value || hasCompareSide.value
 );
+
+/** Resolved compare target for labels (zone name / git short hash). */
+const resolvedTarget = computed<CompareTarget | null>(() => {
+  if (props.tab.kind !== "comparer") return null;
+  if (props.tab.path) {
+    return compareTarget.resolveForWork(project.projectId, props.tab.path);
+  }
+  return compareTarget.getForProject(project.projectId);
+});
+
+const projectSideLabel = computed(() => {
+  if (props.tab.path) {
+    return `${t("comparer.fromProject")} · ${props.tab.path}`;
+  }
+  return t("comparer.fromProject");
+});
+
+const compareSideLabel = computed(() => {
+  const mem = resolvedTarget.value;
+  if (!mem) return t("comparer.emptyCompareHint");
+  if (mem.kind === "zone") {
+    const z =
+      zones.value.find((x) => x.id === mem.zoneId) ||
+      (activeZoneId.value === mem.zoneId
+        ? { name: t("panels.sideZone") }
+        : null);
+    const name = z?.name || mem.zoneId.slice(0, 8);
+    return `${t("comparer.fromZone")}「${name}」 · ${mem.path}`;
+  }
+  const short = mem.ref.slice(0, 10);
+  return `${t("comparer.fromGit", { ref: short })} · ${mem.path}`;
+});
 
 const displayLeft = computed(() => {
   if (props.tab.kind !== "comparer") return left.value;
@@ -306,33 +347,14 @@ function onAfterMutation(content: string | null) {
       />
       <div v-if="loading" class="empty">{{ t("preview.loading") }}</div>
       <div v-else-if="error" class="empty error">{{ error }}</div>
-      <!-- Comparer with neither side: dual empty drop zones -->
-      <div
-        v-else-if="tab.kind === 'comparer' && !hasAnySide"
-        class="one-sided"
-        :class="{ swapped: sidesSwapped }"
-      >
-        <div class="side work-side">
-          <div class="side-label">{{ t("panels.sideProject") }}</div>
-          <div class="empty drop-hint side-hint">
-            {{ t("comparer.dropWork") }}
-          </div>
-        </div>
-        <div class="side compare-side">
-          <div class="side-label">{{ t("panels.sideZone") }}</div>
-          <div class="empty drop-hint side-hint">
-            {{ t("comparer.dropCompare") }}
-          </div>
-        </div>
-      </div>
-      <!-- Comparer one-sided: filled side acts as editor/viewer; empty side stays droppable -->
+      <!-- Comparer empty / one-sided shells -->
       <div
         v-else-if="tab.kind === 'comparer' && !compareReady"
         class="one-sided"
         :class="{ swapped: sidesSwapped }"
       >
         <div class="side work-side">
-          <div class="side-label">{{ t("panels.sideProject") }}</div>
+          <div class="side-label">{{ projectSideLabel }}</div>
           <MonacoDiff
             v-if="hasWorkSide"
             :key="tab.id + '-work-' + (tab.path || '') + '-t' + targetTick"
@@ -346,12 +368,20 @@ function onAfterMutation(content: string | null) {
             :show-gutter-actions="false"
             @left-change="onLeftChange"
           />
-          <div v-else class="empty drop-hint side-hint">
-            {{ t("comparer.dropWork") }}
+          <div v-else class="empty drop-hint side-hint pick-panel">
+            <p class="pick-hint">{{ t("comparer.emptyProjectHint") }}</p>
+            <button
+              type="button"
+              class="pick-btn primary"
+              @click="emit('pickProject')"
+            >
+              {{ t("comparer.pickProject") }}
+            </button>
+            <p class="muted tiny">{{ t("comparer.dropWork") }}</p>
           </div>
         </div>
         <div class="side compare-side">
-          <div class="side-label">{{ t("panels.sideZone") }}</div>
+          <div class="side-label">{{ compareSideLabel }}</div>
           <MonacoDiff
             v-if="hasCompareSide"
             :key="tab.id + '-cmp-' + targetTick"
@@ -364,8 +394,25 @@ function onAfterMutation(content: string | null) {
             :word-wrap="wordWrap"
             :show-gutter-actions="false"
           />
-          <div v-else class="empty drop-hint side-hint">
-            {{ t("comparer.dropCompare") }}
+          <div v-else class="empty drop-hint side-hint pick-panel">
+            <p class="pick-hint">{{ t("comparer.emptyCompareHint") }}</p>
+            <div class="pick-row">
+              <button
+                type="button"
+                class="pick-btn"
+                @click="emit('pickZone')"
+              >
+                {{ t("comparer.pickFromZone") }}
+              </button>
+              <button
+                type="button"
+                class="pick-btn"
+                @click="emit('pickGit')"
+              >
+                {{ t("comparer.pickFromGit") }}
+              </button>
+            </div>
+            <p class="muted tiny">{{ t("comparer.dropCompare") }}</p>
           </div>
         </div>
       </div>
@@ -484,6 +531,44 @@ function onAfterMutation(content: string | null) {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.pick-panel {
+  flex-direction: column;
+  gap: 0.75rem;
+  text-align: center;
+}
+.pick-hint {
+  margin: 0;
+  max-width: 16rem;
+  line-height: 1.4;
+}
+.pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+}
+.pick-btn {
+  min-width: 9rem;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.85rem;
+  background: var(--secondary-btn);
+  color: var(--text);
+}
+.pick-btn.primary {
+  background: var(--accent);
+  color: #fff;
+  min-width: 11rem;
+  font-size: 0.9rem;
+  padding: 0.7rem 1.1rem;
+}
+.pick-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.tiny {
+  font-size: 0.72rem;
+  max-width: 18rem;
+  margin: 0;
 }
 .one-sided :deep(.diff-wrap) {
   flex: 1 1 auto;

@@ -824,6 +824,34 @@ export async function gitShow(
   );
 }
 
+export type GitTreeNode = {
+  path: string;
+  type: "file" | "dir" | string;
+  kind?: string;
+  mode?: string;
+  object?: string;
+};
+
+export async function gitLsTree(
+  projectId: string,
+  ref: string,
+  opts?: { path?: string; recursive?: boolean }
+): Promise<{
+  ref: string;
+  path?: string;
+  files: GitTreeNode[];
+  nodes: GitTreeNode[];
+  file_count?: number;
+  mode?: string;
+}> {
+  const q = new URLSearchParams({ ref });
+  if (opts?.path) q.set("path", opts.path);
+  if (opts?.recursive === false) q.set("recursive", "false");
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/ls-tree?${q}`)
+  );
+}
+
 export async function gitZoneFromCommit(
   projectId: string,
   ref: string,
