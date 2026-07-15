@@ -3,37 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 
-TEXT_EXTS = {
-    ".tex",
-    ".bib",
-    ".cls",
-    ".sty",
-    ".txt",
-    ".md",
-    ".bbl",
-    ".csv",
-    ".tsv",
-    ".json",
-    ".yml",
-    ".yaml",
-    ".xml",
-    ".py",
-    ".r",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".html",
-    ".css",
-    ".js",
-    ".ts",
-    ".sh",
-}
+from app.domain.media import TEXT_EXTS, is_text_path  # re-export
 
-
-def is_text_path(path: str) -> bool:
-    return Path(path).suffix.lower() in TEXT_EXTS or Path(path).suffix == ""
+__all__ = ["TEXT_EXTS", "is_text_path", "file_hash_bytes", "align_paths"]
 
 
 def file_hash_bytes(data: bytes) -> str:

@@ -11,21 +11,17 @@ from pathlib import Path
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.domain.aligner import is_text_path
+from app.domain.media import IMAGE_EXTS, looks_binary, sniff_text
 from app.infra.workspace_fs import Workspace
 
-IMAGE_EXTS = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".bmp",
-    ".svg",
-    ".pdf",
-    ".eps",
-    ".tif",
-    ".tiff",
-}
+# re-export for callers (project_service etc.)
+__all__ = [
+    "IMAGE_EXTS",
+    "ZoneService",
+    "default_zone_name",
+    "looks_binary",
+    "looks_like_text",
+]
 
 
 def _now_iso() -> str:
@@ -36,25 +32,8 @@ def default_zone_name() -> str:
     return datetime.now().strftime("比较区 %Y-%m-%d %H:%M:%S")
 
 
-def looks_binary(data: bytes) -> bool:
-    if not data:
-        return False
-    if b"\x00" in data[:8192]:
-        return True
-    return False
-
-
 def looks_like_text(data: bytes, path: str = "") -> bool:
-    if is_text_path(path) and not looks_binary(data):
-        return True
-    if looks_binary(data):
-        return False
-    # empty or mostly decodable utf-8 without nulls
-    try:
-        data[:4096].decode("utf-8")
-        return True
-    except UnicodeDecodeError:
-        return False
+    return sniff_text(data, path)
 
 
 class ZoneService:

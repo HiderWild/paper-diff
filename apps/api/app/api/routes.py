@@ -14,10 +14,15 @@ from app.schemas.dto import (
     AcceptFileRequest,
     AcceptRequest,
     ActivateZoneRequest,
+    AgentAnalyzeRequest,
+    AgentApplyRequest,
+    AgentChatRequest,
+    AgentProposeRequest,
     CompareEnqueueRequest,
     CompareFileRequest,
     CompileRequest,
     CreateZoneRequest,
+    CsvPreviewRequest,
     GitCommitRequest,
     GitImportRequest,
     GitRestoreRequest,
@@ -27,6 +32,7 @@ from app.schemas.dto import (
     SetRootRequest,
     UndoRequest,
 )
+from app.services.agent_service import AgentService
 from app.services.compare_service import CompareService
 from app.services.compile_service import (
     CompileService,
@@ -58,6 +64,10 @@ def git(settings: Settings = Depends(get_settings)) -> GitService:
 
 def zones(settings: Settings = Depends(get_settings)) -> ZoneService:
     return ZoneService(settings)
+
+
+def agent(settings: Settings = Depends(get_settings)) -> AgentService:
+    return AgentService(settings)
 
 
 @router.post("/projects")
@@ -388,6 +398,31 @@ def git_zone_from_commit(
     return svc.zone_from_commit(project_id, ref=body.ref, name=body.name)
 
 
+@router.get("/projects/{project_id}/git/diff")
+def git_diff(
+    project_id: str,
+    base_ref: str = Query(...),
+    revised_ref: str = Query(...),
+    svc: GitService = Depends(git),
+):
+    return svc.diff(project_id, base_ref=base_ref, revised_ref=revised_ref)
+
+
+@router.get("/projects/{project_id}/git/show")
+def git_show(
+    project_id: str,
+    ref: str = Query(...),
+    path: str = Query(...),
+    svc: GitService = Depends(git),
+):
+    return svc.show(project_id, ref=ref, path=path)
+
+
+@router.post("/projects/{project_id}/git/push")
+def git_push(project_id: str, svc: GitService = Depends(git)):
+    return svc.push(project_id)
+
+
 # --- Accept / export ---
 
 
@@ -534,31 +569,164 @@ def project_events(
     )
 
 
-# --- Agent stubs (contract first) ---
+# --- Diff helpers ---
+
+
+@router.post("/projects/{project_id}/diff/csv-preview")
+def csv_preview(project_id: str, body: CsvPreviewRequest):
+    """Simple line-based CSV structure report (max 200 rows)."""
+    max_rows = max(1, min(int(body.max_rows or 200), 200))
+    left_lines = (body.left or "").splitlines()[:max_rows]
+    right_lines = (body.right or "").splitlines()[:max_rows]
+    n = max(len(left_lines), len(right_lines))
+    changes = []
+    for i in range(n):
+        l = left_lines[i] if i < len(left_lines) else None
+        r = right_lines[i] if i < len(right_lines) else None
+        if l == r:
+            continue
+        left_cells = l.split(",") if l is not None else None
+        right_cells = r.split(",") if r is not None else None
+        cell_diffs = []
+        if left_cells is not None and right_cells is not None:
+            m = max(len(left_cells), len(right_cells))
+            for j in range(m):
+                lc = left_cells[j] if j < len(left_cells) else None
+                rc = right_cells[j] if j < len(right_cells) else None
+                if lc != rc:
+                    cell_diffs.append({"col": j, "left": lc, "right": rc})
+        status = "modified"
+        if l is None:
+            status = "added"
+        elif r is None:
+            status = "removed"
+        changes.append(
+            {
+                "row": i,
+                "status": status,
+                "left": l,
+                "right": r,
+                "cells": cell_diffs,
+            }
+        )
+    return {
+        "project_id": project_id,
+        "left_rows": len(left_lines),
+        "right_rows": len(right_lines),
+        "changed_rows": len(changes),
+        "changes": changes[:max_rows],
+        "truncated": n > max_rows
+        or len((body.left or "").splitlines()) > max_rows
+        or len((body.right or "").splitlines()) > max_rows,
+    }
+
+
+# --- Agent ---
 
 
 @router.post("/projects/{project_id}/agent/analyze")
-def agent_analyze(project_id: str):
-    return {
-        "status": "not_configured",
-        "message": "Agent provider not configured. Set provider env later.",
-        "project_id": project_id,
-    }
+def agent_analyze(
+    project_id: str,
+    body: AgentAnalyzeRequest | None = None,
+    svc: AgentService = Depends(agent),
+):
+    body = body or AgentAnalyzeRequest()
+    return svc.analyze(
+        project_id,
+        path=body.path,
+        left_text=body.left_text,
+        right_text=body.right_text,
+        units=body.units,
+        zone_id=body.zone_id,
+    )
 
 
 @router.post("/projects/{project_id}/agent/propose")
-def agent_propose(project_id: str):
-    return {
-        "status": "not_configured",
-        "message": "Agent provider not configured",
-        "project_id": project_id,
-    }
+def agent_propose(
+    project_id: str,
+    body: AgentProposeRequest | None = None,
+    svc: AgentService = Depends(agent),
+):
+    body = body or AgentProposeRequest()
+    return svc.propose(
+        project_id,
+        path=body.path,
+        left_text=body.left_text,
+        right_text=body.right_text,
+        units=body.units,
+        zone_id=body.zone_id,
+        instruction=body.instruction,
+    )
 
 
 @router.post("/projects/{project_id}/agent/apply")
-def agent_apply(project_id: str):
+def agent_apply(
+    project_id: str,
+    body: AgentApplyRequest,
+    svc: AgentService = Depends(agent),
+):
+    return svc.apply(
+        project_id,
+        path=body.path,
+        content=body.content,
+        expected_revision=body.expected_revision,
+    )
+
+
+@router.post("/projects/{project_id}/agent/chat")
+def agent_chat(
+    project_id: str,
+    body: AgentChatRequest,
+    svc: AgentService = Depends(agent),
+):
+    return svc.chat(
+        project_id,
+        message=body.message,
+        path=body.path,
+        selection=body.selection,
+        zone_id=body.zone_id,
+    )
+
+
+@router.post("/projects/{project_id}/agent/chat/stream")
+def agent_chat_stream(
+    project_id: str,
+    body: AgentChatRequest,
+    svc: AgentService = Depends(agent),
+):
+    events = svc.chat_stream_events(
+        project_id,
+        message=body.message,
+        path=body.path,
+        selection=body.selection,
+        zone_id=body.zone_id,
+    )
+
+    def gen() -> Iterator[str]:
+        for ev in events:
+            yield f"event: {ev['event']}\ndata: {json.dumps(ev['data'])}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/projects/{project_id}/agent/sessions")
+def agent_sessions(project_id: str, svc: AgentService = Depends(agent)):
+    return svc.list_sessions(project_id)
+
+
+@router.get("/health")
+def api_health(settings: Settings = Depends(get_settings)):
     return {
-        "status": "not_configured",
-        "message": "Agent provider not configured",
-        "project_id": project_id,
+        "ok": True,
+        "status": "ok",
+        "version": settings.api_version,
+        "model": "v2",
     }

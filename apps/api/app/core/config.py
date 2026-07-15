@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     # Dev-friendly: wipe project workspaces (uploads/artifacts) on API startup.
     # Set PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP=false to keep projects across restarts.
     clear_workspace_on_startup: bool = True
+    # Agent: stub | off | http
+    agent_provider: str = "stub"
+    agent_stub: bool = True
+    agent_api_key: str | None = None
+    api_version: str = "v2"
 
 
 def get_settings() -> Settings:

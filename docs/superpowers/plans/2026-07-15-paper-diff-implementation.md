@@ -66,4 +66,4 @@ docker build -t paper-diff-texlive:latest docker/texlive
   `docs/superpowers/plans/2026-07-15-workbench-git-async-diff.md`（M1–M5 core implemented）
 - **Product model v2**（项目本体 + 比较区 + 内置 Git + Agent）：见  
   `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`  
-  **Phase 0–3 MVP implemented** — single work zip, zones, project-local git, frontend activity bar; agent endpoints stubbed; dual-zip remaining as compat.
+  **Phase 0–8 implemented** — work+zones, two-commit git diff/show, zone-from-commit, agent stub UI, csv preview; dual-zip remains as advanced compat.

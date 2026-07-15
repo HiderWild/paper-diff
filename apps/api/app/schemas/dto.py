@@ -101,3 +101,39 @@ class PutWorkFileRequest(BaseModel):
 
 class ActivateZoneRequest(BaseModel):
     zone_id: str | None = None
+
+
+class AgentAnalyzeRequest(BaseModel):
+    path: str | None = None
+    left_text: str | None = None
+    right_text: str | None = None
+    units: list[dict[str, Any]] | None = None
+    zone_id: str | None = None
+
+
+class AgentProposeRequest(BaseModel):
+    path: str | None = None
+    left_text: str | None = None
+    right_text: str | None = None
+    units: list[dict[str, Any]] | None = None
+    zone_id: str | None = None
+    instruction: str = ""
+
+
+class AgentApplyRequest(BaseModel):
+    path: str
+    content: str
+    expected_revision: int = 0
+
+
+class AgentChatRequest(BaseModel):
+    message: str
+    path: str | None = None
+    selection: str | None = None
+    zone_id: str | None = None
+
+
+class CsvPreviewRequest(BaseModel):
+    left: str
+    right: str
+    max_rows: int = 200
