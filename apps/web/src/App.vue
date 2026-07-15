@@ -77,6 +77,11 @@ const rootOptions = computed(() => {
   return [...paths].sort();
 });
 
+const activeZoneName = computed(() => {
+  const z = zones.value.find((x) => x.id === activeZoneId.value);
+  return z?.name || "";
+});
+
 watch(
   () => pair.value?.merged.content,
   (c) => {
@@ -95,6 +100,7 @@ async function onImportWork() {
     return;
   }
   await store.doImportWork(f);
+  if (workInput.value) workInput.value.value = "";
 }
 
 async function onUpload() {
@@ -105,24 +111,6 @@ async function onUpload() {
     return;
   }
   await store.doUpload(baseFile, revFile);
-}
-
-async function onZoneZipChange(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const f = input.files?.[0];
-  if (f) await store.doAddZoneZip(f);
-  input.value = "";
-}
-
-async function onZoneFolderChange(e: Event) {
-  const input = e.target as HTMLInputElement;
-  if (input.files?.length) await store.doAddZoneFiles(input.files);
-  input.value = "";
-}
-
-function onRenameZone(z: { id: string; name: string }) {
-  const name = window.prompt(t("zones.renamePrompt"), z.name);
-  if (name != null && name.trim()) void store.doRenameZone(z.id, name);
 }
 
 async function onGitImport() {
@@ -240,6 +228,11 @@ async function onGitCommit() {
   await store.doGitCommit(msg);
 }
 
+async function onGitDiscard() {
+  if (!confirm(t("git.discardConfirm"))) return;
+  await store.doGitDiscard();
+}
+
 function openActivity(a: "explorer" | "zones" | "git" | "compile") {
   activity.value = a;
   showFiles.value = true;
@@ -248,6 +241,42 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
     void store.refreshGitLog();
   }
   if (a === "zones") void store.refreshZones();
+}
+
+async function onZoneZipSelected(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  if (!f) return;
+  await store.doAddZoneZip(f);
+  input.value = "";
+}
+
+async function onZoneFolderSelected(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (!input.files?.length) return;
+  await store.doAddZoneFiles(input.files);
+  input.value = "";
+}
+
+async function onRenameZone(zoneId: string, current: string) {
+  const name = window.prompt(t("zones.namePrompt"), current);
+  if (name == null || !name.trim()) return;
+  await store.doRenameZone(zoneId, name);
+}
+
+async function onDeleteZone(zoneId: string) {
+  if (!confirm(t("zones.deleteConfirm"))) return;
+  await store.doDeleteZone(zoneId);
+}
+
+function formatCommitDate(iso?: string) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString();
+  } catch {
+    return iso;
+  }
 }
 </script>
 
@@ -260,10 +289,15 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
         <input ref="workInput" type="file" accept=".zip" />
       </label>
       <button :disabled="busy" @click="onImportWork">
-        {{ t("toolbar.importProject") }}
+        {{ t("toolbar.importWork") }}
       </button>
-      <button class="secondary" type="button" @click="showAdvanced = !showAdvanced">
-        …
+      <button
+        class="secondary"
+        type="button"
+        :class="{ 'active-toggle': showAdvanced }"
+        @click="showAdvanced = !showAdvanced"
+      >
+        {{ t("toolbar.advancedDualZip") }}
       </button>
       <template v-if="showAdvanced">
         <label>
@@ -390,6 +424,7 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
       </label>
       <span class="status">
         {{ status }}
+        <template v-if="activeZoneName"> · {{ activeZoneName }}</template>
         <template v-if="compareSummary">
           · {{ compareSummary.ready }}/{{ compareSummary.total }}
         </template>
@@ -465,6 +500,7 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
             </button>
           </div>
         </template>
+
         <template v-else-if="activity === 'zones'">
           <div class="panel-header side-header">
             <span>{{ t("panels.zones") }}</span>
@@ -478,86 +514,85 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
             </button>
           </div>
           <div class="side-body">
+            <div class="zone-actions">
+              <button
+                type="button"
+                class="secondary mini"
+                :disabled="busy || !projectId"
+                @click="zoneZipInput?.click()"
+              >
+                {{ t("zones.fromZip") }}
+              </button>
+              <button
+                type="button"
+                class="secondary mini"
+                :disabled="busy || !projectId"
+                @click="zoneFolderInput?.click()"
+              >
+                {{ t("zones.fromFolder") }}
+              </button>
+              <button
+                type="button"
+                class="secondary mini"
+                :disabled="busy || !projectId"
+                @click="store.doZoneFromWork()"
+              >
+                {{ t("zones.fromWork") }}
+              </button>
+            </div>
             <input
               ref="zoneZipInput"
               type="file"
               accept=".zip"
               hidden
-              @change="onZoneZipChange"
+              @change="onZoneZipSelected"
             />
             <input
               ref="zoneFolderInput"
               type="file"
+              webkitdirectory
               multiple
               hidden
-              webkitdirectory
-              directory
-              @change="onZoneFolderChange"
+              @change="onZoneFolderSelected"
             />
-            <button
-              type="button"
-              class="secondary"
-              :disabled="busy || !projectId"
-              @click="zoneZipInput?.click()"
-            >
-              {{ t("zones.addZip") }}
-            </button>
-            <button
-              type="button"
-              class="secondary"
-              :disabled="busy || !projectId"
-              @click="zoneFolderInput?.click()"
-            >
-              {{ t("zones.addFolder") }}
-            </button>
-            <button
-              type="button"
-              class="secondary"
-              :disabled="busy || !projectId"
-              @click="store.doZoneFromWork()"
-            >
-              {{ t("zones.fromWork") }}
-            </button>
-            <button
-              v-if="activeZoneId"
-              type="button"
-              class="secondary"
-              :disabled="busy"
-              @click="store.doActivateZone(null)"
-            >
-              {{ t("zones.deactivate") }}
-            </button>
             <p v-if="!zones.length" class="muted">{{ t("zones.empty") }}</p>
             <ul class="zone-list">
               <li
                 v-for="z in zones"
                 :key="z.id"
-                :class="{ active: z.id === activeZoneId }"
+                class="zone-item"
+                :class="{ active: z.id === activeZoneId || z.active }"
               >
                 <button
                   type="button"
-                  class="zone-name"
+                  class="zone-main"
                   :disabled="busy"
                   @click="store.doActivateZone(z.id)"
                 >
-                  {{ z.name }}
-                  <span v-if="z.id === activeZoneId" class="badge">
-                    {{ t("zones.active") }}
-                  </span>
+                  <span class="zone-name">{{ z.name }}</span>
+                  <span
+                    v-if="z.id === activeZoneId || z.active"
+                    class="badge modified"
+                    >{{ t("zones.active") }}</span
+                  >
+                  <span v-if="z.file_count != null" class="zone-meta">{{
+                    t("zones.fileCount", { n: z.file_count })
+                  }}</span>
                 </button>
-                <div class="zone-actions">
+                <div class="zone-ops">
                   <button
                     type="button"
-                    class="secondary tiny"
-                    @click="onRenameZone(z)"
+                    class="mini secondary"
+                    :disabled="busy"
+                    @click="onRenameZone(z.id, z.name)"
                   >
                     {{ t("zones.rename") }}
                   </button>
                   <button
                     type="button"
-                    class="secondary tiny"
+                    class="mini secondary"
                     :disabled="busy"
-                    @click="store.doDeleteZone(z.id)"
+                    @click="onDeleteZone(z.id)"
                   >
                     {{ t("zones.delete") }}
                   </button>
@@ -566,6 +601,7 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
             </ul>
           </div>
         </template>
+
         <template v-else-if="activity === 'git'">
           <div class="panel-header side-header">
             <span>{{ t("panels.git") }}</span>
@@ -582,22 +618,34 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
             <p class="muted">
               {{
                 gitInfo?.repo
-                  ? `${gitInfo.repo} @ ${gitInfo.base_ref}…${gitInfo.revised_ref}`
+                  ? `${gitInfo.repo}`
                   : t("git.unbound")
               }}
             </p>
             <p class="muted">{{ gitStatusText }}</p>
-            <button
-              class="secondary"
-              type="button"
-              :disabled="!projectId"
-              @click="
-                store.refreshGitStatus();
-                store.refreshGitLog();
-              "
-            >
-              {{ t("git.refresh") }}
-            </button>
+            <div class="zone-actions">
+              <button
+                class="secondary mini"
+                type="button"
+                :disabled="!projectId"
+                @click="
+                  () => {
+                    store.refreshGitStatus();
+                    store.refreshGitLog();
+                  }
+                "
+              >
+                {{ t("git.refresh") }}
+              </button>
+              <button
+                class="secondary mini"
+                type="button"
+                :disabled="busy || !projectId"
+                @click="onGitDiscard"
+              >
+                {{ t("git.discard") }}
+              </button>
+            </div>
             <label class="block-label">
               {{ t("git.commitMsg") }}
               <input
@@ -612,23 +660,18 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
             >
               {{ t("git.commitBtn") }}
             </button>
-            <button
-              type="button"
-              class="secondary"
-              :disabled="busy || !projectId"
-              @click="store.doGitDiscard()"
-            >
-              {{ t("git.discard") }}
-            </button>
-            <div class="panel-header">{{ t("git.history") }}</div>
-            <ul class="commit-list">
-              <li v-for="c in gitCommits" :key="c.sha" class="muted">
-                <code>{{ c.short }}</code>
-                {{ c.subject }}
+            <div class="panel-header zone-subhead">{{ t("git.log") }}</div>
+            <ul v-if="gitCommits.length" class="commit-list">
+              <li v-for="c in gitCommits" :key="c.sha" class="commit-item">
+                <code class="commit-sha">{{ c.short }}</code>
+                <span class="commit-subj">{{ c.subject }}</span>
+                <span class="commit-date">{{ formatCommitDate(c.date) }}</span>
               </li>
             </ul>
+            <p v-else class="muted">—</p>
           </div>
         </template>
+
         <template v-else>
           <div class="panel-header side-header">
             <span>{{ t("panels.compile") }}</span>
@@ -814,56 +857,6 @@ function openActivity(a: "explorer" | "zones" | "git" | "compile") {
   font-size: 1rem;
   border-radius: 6px;
 }
-.zone-list,
-.commit-list {
-  list-style: none;
-  margin: 0.4rem 0;
-  padding: 0;
-  max-height: 40vh;
-  overflow: auto;
-}
-.zone-list li {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.35rem;
-  margin-bottom: 0.35rem;
-}
-.zone-list li.active {
-  border-color: #3b82f6;
-  background: #132033;
-}
-.zone-name {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  color: var(--text);
-  padding: 0.2rem 0;
-}
-.zone-actions {
-  display: flex;
-  gap: 0.25rem;
-  margin-top: 0.25rem;
-}
-.badge {
-  font-size: 0.7rem;
-  color: #93c5fd;
-  margin-left: 0.35rem;
-}
-button.tiny {
-  font-size: 0.7rem;
-  padding: 0.15rem 0.35rem;
-}
-.commit-list li {
-  font-size: 0.75rem;
-  padding: 0.2rem 0;
-  border-bottom: 1px solid var(--border);
-}
-.commit-list code {
-  color: #93c5fd;
-  margin-right: 0.3rem;
-}
-
 .activity-bar button.active,
 .activity-bar button:hover {
   background: #1e3a5f;
@@ -1024,5 +1017,82 @@ button.tiny {
 }
 .err-item:hover {
   background: #243044;
+}
+
+.zone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.zone-list,
+.commit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.zone-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.45rem;
+  background: #121a24;
+}
+.zone-item.active {
+  border-color: var(--accent);
+}
+.zone-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  padding: 0.15rem 0;
+  border: none;
+  border-radius: 0;
+}
+.zone-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.zone-meta {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.zone-ops {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+}
+.zone-subhead {
+  margin: 0.25rem -0.75rem 0;
+}
+.commit-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.commit-sha {
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+.commit-subj {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-date {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 </style>

@@ -62,6 +62,9 @@ export default {
     namePrompt: "Zone name",
     deleteConfirm: "Delete this compare zone?",
     fileCount: "{n} files",
+    activated: "Zone active: {name}",
+    deactivated: "Compare zone cleared",
+    snapshotOk: "Snapshot created: {name}",
   },
   fileActions: {
     add: "Add→project",
@@ -136,6 +139,7 @@ export default {
     unbound: "Local git not ready (import a project first)",
     discard: "Discard uncommitted",
     discardConfirm: "Discard all uncommitted changes in the project?",
+    discarded: "Discarded uncommitted changes",
     log: "History",
     dirtyFiles: "Dirty files",
     clean: "Working tree clean",
