@@ -30,6 +30,7 @@
 - Workbench track: `docs/superpowers/plans/2026-07-15-workbench-git-async-diff.md`
 - **Product v2 (project core + zones + git + agent):** `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`
 - **Hardening / gap closure (post-audit R0–R5):** `docs/superpowers/plans/2026-07-15-hardening-followups.md`
+- **Import modal + diff chrome + autosave (draft):** `docs/superpowers/plans/2026-07-15-import-diffchrome-autosave.md`
 
 ## Completion tiers (use in status claims)
 
