@@ -136,6 +136,11 @@ function onDrop(e: DragEvent) {
     "application/x-paper-diff-tool"
   ) as ToolKind;
   if (tool) {
+    // Output is locked to the bottom dock — never create an output tab.
+    if (tool === "output") {
+      wb.setDropPreview(null);
+      return;
+    }
     // new empty tool
     if (intent.type === "tab-insert") {
       wb.addTabToColumn(props.column.id, tool, null, intent.index);

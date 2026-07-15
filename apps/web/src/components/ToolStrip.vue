@@ -3,15 +3,24 @@ import { onBeforeUnmount, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ToolKind } from "../stores/workbench";
 
+const props = withDefaults(
+  defineProps<{
+    /** Highlight output icon when bottom dock is visible */
+    outputActive?: boolean;
+  }>(),
+  { outputActive: false }
+);
+
 const { t } = useI18n();
 
 /** Compact fixed-size icons — no overflowing text glyphs like "PDF". */
-const tools: Array<{ kind: ToolKind; labelKey: string }> = [
+const tools: Array<{ kind: ToolKind; labelKey: string; dockOnly?: boolean }> = [
   { kind: "comparer", labelKey: "tools.comparer" },
   { kind: "editor", labelKey: "tools.editor" },
   { kind: "pdf", labelKey: "tools.pdf" },
   { kind: "word", labelKey: "tools.word" },
-  { kind: "output", labelKey: "tools.output" },
+  // Output is a locked bottom dock pane (not a closable tab). Icon only wakes it.
+  { kind: "output", labelKey: "tools.output", dockOnly: true },
 ];
 
 const emit = defineEmits<{
@@ -52,6 +61,11 @@ function onLeave() {
 
 function onDragStart(kind: ToolKind, e: DragEvent) {
   onLeave();
+  // Output dock cannot be dragged into workbench columns as a tab
+  if (kind === "output") {
+    e.preventDefault();
+    return;
+  }
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = "copyMove";
     e.dataTransfer.setData("text/plain", `tool:${kind}`);
@@ -70,8 +84,12 @@ onBeforeUnmount(() => clearTipTimer());
       :key="tool.kind"
       type="button"
       class="tool-icon"
+      :class="{
+        active: tool.kind === 'output' && props.outputActive,
+      }"
       :aria-label="t(tool.labelKey)"
-      draggable="true"
+      :aria-pressed="tool.kind === 'output' ? props.outputActive : undefined"
+      :draggable="tool.kind !== 'output'"
       @click="emit('open', tool.kind)"
       @dragstart="onDragStart(tool.kind, $event)"
       @mouseenter="onEnter(tool.kind, $event)"
@@ -272,6 +290,11 @@ onBeforeUnmount(() => clearTipTimer());
   color: var(--text);
   border-color: var(--border);
   cursor: pointer;
+}
+.tool-icon.active {
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
 }
 .tool-icon:active {
   cursor: pointer;
