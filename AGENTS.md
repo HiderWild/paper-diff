@@ -33,7 +33,7 @@
 - **Product v2 (project core + zones + git + agent):** `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`
 - **Hardening / gap closure (post-audit R0–R5):** `docs/superpowers/plans/2026-07-15-hardening-followups.md`
 - **Import modal + diff chrome + autosave (draft, largely superseded):** `docs/superpowers/plans/2026-07-15-import-diffchrome-autosave.md`
-- **UX gap closure (post workbench/import audit — execute next):** `docs/superpowers/plans/2026-07-15-ux-gap-closure.md`
+- **UX gap closure v1.1 (execute next; re-reviewed order/DoD):** `docs/superpowers/plans/2026-07-15-ux-gap-closure.md`
 
 ## Completion tiers (use in status claims)
 
