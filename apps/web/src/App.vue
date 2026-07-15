@@ -1642,11 +1642,13 @@ function formatCommitDate(iso?: string) {
   color: var(--muted);
   font-size: 1rem;
   border-radius: 6px;
+  cursor: pointer;
 }
 .activity-bar button.active,
 .activity-bar button:hover {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
   color: var(--text);
+  cursor: pointer;
 }
 .activity-settings {
   margin-top: auto;
