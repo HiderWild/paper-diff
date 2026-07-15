@@ -186,8 +186,9 @@ button.mini {
   background: var(--surface-deep);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem;
+  /* padding owned by PdfPane so toolbar can sit flush to tab edges */
+  gap: 0;
+  padding: 0;
 }
 
 /* Do NOT max-width:100% — that breaks aspect when zoom > fit-width.
