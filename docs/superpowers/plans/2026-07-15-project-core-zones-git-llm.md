@@ -1,6 +1,8 @@
 # paper-diff 产品重构计划：项目本体 · 比较区 · 内置 Git · Agent 接口
 
-> **Status:** Phase 0–8 implemented (MVP + extensions) — 2026-07-15  
+> **Status:** L0 main path done; L1–L2 partial (API/stub ≠ full product) — 2026-07-15  
+> **Honesty note:** Phase 0–3 solid; 5–7 partially stub/API-only; Phase 8 partial.  
+> **Follow-up plan:** `2026-07-15-hardening-followups.md`（复审缺口补强 R0–R5）  
 > **Supersedes (model):** 旧「base + revised + merged」双 zip 对照主路径  
 > **Preserves:** 工作台布局、树、编译、Monaco 词/句级可视化、i18n、Docker TeX 等能力底座  
 > **Related:**  
@@ -12,17 +14,17 @@
 
 ## 完成摘要（2026-07-15）
 
-| Phase | 状态 | 交付 |
-|-------|------|------|
-| 0 基线 | done | 模型文档、兼容策略 |
-| 1 项目本体 | done | `work/`、单 zip import、export/compile 指向 work |
-| 2 比较区 | done | zones CRUD、zip/folder 导入、激活、Accept 写 work |
-| 3 Git 时间线 | done | init/commit/log/status/restore、两提交 diff/show、zone-from-commit、UI |
-| 4 工作台对齐 | done | 异步 compare work↔zone、点目录/dot 跳过、活动栏 zones/git/agent、i18n 主文案 |
-| 5 媒介 | done | media sniffer、CSV preview API、二进制提示 |
-| 6 Agent 契约 | done | analyze/propose/apply + stub provider + agent_log |
-| 7 Inline chat | done | chat + SSE stream stub |
-| 8 生态硬化 | partial | health v2、push 501、OpenAPI via FastAPI；远程鉴权/多租户后置 |
+| Phase | 状态 | 交付 | 缺口（见 hardening plan） |
+|-------|------|------|---------------------------|
+| 0 基线 | partial | 兼容策略、API 契约 | design spec v2 章节未写全 → R0 |
+| 1 项目本体 | **done (L0)** | `work/`、单 zip、export/compile | — |
+| 2 比较区 | **done (L0)** | zones CRUD、激活、Accept→work | — |
+| 3 Git 时间线 | **done (L0)** | log/commit/restore、两提交 diff/show、zone-from-commit UI | — |
+| 4 工作台对齐 | mostly | async compare、活动栏、i18n | 上传进度、预设/命令面板 → R1.4/R4 |
+| 5 媒介 | **API partial** | sniffer、csv-preview API、binary 文案 | CSV/图片 **无 UI** → R1.2/R1.3 |
+| 6 Agent 契约 | **stub done** | analyze/propose/apply + agent_log | 真 provider、徽章 → R3 |
+| 7 Inline chat | **API-only** | chat + SSE stub | **无前端 chat** → R1.1 |
+| 8 生态硬化 | partial | health v2、push 501 | 远程/多租户/虚拟列表 → R5 |
 
 ---
 

@@ -63,7 +63,9 @@ docker build -t paper-diff-texlive:latest docker/texlive
 ## Next major track
 
 - Workbench layout / tree / async compare / Git facade：见  
-  `docs/superpowers/plans/2026-07-15-workbench-git-async-diff.md`（M1–M5 core implemented）
+  `docs/superpowers/plans/2026-07-15-workbench-git-async-diff.md`（M1–M5 **core**；预设/命令面板属后续）
 - **Product model v2**（项目本体 + 比较区 + 内置 Git + Agent）：见  
   `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`  
-  **Phase 0–8 implemented** — work+zones, two-commit git diff/show, zone-from-commit, agent stub UI, csv preview; dual-zip remains as advanced compat.
+  **L0 main path done**；Agent chat/CSV UI/图片预览/上传进度等缺口见补强计划
+- **Hardening / gap closure（复审后）：**  
+  `docs/superpowers/plans/2026-07-15-hardening-followups.md`（R0 文档口径 → R1 接线 → R2 测试 → R3–R5）
