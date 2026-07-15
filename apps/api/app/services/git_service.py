@@ -451,6 +451,113 @@ class GitService:
         binary = b"\x00" in raw[:8192]
         return raw, display, binary
 
+    def ls_tree(
+        self,
+        project_id: str,
+        ref: str,
+        *,
+        path: str | None = None,
+        recursive: bool = True,
+    ) -> dict:
+        """List files at a commit (git ls-tree). Paths are project-relative (no work/)."""
+        if not ref:
+            raise AppError("VALIDATION_ERROR", "ref required", status_code=422)
+        repo, subdir, mode = self._resolve_repo(project_id)
+        prefix = ""
+        if mode == "local":
+            prefix = "work/"
+        elif subdir:
+            prefix = subdir.rstrip("/") + "/"
+        if path:
+            clean = path.replace("\\", "/").lstrip("/")
+            parts = [p for p in clean.split("/") if p and p != "."]
+            if any(p == ".." for p in parts):
+                raise AppError("PATH_TRAVERSAL", "path traversal denied", status_code=400)
+            tree_path = f"{prefix}{clean}" if prefix else clean
+        else:
+            tree_path = prefix.rstrip("/") if prefix else ""
+
+        args = ["ls-tree", "-z"]
+        if recursive:
+            args.append("-r")
+        args.append("--full-tree")
+        args.append(ref)
+        if tree_path:
+            args.append(tree_path)
+
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(repo),
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+            raise AppError("GIT_ERROR", err or "ls-tree failed", status_code=400)
+
+        files: list[dict] = []
+        raw = proc.stdout or b""
+        for entry in raw.split(b"\0"):
+            if not entry:
+                continue
+            # format: <mode> SP <type> SP <object> TAB <file>
+            try:
+                meta, name_b = entry.split(b"\t", 1)
+            except ValueError:
+                continue
+            parts = meta.decode("utf-8", errors="replace").split()
+            if len(parts) < 3:
+                continue
+            mode_s, kind, obj = parts[0], parts[1], parts[2]
+            name = name_b.decode("utf-8", errors="replace").replace("\\", "/")
+            if prefix and name.startswith(prefix):
+                name = name[len(prefix) :]
+            name = name.lstrip("/")
+            if not name:
+                continue
+            # only files (blobs); skip tree entries when non-recursive use
+            if kind != "blob" and recursive:
+                continue
+            if kind == "tree":
+                files.append(
+                    {
+                        "path": name.rstrip("/") + "/",
+                        "type": "dir",
+                        "mode": mode_s,
+                        "object": obj,
+                    }
+                )
+            else:
+                files.append(
+                    {
+                        "path": name,
+                        "type": "file",
+                        "mode": mode_s,
+                        "object": obj,
+                        "kind": "binary" if name.lower().endswith(
+                            (
+                                ".png",
+                                ".jpg",
+                                ".jpeg",
+                                ".gif",
+                                ".webp",
+                                ".pdf",
+                                ".zip",
+                            )
+                        )
+                        else "text",
+                    }
+                )
+        files.sort(key=lambda x: x["path"])
+        return {
+            "ref": ref,
+            "path": path or "",
+            "mode": mode,
+            "files": [f for f in files if f.get("type") == "file"],
+            "nodes": files,
+            "file_count": sum(1 for f in files if f.get("type") == "file"),
+        }
+
     def show(
         self,
         project_id: str,

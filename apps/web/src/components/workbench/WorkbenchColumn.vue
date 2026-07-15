@@ -25,6 +25,9 @@ const emit = defineEmits<{
     zoneId?: string | null,
   ];
   invalidDrop: [message: string];
+  pickProject: [tabId: string];
+  pickZone: [tabId: string];
+  pickGit: [tabId: string];
 }>();
 
 const { t } = useI18n();
@@ -279,6 +282,9 @@ const edgeHint = computed(() => {
         v-if="activeTab"
         :tab="activeTab"
         :active="activeTab.id === wb.focusedTabId"
+        @pick-project="emit('pickProject', activeTab.id)"
+        @pick-zone="emit('pickZone', activeTab.id)"
+        @pick-git="emit('pickGit', activeTab.id)"
       />
       <div v-else class="empty">{{ t("workbench.emptyColumn") }}</div>
     </div>

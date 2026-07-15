@@ -95,6 +95,27 @@ def test_git_show_returns_content(client: TestClient):
     assert body.get("encoding")
 
 
+def test_git_ls_tree_lists_files(client: TestClient):
+    pid = client.post("/api/v1/projects").json()["id"]
+    z = _zip_bytes({"main.tex": "a\n", "sub/x.tex": "b\n"})
+    client.post(
+        f"/api/v1/projects/{pid}/work/import/zip",
+        files={"work": ("w.zip", z, "application/zip")},
+    )
+    log = client.get(f"/api/v1/projects/{pid}/git/log").json()["commits"]
+    sha = log[0]["sha"]
+    r = client.get(
+        f"/api/v1/projects/{pid}/git/ls-tree",
+        params={"ref": sha},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    paths = {f["path"] for f in body["files"]}
+    assert "main.tex" in paths
+    assert "sub/x.tex" in paths
+    assert not any(p.startswith("work/") for p in paths)
+
+
 def test_zone_from_commit_has_files(client: TestClient):
     pid = client.post("/api/v1/projects").json()["id"]
     z = _zip_bytes({"main.tex": "zone source\n", "a/b.tex": "nested\n"})
