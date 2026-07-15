@@ -246,6 +246,8 @@ export default {
     rememberedFile: "Remembered for this file",
     rememberedProject: "Project default",
     needActiveZone: "Activate a compare zone before dropping a zone-side file.",
+    needBothSides:
+      "Set both compare sides: project file on the left; use “vs…” or drop a zone/Git file for the right. Diff and accept appear when both are ready.",
   },
   gutter: {
     pullLine: "Pull this line (compare → project)",
@@ -260,6 +262,7 @@ export default {
     collapseAll: "Collapse all",
     expandTop: "Expand top level",
     newCompare: "New compare",
+    newCompareFailed: "Could not open comparer",
   },
   store: {
     ready: "Ready",

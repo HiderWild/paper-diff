@@ -52,18 +52,30 @@ const editableLeft = computed(
 );
 const singlePane = computed(() => props.tab.kind === "editor");
 
+/** True once we intentionally loaded a right-hand target (even if empty file). */
+const rightResolved = ref(false);
+
+/** Work path + resolved compare target — show real red/green diff + arrows. */
+const compareReady = computed(() => {
+  if (props.tab.kind !== "comparer") return true;
+  return !!(props.tab.path && rightResolved.value);
+});
+
 const displayLeft = computed(() => {
   if (props.tab.kind !== "comparer") return left.value;
+  if (!compareReady.value) return left.value;
   return sidesSwapped.value ? right.value : left.value;
 });
 const displayRight = computed(() => {
   if (props.tab.kind !== "comparer") return right.value;
+  if (!compareReady.value) return "";
   return sidesSwapped.value ? left.value : right.value;
 });
 
 async function loadBoundPath(path: string | null) {
   left.value = "";
   right.value = "";
+  rightResolved.value = false;
   error.value = "";
   imageUrls.value = null;
   rawUrl.value = null;
@@ -135,16 +147,29 @@ async function loadBoundPath(path: string | null) {
     if (mem?.kind === "git") {
       const shown = await gitShow(pid, mem.ref, mem.path || path);
       right.value = shown.content ?? "";
+      rightResolved.value = true;
     } else if (mem?.kind === "zone") {
       try {
         const zf = await getZoneFileText(pid, mem.zoneId, mem.path || path);
         right.value = zf.content;
+        rightResolved.value = true;
       } catch {
         right.value = "";
+        rightResolved.value = false;
+      }
+    } else if (project.activeZoneId) {
+      try {
+        const zf = await getZoneFileText(pid, project.activeZoneId, path);
+        right.value = zf.content;
+        rightResolved.value = true;
+      } catch {
+        right.value = "";
+        rightResolved.value = false;
       }
     } else {
-      const pair = await getFilePair(pid, path);
-      right.value = pair.right?.content ?? pair.revised.content ?? "";
+      // No compare target configured — leave right empty / unresolved
+      right.value = "";
+      rightResolved.value = false;
     }
 
     // Keep pair meta for accept revision when same-path zone compare
@@ -244,9 +269,10 @@ function onAfterMutation(content: string | null) {
       <ComparerChrome
         v-if="tab.kind === 'comparer' && active && tab.path"
         :path="tab.path"
-        :units="units"
+        :units="compareReady ? units : []"
         :left-text="left"
         :right-text="right"
+        :compare-ready="compareReady"
         @after-mutation="onAfterMutation"
         @target-changed="onTargetChanged"
       />
@@ -254,6 +280,12 @@ function onAfterMutation(content: string | null) {
       <div v-else-if="error" class="empty error">{{ error }}</div>
       <div v-else-if="!tab.path" class="empty drop-hint">
         {{ t("tools.dropHint", { tool: t(`tools.${tab.kind}`) }) }}
+      </div>
+      <div
+        v-else-if="tab.kind === 'comparer' && !compareReady"
+        class="empty drop-hint"
+      >
+        {{ t("comparer.needBothSides") }}
       </div>
       <template v-else>
         <PdfPane v-if="tab.kind === 'pdf'" :url="rawUrl" />
@@ -276,7 +308,8 @@ function onAfterMutation(content: string | null) {
             (tab.path || '') +
             (sidesSwapped ? '-s' : '') +
             '-t' +
-            targetTick
+            targetTick +
+            (compareReady ? '-r' : '-w')
           "
           :path="tab.path || ''"
           :left="displayLeft"
@@ -285,7 +318,7 @@ function onAfterMutation(content: string | null) {
           :single-pane="singlePane"
           :monaco-theme="monacoTheme"
           :word-wrap="wordWrap"
-          :show-gutter-actions="tab.kind === 'comparer'"
+          :show-gutter-actions="tab.kind === 'comparer' && compareReady"
           @units="onUnits"
           @left-change="onLeftChange"
           @pull-unit="onPullUnit"

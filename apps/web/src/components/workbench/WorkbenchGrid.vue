@@ -203,6 +203,9 @@ function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
 
 <template>
   <div class="wb-grid">
+    <div v-if="!rows.length" class="wb-empty muted">
+      <!-- empty workbench: open a tool from the strip or open a file -->
+    </div>
     <template v-for="(row, ri) in rows" :key="row.id">
       <div
         v-if="ri > 0"
@@ -320,5 +323,12 @@ function onRowSashDown(upperRowId: string, lowerRowId: string, e: MouseEvent) {
 }
 .wb-row-gap.end {
   flex: 0 0 4px;
+}
+.wb-empty {
+  flex: 1 1 auto;
+  min-height: 4rem;
+}
+.muted {
+  color: var(--muted);
 }
 </style>
