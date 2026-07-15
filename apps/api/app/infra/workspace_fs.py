@@ -4,10 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import tempfile
+import threading
 from pathlib import Path
 
 from app.core.errors import AppError
+
+_meta_locks: dict[str, threading.RLock] = {}
+_meta_locks_guard = threading.Lock()
+
+
+def _meta_lock(project_id: str) -> threading.RLock:
+    with _meta_locks_guard:
+        if project_id not in _meta_locks:
+            _meta_locks[project_id] = threading.RLock()
+        return _meta_locks[project_id]
 
 
 class Workspace:
@@ -52,7 +65,13 @@ class Workspace:
         path = self.resolve_under(side_dir, rel_path)
         if not path.is_file():
             raise AppError("FILE_NOT_FOUND", f"file not found: {rel_path}", status_code=404)
-        return path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
+        for enc in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", errors="replace")
 
     def write_text(self, side: str, rel_path: str, content: str) -> None:
         side_dir = self._side_dir(side)
@@ -82,6 +101,24 @@ class Workspace:
         return sorted(files)
 
     def load_meta(self) -> dict:
+        with _meta_lock(self.project_id):
+            return self._load_meta_unlocked()
+
+    def save_meta(self, meta: dict) -> None:
+        with _meta_lock(self.project_id):
+            self._write_meta_unlocked(meta)
+
+    def mutate_meta(self, mutator) -> dict:
+        """Atomically load → mutator(meta) → save. mutator may return new meta or mutate in place."""
+        with _meta_lock(self.project_id):
+            meta = self._load_meta_unlocked()
+            result = mutator(meta)
+            if isinstance(result, dict):
+                meta = result
+            self._write_meta_unlocked(meta)
+            return meta
+
+    def _load_meta_unlocked(self) -> dict:
         if not self.meta_path.exists():
             return {
                 "id": self.project_id,
@@ -90,10 +127,37 @@ class Workspace:
                 "revisions": {},
                 "accept_log": [],
             }
-        return json.loads(self.meta_path.read_text(encoding="utf-8"))
+        text = self.meta_path.read_text(encoding="utf-8")
+        if not text.strip():
+            return {
+                "id": self.project_id,
+                "status": "empty",
+                "root_file": None,
+                "revisions": {},
+                "accept_log": [],
+            }
+        return json.loads(text)
 
-    def save_meta(self, meta: dict) -> None:
-        self.meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    def _write_meta_unlocked(self, meta: dict) -> None:
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(meta, indent=2)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".meta_",
+            suffix=".json",
+            dir=str(self.project_dir),
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, self.meta_path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     def file_sha256(self, content: str) -> str:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()

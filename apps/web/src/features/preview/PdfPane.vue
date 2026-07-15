@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import * as pdfjs from "pdfjs-dist";
-// @ts-expect-error worker url
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
+const { t } = useI18n();
 const props = defineProps<{ url: string | null }>();
 const container = ref<HTMLDivElement | null>(null);
 const error = ref("");
@@ -51,7 +52,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="pdf-host">
-    <div v-if="!url" class="status-empty">No PDF yet — run Compile</div>
+    <div v-if="!url" class="status-empty">{{ t("pdf.empty") }}</div>
     <div v-if="error" class="error">{{ error }}</div>
     <div ref="container" />
   </div>

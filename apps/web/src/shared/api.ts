@@ -18,6 +18,31 @@ export type DiffIndexFile = {
   status: string;
   kind: string;
   revision?: number;
+  compare_state?: string;
+  is_dot?: boolean;
+  error?: string | null;
+};
+
+export type ProjectDetail = {
+  id: string;
+  status: string;
+  root_file?: string | null;
+  root_recommended?: string | null;
+  root_candidates?: Array<{ path: string; score?: number; reasons?: string[] }>;
+  root_detection?: string;
+  include_dot_paths?: boolean;
+  git?: {
+    repo?: string;
+    subdir?: string;
+    base_ref?: string;
+    revised_ref?: string;
+  } | null;
+};
+
+export type RootCandidate = {
+  path: string;
+  score?: number;
+  reasons?: string[];
 };
 
 /** Override from embed SDK */
@@ -50,11 +75,28 @@ export async function createProject(): Promise<{ id: string; status: string }> {
   return parse(await fetch(`${BASE()}/api/v1/projects`, { method: "POST" }));
 }
 
+export async function getProject(projectId: string): Promise<ProjectDetail> {
+  return parse(await fetch(`${BASE()}/api/v1/projects/${projectId}`));
+}
+
+export async function setRoot(
+  projectId: string,
+  rootFile: string
+): Promise<ProjectDetail> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/root`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ root_file: rootFile }),
+    })
+  );
+}
+
 export async function uploadVersions(
   projectId: string,
   base: File,
   revised: File
-): Promise<unknown> {
+): Promise<ProjectDetail> {
   const fd = new FormData();
   fd.append("base", base);
   fd.append("revised", revised);
@@ -74,7 +116,7 @@ export async function importGit(
     revised_ref: string;
     subdir?: string;
   }
-): Promise<unknown> {
+): Promise<ProjectDetail> {
   return parse(
     await fetch(`${BASE()}/api/v1/projects/${projectId}/versions/git`, {
       method: "POST",
@@ -95,11 +137,48 @@ export async function getCompileLog(
   return res.text();
 }
 
-export async function getDiffIndex(
-  projectId: string
-): Promise<{ files: DiffIndexFile[] }> {
+export async function getDiffIndex(projectId: string): Promise<{
+  files: DiffIndexFile[];
+  summary?: {
+    total: number;
+    ready: number;
+    pending: number;
+    include_dot_paths?: boolean;
+  };
+}> {
   return parse(
     await fetch(`${BASE()}/api/v1/projects/${projectId}/diff-index`)
+  );
+}
+
+export async function enqueueCompare(
+  projectId: string,
+  body: {
+    paths?: string[];
+    prefixes?: string[];
+    include_dot_paths?: boolean;
+    priority?: boolean;
+  }
+): Promise<{ queued: string[]; count: number }> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/compare/enqueue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
+}
+
+export async function compareFile(
+  projectId: string,
+  path: string
+): Promise<{ queued: string[]; count: number }> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/compare/file`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    })
   );
 }
 
@@ -180,25 +259,30 @@ export async function undo(
 }
 
 export async function compileProject(
-  projectId: string
+  projectId: string,
+  rootFile?: string | null
 ): Promise<{ job_id: string; status: string }> {
   return parse(
     await fetch(`${BASE()}/api/v1/projects/${projectId}/compile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ side: "merged" }),
+      body: JSON.stringify({
+        side: "merged",
+        root_file: rootFile || undefined,
+      }),
     })
   );
 }
 
 export async function compileLatexdiff(
-  projectId: string
+  projectId: string,
+  rootFile?: string | null
 ): Promise<{ job_id: string; status: string }> {
   return parse(
     await fetch(`${BASE()}/api/v1/projects/${projectId}/compile/latexdiff`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ root_file: rootFile || undefined }),
     })
   );
 }
@@ -226,4 +310,31 @@ export function pdfUrl(projectId: string, jobId?: string): string {
 
 export function exportMergedUrl(projectId: string): string {
   return `${BASE()}/api/v1/projects/${projectId}/export/merged.zip`;
+}
+
+export async function gitStatus(projectId: string): Promise<{
+  repo: string;
+  branch: string;
+  files: Array<{ xy: string; path: string }>;
+  dirty: boolean;
+  base_ref?: string;
+  revised_ref?: string;
+}> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/status`)
+  );
+}
+
+export async function gitCommit(
+  projectId: string,
+  message: string,
+  paths?: string[]
+): Promise<{ committed: boolean; message: string; sha: string | null }> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, paths, sync_from_merged: true }),
+    })
+  );
 }

@@ -14,6 +14,7 @@
 import { createApp, type App } from "vue";
 import { createPinia } from "pinia";
 import AppRoot from "./App.vue";
+import i18n, { setLocale, type AppLocale } from "./i18n";
 import { setApiBase } from "./shared/api";
 import { useProjectStore } from "./stores/project";
 import "./styles.css";
@@ -24,6 +25,8 @@ export type MountOptions = {
   /** Reserved for host auth pass-through */
   token?: string;
   autoCompile?: boolean;
+  /** UI locale: zh-CN (default) or en */
+  locale?: AppLocale;
 };
 
 export type PaperDiffHandle = {
@@ -40,6 +43,8 @@ export function mountPaperDiff(
   const pinia = createPinia();
   const app: App = createApp(AppRoot);
   app.use(pinia);
+  app.use(i18n);
+  if (options.locale) setLocale(options.locale);
   app.mount(el);
 
   const store = useProjectStore(pinia);

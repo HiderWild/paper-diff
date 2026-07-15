@@ -54,3 +54,24 @@ class AcceptFileRequest(BaseModel):
     action: Literal["add", "delete", "replace_all"]
 
 
+class SetRootRequest(BaseModel):
+    root_file: str
+
+
+class CompareEnqueueRequest(BaseModel):
+    paths: list[str] | None = None
+    prefixes: list[str] | None = None
+    include_dot_paths: bool = False
+    priority: bool = False
+
+
+class CompareFileRequest(BaseModel):
+    path: str
+
+
+class GitCommitRequest(BaseModel):
+    message: str
+    paths: list[str] | None = None
+    sync_from_merged: bool = True
+
+

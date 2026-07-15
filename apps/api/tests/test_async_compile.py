@@ -39,6 +39,7 @@ def test_compile_returns_queued_then_fails_without_docker(client: TestClient):
             "revised": ("r.zip", z, "application/zip"),
         },
     )
+    client.post(f"/api/v1/projects/{pid}/root", json={"root_file": "main.tex"})
     r = client.post(f"/api/v1/projects/{pid}/compile", json={})
     assert r.status_code == 200
     body = r.json()

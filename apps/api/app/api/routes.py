@@ -13,15 +13,21 @@ from app.schemas.dto import (
     AcceptAllRequest,
     AcceptFileRequest,
     AcceptRequest,
+    CompareEnqueueRequest,
+    CompareFileRequest,
     CompileRequest,
+    GitCommitRequest,
     GitImportRequest,
+    SetRootRequest,
     UndoRequest,
 )
+from app.services.compare_service import CompareService
 from app.services.compile_service import (
     CompileService,
     subscribe_events,
     unsubscribe_events,
 )
+from app.services.git_service import GitService
 from app.services.project_service import ProjectService
 
 router = APIRouter(prefix="/api/v1")
@@ -35,6 +41,14 @@ def compiler(settings: Settings = Depends(get_settings)) -> CompileService:
     return CompileService(settings)
 
 
+def comparer(settings: Settings = Depends(get_settings)) -> CompareService:
+    return CompareService(settings)
+
+
+def git(settings: Settings = Depends(get_settings)) -> GitService:
+    return GitService(settings)
+
+
 @router.post("/projects")
 def create_project(svc: ProjectService = Depends(projects)):
     return svc.create_project()
@@ -43,6 +57,15 @@ def create_project(svc: ProjectService = Depends(projects)):
 @router.get("/projects/{project_id}")
 def get_project(project_id: str, svc: ProjectService = Depends(projects)):
     return svc.get_project(project_id)
+
+
+@router.post("/projects/{project_id}/root")
+def set_root(
+    project_id: str,
+    body: SetRootRequest,
+    svc: ProjectService = Depends(projects),
+):
+    return svc.set_root(project_id, body.root_file)
 
 
 @router.post("/projects/{project_id}/versions/upload")
@@ -89,6 +112,55 @@ def file_pair(project_id: str, path: str, svc: ProjectService = Depends(projects
 @router.get("/projects/{project_id}/diff-index")
 def diff_index(project_id: str, svc: ProjectService = Depends(projects)):
     return svc.diff_index(project_id)
+
+
+@router.post("/projects/{project_id}/compare/enqueue")
+def compare_enqueue(
+    project_id: str,
+    body: CompareEnqueueRequest,
+    svc: CompareService = Depends(comparer),
+):
+    return svc.enqueue(
+        project_id,
+        paths=body.paths,
+        prefixes=body.prefixes,
+        include_dot_paths=body.include_dot_paths,
+        priority=body.priority,
+    )
+
+
+@router.post("/projects/{project_id}/compare/file")
+def compare_file(
+    project_id: str,
+    body: CompareFileRequest,
+    svc: CompareService = Depends(comparer),
+):
+    """High-priority compare for a single path (e.g. user opened the file)."""
+    return svc.enqueue(
+        project_id,
+        paths=[body.path],
+        include_dot_paths=True,
+        priority=True,
+    )
+
+
+@router.get("/projects/{project_id}/git/status")
+def git_status(project_id: str, svc: GitService = Depends(git)):
+    return svc.status(project_id)
+
+
+@router.post("/projects/{project_id}/git/commit")
+def git_commit(
+    project_id: str,
+    body: GitCommitRequest,
+    svc: GitService = Depends(git),
+):
+    return svc.commit(
+        project_id,
+        message=body.message,
+        paths=body.paths,
+        sync_from_merged=body.sync_from_merged,
+    )
 
 
 @router.post("/projects/{project_id}/accept")
