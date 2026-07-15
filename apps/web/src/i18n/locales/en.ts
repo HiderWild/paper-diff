@@ -248,6 +248,14 @@ export default {
     needActiveZone: "Activate a compare zone before dropping a zone-side file.",
     needBothSides:
       "Set both compare sides: project file on the left; use “vs…” or drop a zone/Git file for the right. Diff and accept appear when both are ready.",
+    dropWork: "Drop a project file, or use “Add to compare” in the file tree",
+    dropCompare: "Drop a zone file, or pick a zone/Git target via “vs…”",
+    oneSideOnly:
+      "Only one side is set: view/edit the bound side; drop or “Add to compare” fills the empty side.",
+    replacedSide: "Replaced comparer {side} side: {path}",
+    sideWork: "project",
+    sideCompare: "compare",
+    noFocusedComparer: "No comparer focused — opened a new one.",
   },
   gutter: {
     pullLine: "Pull this line (compare → project)",
@@ -261,6 +269,7 @@ export default {
     compareDir: "Compare this folder (dot dirs skipped by default)",
     collapseAll: "Collapse all",
     expandTop: "Expand top level",
+    addToCompare: "Add to compare",
     newCompare: "New compare",
     newCompareFailed: "Could not open comparer",
   },

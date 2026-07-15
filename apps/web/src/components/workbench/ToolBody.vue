@@ -50,7 +50,12 @@ const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
 const editableLeft = computed(
   () => props.tab.kind === "editor" || props.tab.kind === "comparer"
 );
-const singlePane = computed(() => props.tab.kind === "editor");
+/** Editor tool is always single-pane; comparer becomes dual only when both sides ready. */
+const singlePane = computed(() => {
+  if (props.tab.kind === "editor") return true;
+  if (props.tab.kind === "comparer") return !compareReady.value;
+  return false;
+});
 
 /** True once we intentionally loaded a right-hand target (even if empty file). */
 const rightResolved = ref(false);
@@ -61,6 +66,17 @@ const compareReady = computed(() => {
   return !!(props.tab.path && rightResolved.value);
 });
 
+/** Either side present — one-sided editor/viewer or empty dual drop. */
+const hasWorkSide = computed(
+  () => props.tab.kind === "comparer" && !!props.tab.path
+);
+const hasCompareSide = computed(
+  () => props.tab.kind === "comparer" && rightResolved.value
+);
+const hasAnySide = computed(
+  () => hasWorkSide.value || hasCompareSide.value
+);
+
 const displayLeft = computed(() => {
   if (props.tab.kind !== "comparer") return left.value;
   if (!compareReady.value) return left.value;
@@ -68,7 +84,7 @@ const displayLeft = computed(() => {
 });
 const displayRight = computed(() => {
   if (props.tab.kind !== "comparer") return right.value;
-  if (!compareReady.value) return "";
+  if (!compareReady.value) return right.value;
   return sidesSwapped.value ? left.value : right.value;
 });
 
@@ -82,17 +98,21 @@ async function loadBoundPath(path: string | null) {
   isLegacyDoc.value = false;
   units.value = [];
   if (props.tab.kind === "output") return;
-  if (!path || !project.projectId) return;
+  if (!project.projectId) return;
+  // Non-comparer tools need a bound path
+  if (!path && props.tab.kind !== "comparer") return;
   loading.value = true;
   try {
     const pid = project.projectId;
     if (props.tab.kind === "pdf") {
+      if (!path) return;
       const base = workFileRawUrl(pid, path);
       const sep = base.includes("?") ? "&" : "?";
       rawUrl.value = `${base}${sep}t=${Date.now()}`;
       return;
     }
     if (props.tab.kind === "word") {
+      if (!path) return;
       isLegacyDoc.value = /\.doc$/i.test(path) && !/\.docx$/i.test(path);
       const base = workFileRawUrl(pid, path);
       const sep = base.includes("?") ? "&" : "?";
@@ -100,6 +120,7 @@ async function loadBoundPath(path: string | null) {
       return;
     }
     if (props.tab.kind === "editor") {
+      if (!path) return;
       if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path)) {
         imageUrls.value = {
           work: workFileRawUrl(pid, path),
@@ -122,66 +143,73 @@ async function loadBoundPath(path: string | null) {
       }
       return;
     }
-    // comparer: left=work path, right=remembered target (zone/git)
-    let workContent = "";
-    try {
-      const wf = await getWorkFileText(pid, path);
-      workContent = wf.content;
-    } catch {
-      const pair0 = await getFilePair(pid, path);
-      workContent = pair0.left?.content ?? pair0.merged.content;
+    // comparer: left=work path (optional), right=remembered target (zone/git, optional)
+    // One-sided is allowed: show that side as editor/viewer until both are ready.
+    if (path) {
+      let workContent = "";
+      try {
+        const wf = await getWorkFileText(pid, path);
+        workContent = wf.content;
+      } catch {
+        try {
+          const pair0 = await getFilePair(pid, path);
+          workContent = pair0.left?.content ?? pair0.merged.content;
+        } catch {
+          workContent = "";
+        }
+      }
+      left.value = project.localBuffers[path] ?? workContent;
+    } else {
+      left.value = "";
     }
-    left.value = project.localBuffers[path] ?? workContent;
 
-    // Per-workPath override, else project default (path synced to work), else active zone
-    const mem =
-      compareTarget.resolveForWork(project.projectId, path) ||
-      (project.activeZoneId
-        ? {
-            kind: "zone" as const,
-            zoneId: project.activeZoneId,
-            path,
-          }
-        : null);
+    // Only use remembered compare target (file / project default / session).
+    // Do NOT auto-seed active zone — empty compare side is intentional until user drops / "Add to compare" / vs…
+    const mem: CompareTarget | null = path
+      ? compareTarget.resolveForWork(project.projectId, path)
+      : compareTarget.getForProject(project.projectId);
 
     if (mem?.kind === "git") {
-      const shown = await gitShow(pid, mem.ref, mem.path || path);
-      right.value = shown.content ?? "";
-      rightResolved.value = true;
-    } else if (mem?.kind === "zone") {
-      try {
-        const zf = await getZoneFileText(pid, mem.zoneId, mem.path || path);
-        right.value = zf.content;
-        rightResolved.value = true;
-      } catch {
-        right.value = "";
-        rightResolved.value = false;
+      const showPath = mem.path || path;
+      if (showPath) {
+        try {
+          const shown = await gitShow(pid, mem.ref, showPath);
+          right.value = shown.content ?? "";
+          rightResolved.value = true;
+        } catch {
+          right.value = "";
+          rightResolved.value = false;
+        }
       }
-    } else if (project.activeZoneId) {
-      try {
-        const zf = await getZoneFileText(pid, project.activeZoneId, path);
-        right.value = zf.content;
-        rightResolved.value = true;
-      } catch {
-        right.value = "";
-        rightResolved.value = false;
+    } else if (mem?.kind === "zone") {
+      const zPath = mem.path || path;
+      if (zPath) {
+        try {
+          const zf = await getZoneFileText(pid, mem.zoneId, zPath);
+          right.value = zf.content;
+          rightResolved.value = true;
+        } catch {
+          right.value = "";
+          rightResolved.value = false;
+        }
       }
     } else {
-      // No compare target configured — leave right empty / unresolved
       right.value = "";
       rightResolved.value = false;
     }
 
     // Keep pair meta for accept revision when same-path zone compare
-    try {
-      const pair = await getFilePair(pid, path);
-      if (props.active) {
-        project.pair = pair;
-        project.currentPath = path;
-        project.units = [];
+    if (path) {
+      try {
+        const pair = await getFilePair(pid, path);
+        if (props.active) {
+          project.pair = pair;
+          project.currentPath = path;
+          project.units = [];
+        }
+      } catch {
+        if (props.active) project.currentPath = path;
       }
-    } catch {
-      if (props.active) project.currentPath = path;
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -267,7 +295,7 @@ function onAfterMutation(content: string | null) {
     </div>
     <template v-else>
       <ComparerChrome
-        v-if="tab.kind === 'comparer' && active && tab.path"
+        v-if="tab.kind === 'comparer' && active && hasAnySide"
         :path="tab.path"
         :units="compareReady ? units : []"
         :left-text="left"
@@ -278,14 +306,72 @@ function onAfterMutation(content: string | null) {
       />
       <div v-if="loading" class="empty">{{ t("preview.loading") }}</div>
       <div v-else-if="error" class="empty error">{{ error }}</div>
-      <div v-else-if="!tab.path" class="empty drop-hint">
-        {{ t("tools.dropHint", { tool: t(`tools.${tab.kind}`) }) }}
+      <!-- Comparer with neither side: dual empty drop zones -->
+      <div
+        v-else-if="tab.kind === 'comparer' && !hasAnySide"
+        class="one-sided"
+        :class="{ swapped: sidesSwapped }"
+      >
+        <div class="side work-side">
+          <div class="side-label">{{ t("panels.sideProject") }}</div>
+          <div class="empty drop-hint side-hint">
+            {{ t("comparer.dropWork") }}
+          </div>
+        </div>
+        <div class="side compare-side">
+          <div class="side-label">{{ t("panels.sideZone") }}</div>
+          <div class="empty drop-hint side-hint">
+            {{ t("comparer.dropCompare") }}
+          </div>
+        </div>
       </div>
+      <!-- Comparer one-sided: filled side acts as editor/viewer; empty side stays droppable -->
       <div
         v-else-if="tab.kind === 'comparer' && !compareReady"
-        class="empty drop-hint"
+        class="one-sided"
+        :class="{ swapped: sidesSwapped }"
       >
-        {{ t("comparer.needBothSides") }}
+        <div class="side work-side">
+          <div class="side-label">{{ t("panels.sideProject") }}</div>
+          <MonacoDiff
+            v-if="hasWorkSide"
+            :key="tab.id + '-work-' + (tab.path || '') + '-t' + targetTick"
+            :path="tab.path || ''"
+            :left="left"
+            :right="left"
+            :editable-left="true"
+            :single-pane="true"
+            :monaco-theme="monacoTheme"
+            :word-wrap="wordWrap"
+            :show-gutter-actions="false"
+            @left-change="onLeftChange"
+          />
+          <div v-else class="empty drop-hint side-hint">
+            {{ t("comparer.dropWork") }}
+          </div>
+        </div>
+        <div class="side compare-side">
+          <div class="side-label">{{ t("panels.sideZone") }}</div>
+          <MonacoDiff
+            v-if="hasCompareSide"
+            :key="tab.id + '-cmp-' + targetTick"
+            :path="tab.path || 'compare'"
+            :left="right"
+            :right="right"
+            :editable-left="false"
+            :single-pane="true"
+            :monaco-theme="monacoTheme"
+            :word-wrap="wordWrap"
+            :show-gutter-actions="false"
+          />
+          <div v-else class="empty drop-hint side-hint">
+            {{ t("comparer.dropCompare") }}
+          </div>
+        </div>
+      </div>
+      <!-- Non-comparer empty -->
+      <div v-else-if="!tab.path" class="empty drop-hint">
+        {{ t("tools.dropHint", { tool: t(`tools.${tab.kind}`) }) }}
       </div>
       <template v-else>
         <PdfPane v-if="tab.kind === 'pdf'" :url="rawUrl" />
@@ -355,5 +441,52 @@ function onAfterMutation(content: string | null) {
   flex: 1;
   max-height: none;
   border-top: none;
+}
+/* One-sided / empty comparer: project | compare columns (swap flips order) */
+.one-sided {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+.one-sided.swapped {
+  flex-direction: row-reverse;
+}
+.one-sided .side {
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+}
+.one-sided .side:last-child,
+.one-sided.swapped .side:first-child {
+  border-right: none;
+}
+.one-sided.swapped .side:last-child {
+  border-right: 1px solid var(--border);
+}
+.one-sided.swapped .side:first-child {
+  border-right: none;
+}
+.side-label {
+  flex-shrink: 0;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  background: var(--panel-header);
+  border-bottom: 1px solid var(--border);
+}
+.side-hint {
+  flex: 1;
+  margin: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.one-sided :deep(.diff-wrap) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 </style>

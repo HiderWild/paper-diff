@@ -751,9 +751,9 @@ function onTreeOpen(path: string) {
 }
 
 /**
- * Context menu "New compare":
- * - work source → work path on project (left) side
- * - zone source → same path as zone target (right) when possible
+ * Context menu "New compare": always open a fresh comparer tab.
+ * - work source → bind project (work) side; leave compare empty (no auto-seed)
+ * - zone source → bind compare target only (work side empty until filled)
  */
 function onTreeNewCompare(path: string, source: "work" | "zone" = "work") {
   const fk = workbench.fileKindForPath(path);
@@ -767,24 +767,83 @@ function onTreeNewCompare(path: string, source: "work" | "zone" = "work") {
     );
     return;
   }
-  void store.openFile(path);
-  // Works with empty workbench: openTool creates a column if needed
-  const tab = workbench.openTool("comparer", path);
+  const tab = workbench.openTool("comparer", null);
   if (!tab) {
     workbench.toast(t("tree.newCompareFailed"), "warn");
     return;
   }
-  workbench.bindPath(tab.id, path);
   workbench.focusTab(tab.id);
-  if (store.activeZoneId) {
-    // Seed right side from active zone same path when available
+  if (source === "zone") {
+    if (!store.activeZoneId) {
+      workbench.toast(t("comparer.needActiveZone"), "warn");
+      return;
+    }
+    compareTarget.setForProject(store.projectId, {
+      kind: "zone",
+      zoneId: store.activeZoneId,
+      path,
+    });
+    return;
+  }
+  void store.openFile(path);
+  workbench.bindPath(tab.id, path);
+}
+
+/**
+ * Context menu "Add to compare": put file into the focused comparer (or create one).
+ * One work file + one compare (zone/git) file per comparer; same side replaces.
+ */
+function onTreeAddToCompare(path: string, source: "work" | "zone" = "work") {
+  const fk = workbench.fileKindForPath(path);
+  if (fk === "pdf" || fk === "word" || fk === "image") {
+    workbench.toast(
+      t("tools.unsupportedFile", {
+        tool: t("tools.comparer"),
+        file: path,
+      }),
+      "warn"
+    );
+    return;
+  }
+
+  let tab = workbench.focusedTab;
+  if (!tab || tab.kind !== "comparer") {
+    tab =
+      workbench.allTabs.find((v) => v.kind === "comparer") ||
+      workbench.openTool("comparer", null);
+    if (!tab) {
+      workbench.toast(t("tree.newCompareFailed"), "warn");
+      return;
+    }
+    workbench.focusTab(tab.id);
+    workbench.toast(t("comparer.noFocusedComparer"), "info");
+  } else {
+    workbench.focusTab(tab.id);
+  }
+
+  if (source === "zone") {
+    if (!store.activeZoneId) {
+      workbench.toast(t("comparer.needActiveZone"), "warn");
+      return;
+    }
     compareTarget.setForProject(
       store.projectId,
       { kind: "zone", zoneId: store.activeZoneId, path },
-      path
+      tab.path || undefined
     );
+    workbench.focusTab(tab.id);
+    return;
   }
-  void source;
+
+  const ok = workbench.bindPathWithMessage(
+    tab.id,
+    path,
+    t("tools.unsupportedFile", {
+      tool: t("tools.comparer"),
+      file: path,
+    })
+  );
+  if (ok) void store.openFile(path);
 }
 
 function onWorkbenchFileDrop(
@@ -795,7 +854,7 @@ function onWorkbenchFileDrop(
   let tab = workbench.getTab(tabId);
   if (!tab) return;
 
-  // Comparer: replace work (left path) or zone (compare target) side
+  // Comparer: replace work or zone side — at most one each; never invent work from zone drop
   if (tab.kind === "comparer") {
     const origin = side || "work";
     if (origin === "zone") {
@@ -803,20 +862,14 @@ function onWorkbenchFileDrop(
         workbench.toast(t("comparer.needActiveZone"), "warn");
         return;
       }
-      // Keep work path if already bound; only set zone target
-      const workPath = tab.path || path;
-      if (!tab.path) workbench.bindPath(tab.id, workPath);
       compareTarget.setForProject(
         store.projectId,
         { kind: "zone", zoneId: store.activeZoneId, path },
-        workPath
+        tab.path || undefined
       );
-      // Ensure work path stays set; ToolBody watches compareTarget memory deeply
-      workbench.bindPath(tab.id, workPath);
       workbench.focusTab(tab.id);
       return;
     }
-    // work side
     const ok = workbench.bindPathWithMessage(
       tab.id,
       path,
@@ -825,7 +878,10 @@ function onWorkbenchFileDrop(
         file: path,
       })
     );
-    if (ok) void store.openFile(path);
+    if (ok) {
+      void store.openFile(path);
+      workbench.focusTab(tab.id);
+    }
     return;
   }
 
@@ -1084,6 +1140,7 @@ function formatCommitDate(iso?: string) {
             @open="onTreeOpen($event)"
             @action="(p, a) => store.doAcceptFile(p, a)"
             @compare-dir="store.doEnqueueDir($event)"
+            @add-to-compare="(p) => onTreeAddToCompare(p, 'work')"
             @new-compare="(p) => onTreeNewCompare(p, 'work')"
             @hide="layout.toggleFiles()"
             @title-drag-start="onPaneDragStart('files', $event)"
