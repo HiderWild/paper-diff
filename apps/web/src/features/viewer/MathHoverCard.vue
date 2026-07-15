@@ -73,7 +73,7 @@ watch(
 .math-hover-float {
   position: fixed;
   z-index: 240;
-  transform: translate(-50%, 10px);
+  transform: translateX(-50%);
   max-width: min(36rem, 92vw);
   pointer-events: auto;
   filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.35));
