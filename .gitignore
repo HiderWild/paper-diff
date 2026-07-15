@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+.DS_Store
+apps/api/data/
+apps/web/dist/
+*.pdf
+!fixtures/**/*.pdf

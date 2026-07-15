@@ -1,0 +1,18 @@
+services:
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      PAPER_DIFF_WORKSPACE_ROOT: /data/projects
+      PAPER_DIFF_TEX_IMAGE: paper-diff-texlive:latest
+      PAPER_DIFF_DOCKER_ENABLED: "true"
+    volumes:
+      - paper_data:/data/projects
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Note: nesting docker requires host docker.sock; Windows/Mac Docker Desktop OK
+
+volumes:
+  paper_data:
