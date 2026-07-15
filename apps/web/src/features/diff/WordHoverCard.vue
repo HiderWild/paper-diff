@@ -202,7 +202,8 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border, #2d3a4d);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
   font-size: 0.85rem;
-  transform: translate(-50%, 8px);
+  /* x is span center; y is bottom of last highlight line — only center horizontally */
+  transform: translateX(-50%);
 }
 
 /* insert/delete: single horizontal track, no separate layers */

@@ -131,9 +131,38 @@ let mathHoverTimer: ReturnType<typeof setTimeout> | null = null;
 let pointerOnMathCard = false;
 
 /**
- * Pin float cards under content: horizontal center of the target span,
- * slightly below its line. Position is client/viewport coords for position:fixed.
- * Never follow the cursor once a card is open for the same anchor.
+ * Diff/math ranges are often end-exclusive. If end is (L+1, col1), the last
+ * content line is L — using exclusive end places the card a full line too low
+ * (or worse with collapsed/virtual lines). Normalize to an inclusive-ish pos.
+ */
+function normalizeRangeEnd(
+  model: monaco.editor.ITextModel | null,
+  start: { lineNumber: number; column: number },
+  end: { lineNumber: number; column: number }
+): { lineNumber: number; column: number } {
+  let line = Math.max(1, end.lineNumber);
+  let col = Math.max(1, end.column);
+  const sLine = Math.max(1, start.lineNumber);
+  // Exclusive end at beginning of a later line → snap to end of previous line
+  if (line > sLine && col <= 1) {
+    line = line - 1;
+    col = model ? model.getLineMaxColumn(line) : 1_000_000;
+  } else if (line === sLine && col <= start.column) {
+    // empty / zero-width: keep a minimal visual span on start line
+    col = start.column + 1;
+  }
+  if (model) {
+    const maxL = model.getLineCount();
+    line = Math.min(Math.max(1, line), maxL);
+    col = Math.min(Math.max(1, col), model.getLineMaxColumn(line));
+  }
+  return { lineNumber: line, column: col };
+}
+
+/**
+ * Pin float cards under the **last line** of the highlight, centered on the
+ * span horizontally. Client/viewport coords for position:fixed.
+ * Frozen once open for the same anchor (caller must not re-write x/y).
  */
 function clientAnchorForRange(
   ed: monaco.editor.ICodeEditor,
@@ -142,24 +171,50 @@ function clientAnchorForRange(
 ): { x: number; y: number } | null {
   const dom = ed.getDomNode();
   if (!dom) return null;
+  const model = ed.getModel();
   const rect = dom.getBoundingClientRect();
-  const p0 = ed.getScrolledVisiblePosition(start);
-  const p1 = ed.getScrolledVisiblePosition({
-    lineNumber: end.lineNumber,
-    // for empty range end may equal start; still ok
-    column: Math.max(end.column, start.column),
+  const startPos = {
+    lineNumber: Math.max(1, start.lineNumber),
+    column: Math.max(1, start.column),
+  };
+  const endPos = normalizeRangeEnd(model, startPos, end);
+
+  const pStart = ed.getScrolledVisiblePosition(startPos);
+  // Prefer last line of the highlight for vertical stickiness
+  const pEndLine = ed.getScrolledVisiblePosition({
+    lineNumber: endPos.lineNumber,
+    column: 1,
   });
-  if (!p0) return null;
-  const left = rect.left + p0.left;
-  const right = rect.left + (p1 ? p1.left : p0.left);
-  const top = rect.top + p0.top;
-  const lineH = p0.height || 18;
-  // Center under span; if mono-column empty, just use that x
-  const x = (left + right) / 2;
-  const y = top + lineH + 4;
-  // Clamp roughly into viewport so card is reachable
+  const pEnd = ed.getScrolledVisiblePosition(endPos);
+  if (!pStart && !pEndLine && !pEnd) return null;
+
+  // Horizontal: mid of start/end when same line; else mid of last line's content
+  let leftPx: number;
+  let rightPx: number;
+  if (startPos.lineNumber === endPos.lineNumber) {
+    leftPx = (pStart ?? pEnd)!.left;
+    rightPx = (pEnd ?? pStart)!.left;
+  } else {
+    // multi-line: center over the last line from col1 → end
+    const pLastStart =
+      pEndLine ??
+      ed.getScrolledVisiblePosition({
+        lineNumber: endPos.lineNumber,
+        column: 1,
+      });
+    leftPx = (pLastStart ?? pEnd ?? pStart)!.left;
+    rightPx = (pEnd ?? pLastStart ?? pStart)!.left;
+  }
+
+  // Vertical: bottom of **last** content line + small gap (not first line)
+  const pVert = pEndLine ?? pEnd ?? pStart!;
+  const lineH = pVert.height || 18;
+  const x = rect.left + (leftPx + rightPx) / 2;
+  const y = rect.top + pVert.top + lineH + 2;
+
+  // Keep on-screen enough to reach the apply button, without floating far away
   const cx = Math.min(Math.max(x, 24), window.innerWidth - 24);
-  const cy = Math.min(Math.max(y, 8), window.innerHeight - 48);
+  const cy = Math.min(Math.max(y, 8), window.innerHeight - 40);
   return { x: cx, y: cy };
 }
 
