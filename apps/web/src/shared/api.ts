@@ -326,6 +326,30 @@ export async function zoneFromWork(
   );
 }
 
+export type ZoneTreeNode = {
+  path: string;
+  type?: string;
+  kind?: string;
+};
+
+export type ZoneTreeResponse = {
+  zone: Zone;
+  files: string[];
+  nodes: ZoneTreeNode[];
+};
+
+/** List files inside a compare zone (for zone-side file trees). */
+export async function getZoneTree(
+  projectId: string,
+  zoneId: string
+): Promise<ZoneTreeResponse> {
+  return parse(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/tree`
+    )
+  );
+}
+
 export async function importGit(
   projectId: string,
   body: {

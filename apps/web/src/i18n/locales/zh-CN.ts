@@ -137,6 +137,7 @@ export default {
     advancedDual: "双 ZIP（兼容）",
     advancedGit: "Git 双 ref",
     gitLocalHint: "优先填写本机仓库路径；远程未配置鉴权时可能失败。",
+    noFiles: "未选择可导入的文件",
   },
   agent: {
     title: "智能体",
@@ -189,6 +190,11 @@ export default {
     activated: "已激活比较区：{name}",
     deactivated: "已清除比较区",
     snapshotOk: "已创建快照：{name}",
+    importOk: "已导入比较区 {name}（{n} 个文件）",
+    treeEmpty: "此比较区暂无文件",
+    toggleTree: "展开/折叠文件树",
+    setActive: "设为当前",
+    activateOnly: "仅激活比较区，不折叠/展开",
   },
   fileActions: {
     add: "添加→项目",

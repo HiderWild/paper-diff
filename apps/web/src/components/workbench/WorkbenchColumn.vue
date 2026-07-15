@@ -18,7 +18,12 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  fileDrop: [tabId: string, path: string, side?: "work" | "zone"];
+  fileDrop: [
+    tabId: string,
+    path: string,
+    side?: "work" | "zone",
+    zoneId?: string | null,
+  ];
   invalidDrop: [message: string];
 }>();
 
@@ -163,6 +168,8 @@ function onDrop(e: DragEvent) {
   const sideRaw = e.dataTransfer?.getData("application/x-paper-diff-side");
   const side =
     sideRaw === "zone" || sideRaw === "work" ? sideRaw : ("work" as const);
+  const zoneId =
+    e.dataTransfer?.getData("application/x-paper-diff-zone-id") || null;
   if (
     path &&
     !path.startsWith("tab:") &&
@@ -172,12 +179,12 @@ function onDrop(e: DragEvent) {
     const tab = activeTab.value;
     if (tab && tab.kind === "comparer") {
       // Always allow path drop onto comparer; side decides work vs zone
-      emit("fileDrop", tab.id, path, side);
+      emit("fileDrop", tab.id, path, side, zoneId);
       wb.setDropPreview(null);
       return;
     }
     if (tab && toolAcceptsPath(tab.kind, path)) {
-      emit("fileDrop", tab.id, path, side);
+      emit("fileDrop", tab.id, path, side, zoneId);
       wb.setDropPreview(null);
       return;
     }
@@ -195,10 +202,10 @@ function onDrop(e: DragEvent) {
       (x) => x.kind === kind && !x.path
     );
     if (empty) {
-      emit("fileDrop", empty.id, path, side);
+      emit("fileDrop", empty.id, path, side, zoneId);
     } else {
       const opened = wb.openTool(kind, path);
-      if (opened) emit("fileDrop", opened.id, path, side);
+      if (opened) emit("fileDrop", opened.id, path, side, zoneId);
     }
   }
   wb.setDropPreview(null);

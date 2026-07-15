@@ -140,6 +140,7 @@ export default {
     advancedDual: "Dual ZIP (compat)",
     advancedGit: "Git two-ref",
     gitLocalHint: "Prefer a local repo path; remote without auth may fail.",
+    noFiles: "No files selected to import",
   },
   agent: {
     title: "Agent",
@@ -192,6 +193,11 @@ export default {
     activated: "Zone active: {name}",
     deactivated: "Compare zone cleared",
     snapshotOk: "Snapshot created: {name}",
+    importOk: "Imported zone {name} ({n} files)",
+    treeEmpty: "No files in this zone",
+    toggleTree: "Expand / collapse file tree",
+    setActive: "Set active",
+    activateOnly: "Activate without toggling tree",
   },
   fileActions: {
     add: "Add→project",
