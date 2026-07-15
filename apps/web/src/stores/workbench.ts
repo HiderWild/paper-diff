@@ -65,7 +65,7 @@ export function fileKindForPath(
   if (p.endsWith(".docx") || p.endsWith(".doc")) return "word";
   if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p)) return "image";
   if (
-    /\.(tex|bib|cls|sty|txt|md|csv|tsv|json|ya?ml|xml|py|r|html|css|js|ts|sh|toml|ini|cfg|bbl)$/i.test(
+    /\.(tex|bib|cls|sty|txt|md|csv|tsv|json|ya?ml|xml|py|r|html|css|js|ts|sh|toml|ini|cfg|bbl|ipynb|log|rst|sql|jl|out)$/i.test(
       p
     ) ||
     !p.includes(".")

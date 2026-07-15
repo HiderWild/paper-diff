@@ -8,17 +8,14 @@ import ImagePreview from "../../features/preview/ImagePreview.vue";
 import PdfPane from "../../features/preview/PdfPane.vue";
 import MarkdownPreview from "../../features/viewer/MarkdownPreview.vue";
 import TablePreview from "../../features/viewer/TablePreview.vue";
-import {
-  registerExtraLanguages,
-} from "../../features/viewer/registerLanguages";
+import NotebookPreview from "../../features/viewer/NotebookPreview.vue";
+import LatexLogPreview from "../../features/viewer/LatexLogPreview.vue";
+import { registerExtraLanguages } from "../../features/viewer/registerLanguages";
 import {
   monacoLanguageFromPath,
   viewerKindFromPath,
   type ViewerKind,
 } from "../../features/viewer/languageFromPath";
-
-// Register extra Monarch languages (LaTeX, BibTeX) once per session.
-registerExtraLanguages();
 import type { DiffUnit } from "../../features/diff/sentenceMapper";
 import type { ViewTab } from "../../stores/workbench";
 import { useProjectStore } from "../../stores/project";
@@ -36,6 +33,9 @@ import {
   useCompareTargetStore,
   type CompareTarget,
 } from "../../stores/compareTarget";
+
+// Register extra Monarch languages (LaTeX, BibTeX, latexlog) once per session.
+registerExtraLanguages();
 
 const props = defineProps<{
   tab: ViewTab;
@@ -79,6 +79,15 @@ const editorViewerKind = computed<ViewerKind>(() =>
 const editorLanguage = computed(() =>
   props.tab.path ? monacoLanguageFromPath(props.tab.path) : "plaintext"
 );
+
+function onJumpLogLine(line: number) {
+  // revealLine is on MonacoDiff; may be inside source slot of LatexLogPreview
+  const ed = diffRef.value as { revealLine?: (n: number) => void } | null;
+  if (ed?.revealLine && line > 0) {
+    // Next tick after source mode shows Monaco
+    setTimeout(() => ed.revealLine?.(line), 60);
+  }
+}
 
 function onSplitRatio(r: number) {
   if (!Number.isFinite(r) || r <= 0 || r >= 1) return;
@@ -698,6 +707,54 @@ function onAfterMutation(content: string | null) {
             />
           </template>
         </TablePreview>
+        <NotebookPreview
+          v-else-if="tab.kind === 'editor' && editorViewerKind === 'notebook'"
+          :key="tab.id + (tab.path || '') + '-ipynb'"
+          :content="displayLeft"
+          :path="tab.path || ''"
+        >
+          <template #source>
+            <MonacoDiff
+              ref="diffRef"
+              :key="tab.id + (tab.path || '') + '-t' + targetTick + '-nb-src'"
+              :path="tab.path || ''"
+              :language="editorLanguage"
+              :left="displayLeft"
+              :right="displayRight"
+              :editable-left="effectiveEditable"
+              :single-pane="true"
+              :monaco-theme="monacoTheme"
+              :word-wrap="wordWrap"
+              :show-gutter-actions="false"
+              @units="onUnits"
+              @left-change="onLeftChange"
+            />
+          </template>
+        </NotebookPreview>
+        <LatexLogPreview
+          v-else-if="tab.kind === 'editor' && editorViewerKind === 'latexlog'"
+          :key="tab.id + (tab.path || '') + '-log'"
+          :content="displayLeft"
+          :path="tab.path || ''"
+          @jump-log-line="onJumpLogLine"
+        >
+          <template #source>
+            <MonacoDiff
+              ref="diffRef"
+              :key="tab.id + (tab.path || '') + '-t' + targetTick + '-log-src'"
+              :path="tab.path || ''"
+              :language="editorLanguage"
+              :left="displayLeft"
+              :right="displayRight"
+              :editable-left="false"
+              :single-pane="true"
+              :monaco-theme="monacoTheme"
+              :word-wrap="true"
+              :show-gutter-actions="false"
+              @units="onUnits"
+            />
+          </template>
+        </LatexLogPreview>
         <MonacoDiff
           v-else-if="tab.kind === 'editor'"
           ref="diffRef"
