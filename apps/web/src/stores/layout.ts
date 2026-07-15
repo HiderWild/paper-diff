@@ -160,6 +160,18 @@ export const useLayoutStore = defineStore("layout", () => {
     mainOrder.value = normalizeOrder(next);
   }
 
+  /** Swap positions of two panes (reliable L↔R either direction). */
+  function swapMain(a: MainPaneId, b: MainPaneId) {
+    if (a === b) return;
+    const next = [...mainOrder.value];
+    const i = next.indexOf(a);
+    const j = next.indexOf(b);
+    if (i < 0 || j < 0) return;
+    next[i] = b;
+    next[j] = a;
+    mainOrder.value = normalizeOrder(next);
+  }
+
   function moveMainToIndex(from: MainPaneId, index: number) {
     const next = mainOrder.value.filter((x) => x !== from);
     const i = Math.max(0, Math.min(index, next.length));
@@ -183,6 +195,7 @@ export const useLayoutStore = defineStore("layout", () => {
     togglePdf,
     toggleBottom,
     reorderMain,
+    swapMain,
     moveMainToIndex,
   };
 });
