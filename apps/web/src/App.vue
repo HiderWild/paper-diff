@@ -429,6 +429,7 @@ function startResize(
   edge: "left" | "right" = kind === "pdf" ? "right" : "left"
 ) {
   ev.preventDefault();
+  ev.stopPropagation();
   const startX = ev.clientX;
   const startY = ev.clientY;
   const startFiles = filesWidth.value;
@@ -437,25 +438,27 @@ function startResize(
 
   function onMove(e: MouseEvent) {
     const dx = e.clientX - startX;
+    // 1:1 with pointer — no heuristic multipliers
     if (kind === "files") {
+      // sash sits on the right of the files pane: drag right → wider
       const delta = edge === "left" ? dx : -dx;
-      filesWidth.value = Math.min(480, Math.max(160, startFiles + delta));
+      filesWidth.value = Math.min(560, Math.max(180, startFiles + delta));
     } else if (kind === "pdf") {
       const delta = edge === "right" ? -dx : dx;
-      pdfWidth.value = Math.min(640, Math.max(200, startPdf + delta));
+      pdfWidth.value = Math.min(720, Math.max(200, startPdf + delta));
     } else {
       bottomHeight.value = Math.min(
-        320,
-        Math.max(72, startBottom - (e.clientY - startY))
+        400,
+        Math.max(80, startBottom - (e.clientY - startY))
       );
     }
   }
   function onUp() {
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
   }
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
 }
 
 function onPaneDragStart(id: MainPaneId, e: DragEvent) {
@@ -1469,6 +1472,15 @@ function formatCommitDate(iso?: string) {
         </template>
       </aside>
 
+      <!-- Files ↔ workbench vertical sash (always when side bar visible) -->
+      <div
+        v-if="showFiles"
+        class="sash-v files-sash"
+        :style="{ order: orderOf('files') + 1 }"
+        title="resize"
+        @mousedown="startResize('files', $event, 'left')"
+      />
+
       <!-- Center: workbench columns + locked bottom output console -->
       <div
         class="center-stack"
@@ -1736,12 +1748,24 @@ function formatCommitDate(iso?: string) {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+}
+.files-sash {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--border);
+  z-index: 4;
+}
+.files-sash:hover {
+  background: var(--accent);
 }
 .files-pane :deep(.file-tree),
 .files-pane .side-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .sash-v:hover {

@@ -232,7 +232,7 @@ const edgeHint = computed(() => {
     ref="rootEl"
     class="wb-column"
     :class="{ focused: tabList.some((t) => t.id === wb.focusedTabId) }"
-    :style="{ flex: `${column.size} 1 0` }"
+    :style="{ flex: '1 1 auto', minWidth: 0, width: '100%' }"
     @dragover="onDragOver"
     @drop="onDrop"
     @dragleave="onDragLeave"
