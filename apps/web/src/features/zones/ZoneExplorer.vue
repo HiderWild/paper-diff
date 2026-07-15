@@ -5,6 +5,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import OverlayScroll from "../../components/OverlayScroll.vue";
 import FileTree from "../tree/FileTree.vue";
 import type { FileMeta } from "../tree/buildTree";
 import type { Zone } from "../../shared/api";
@@ -177,7 +178,7 @@ function zoneFiles(zoneId: string): FileMeta[] {
 
     <p v-if="!zones.length" class="muted empty-msg">{{ t("zones.empty") }}</p>
 
-    <div class="zone-scroll">
+    <OverlayScroll v-else content-class="zone-scroll">
       <div
         v-for="z in sortedZones"
         :key="z.id"
@@ -263,7 +264,7 @@ function zoneFiles(zoneId: string): FileMeta[] {
           />
         </div>
       </div>
-    </div>
+    </OverlayScroll>
   </div>
 </template>
 
@@ -316,11 +317,12 @@ function zoneFiles(zoneId: string): FileMeta[] {
   padding: 0.75rem;
   font-size: 0.85rem;
 }
-.zone-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
+:deep(.zone-scroll) {
   padding: 0.15rem 0 0.5rem;
+}
+.zone-explorer > :deep(.os-root) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .zone-block {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
@@ -408,8 +410,9 @@ function zoneFiles(zoneId: string): FileMeta[] {
   height: auto;
   flex: none;
 }
-.zone-tree-wrap :deep(.tree-scroll) {
+.zone-tree-wrap :deep(.os-root) {
   max-height: 22rem;
+  height: auto;
 }
 .tiny {
   font-size: 0.75rem;
