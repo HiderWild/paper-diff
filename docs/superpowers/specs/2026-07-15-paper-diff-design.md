@@ -1,18 +1,20 @@
 # paper-diff Design Spec
 
 **Date:** 2026-07-15  
-**Status:** Approved — implemented P0–P5 (UI manual acceptance deferred)  
-**Approach:** A — Monaco Diff (frontend) + Python FastAPI (workspace/merge/compile) + Docker TeX
+**Status:** Approved — P0–P5 + product **v2 L0** (work/zones/local git). Hardening L1–L2 in progress.  
+**Approach:** A — Monaco Diff (frontend) + Python FastAPI (workspace/merge/compile) + Docker TeX  
+**Follow-up:** `docs/superpowers/plans/2026-07-15-hardening-followups.md`
 
 ## Goals
 
-Web UI for LaTeX paper revision review:
+Web UI for LaTeX / research paper revision review:
 
-1. One project, two versions (`base` / `revised`) from zip upload (MVP) or Git refs (later).
-2. Side-by-side red/green diff (left = **merged** working tree, right = **revised**).
-3. Accept changes right→left at hunk / word / **sentence** granularity.
-4. Full-document compile of the multi-file **merged** tree in an isolated Docker TeX environment.
-5. Vue frontend (embeddable later); Python backend.
+1. **v2 (primary):** One persistent **project** (`work` tree) + optional **compare zones**; Git timeline optional/local.
+2. **MVP legacy (compat):** dual zip `base`/`revised` still maps to work + auto-zone.
+3. Side-by-side red/green diff: **left = work (editable truth)**, **right = active zone (or commit preview)**.
+4. Accept changes right→left at hunk / word / **sentence** granularity into **work**.
+5. Full-document compile of the multi-file **work** tree in Docker TeX.
+6. Vue frontend (embeddable); Python backend.
 
 ## Non-goals (MVP)
 
@@ -33,18 +35,70 @@ L1 FastAPI services (import, align, merge, root, compile)
 L0 Workspace FS + Docker TeX runner
 ```
 
-## Core model
+## Core model (MVP historical)
 
 | Object | Meaning |
 |--------|---------|
 | Project | Review session with on-disk workspace |
-| Version | `base`, `revised` snapshots; `merged` working tree |
+| Version | `base`, `revised` snapshots; `merged` working tree (**legacy names**) |
 | File path | Normalized relative path (`chapters/intro.tex`) |
 | DiffUnit | `hunk` \| `word` \| `sentence` with left/right line-col ranges |
-| AcceptOp | Replace left(merged) range with right(revised) text |
+| AcceptOp | Replace left range with right text |
 | CompileJob | Docker latexmk run |
 
-**Merged buffer:** left editor shows `merged` (initialized from `base`). Accept patches `merged` only. Export/compile use `merged`.
+**Legacy buffer names:** API still exposes `base` / `revised` / `merged` for compatibility.  
+**v2 truth:** `merged` ≡ **work** (editable); `revised` ≡ **active compare zone** (or empty).
+
+---
+
+## v2 domain model (product)
+
+```
+Project
+├── work/                 # sole editable draft; compile & export target
+├── zones/{zone_id}/      # compare snapshots (zip / folder / files / git commit)
+│   ├── tree/
+│   └── meta.json
+├── .git/                 # project-local timeline (or bound external repo)
+├── snapshots/            # accept / agent-apply undo
+├── artifacts/, jobs/
+└── meta.json
+```
+
+| Object | Meaning | Lifecycle |
+|--------|---------|-----------|
+| **Project** | Persistent research unit | create → import work → edit/commit → export |
+| **Work** | Current paper tree | editable; Accept / agent apply / compile |
+| **Compare zone** | Read-mostly snapshot | create → activate as right side → delete |
+| **Git history** | Commits of work | init / commit / log / restore / zone-from-commit |
+| **Diff session** | Left/right sources | default: work vs active zone; alt: commit A vs B (preview, no write) |
+| **Agent session** | analyze / propose / apply / chat | stub by default; optional HTTP provider |
+
+### Left / right rules
+
+| Side | Default | Optional |
+|------|---------|----------|
+| Left editor | `work` (Accept target) | commit preview (read-only) |
+| Right editor | active **zone** | other commit, agent draft |
+
+Product copy: **项目 / 比较区 / 历史** — not “基准版 / 修订版” except advanced dual-zip compat.
+
+### Disk vs API aliases
+
+| Disk | API sides / keys |
+|------|------------------|
+| `work/` | side `work` or `merged` (alias) |
+| `zones/{id}/tree` | side `zone:{id}` |
+| `base/`, `revised/` | legacy materialization for dual-zip / latexdiff |
+
+### Completion tiers (status claims)
+
+| Tier | Meaning |
+|------|---------|
+| L0 | work + zones + accept + compile + local git |
+| L1 | every public API wired in UI or explicitly deferred |
+| L2 | real agent provider, upload %, layout presets, … |
+| L3 | remote git auth, multi-tenant, large-repo perf |
 
 ## Module boundaries
 
@@ -148,20 +202,29 @@ Docker defaults: `--network=none`, memory/CPU limits, no shell-escape, serial pe
 
 | Phase | Deliverable |
 |-------|-------------|
-| P0 | Monorepo, dual zip, tree, file-pair, Monaco line diff |
-| P1 | Accept hunk/word, undo, export |
-| P2 | Sentence units + Accept UI |
-| P3 | Docker compile + PDF + log/SSE-or-poll |
-| P4 | Git refs, auto-compile debounce, error jump |
-| P5 | latexdiff side path, embed SDK |
+| P0–P5 | Dual zip MVP, accept, sentence, Docker compile, git dual-ref, latexdiff, embed |
+| v2 L0 | Single work zip, zones, local git timeline, two-commit preview |
+| Hardening R* | Chat UI, CSV/image UI, upload progress, tests — see hardening plan |
+
+### Key v2 APIs (additive)
+
+- `POST /projects/{id}/work/import/zip`
+- `GET|PUT /projects/{id}/work/file`, `GET .../work/file-raw` (images)
+- Zones: `/projects/{id}/zones` CRUD + activate + import
+- Git: status, log, commit, restore, diff, show, zone-from-commit; push → 501
+- Agent: analyze, propose, apply, chat[, stream] (`PAPER_DIFF_AGENT_PROVIDER`)
+- `POST /projects/{id}/diff/csv-preview`
 
 ## Success criteria
 
-- Upload two fixture zips → see file tree + side-by-side diff.
-- Accept a word/sentence/hunk → left updates; export zip contains change.
-- Undo restores previous merged content.
-- With Docker available, compile merged multi-file project to PDF and preview.
-- Without Docker, compile returns clear `DOCKER_UNAVAILABLE` / actionable error.
+**L0 (main path):**
+
+- Import **one** project zip → tree visible; optional zone zip → right side compare.
+- Accept word/sentence/hunk → **work** updates; export contains change; undo works.
+- With Docker: compile **work** to PDF; without Docker: clear error.
+- Local git: commit / log / discard / zone-from-commit.
+
+**L1+ (hardening):** chat UI, csv/image preview, upload progress — tracked in hardening plan.
 
 ## Risks & mitigations
 

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     agent_provider: str = "stub"
     agent_stub: bool = True
     agent_api_key: str | None = None
+    agent_http_url: str | None = None
     api_version: str = "v2"
 
 

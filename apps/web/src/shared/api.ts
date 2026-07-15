@@ -11,6 +11,14 @@ export type FilePair = {
   base: { content: string; sha256: string };
   revised: { content: string; sha256: string };
   merged: { content: string; sha256: string; revision: number };
+  left?: { content: string; sha256: string; kind?: string; revision?: number };
+  right?: {
+    content: string;
+    sha256: string;
+    kind?: string;
+    zone_id?: string | null;
+  } | null;
+  active_zone_id?: string | null;
 };
 
 export type DiffIndexFile = {
@@ -129,15 +137,58 @@ export async function uploadVersions(
   );
 }
 
+/** XHR upload with optional progress callback (0–100). */
+export function xhrUpload<T = unknown>(
+  url: string,
+  formData: FormData,
+  onProgress?: (pct: number) => void
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.responseType = "json";
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable && ev.total > 0) {
+          onProgress(Math.min(100, Math.round((ev.loaded / ev.total) * 100)));
+        }
+      };
+    }
+    xhr.onload = () => {
+      const status = xhr.status;
+      const body = xhr.response;
+      if (status >= 200 && status < 300) {
+        resolve(body as T);
+        return;
+      }
+      let msg = xhr.statusText || `HTTP ${status}`;
+      try {
+        const errBody = typeof body === "object" && body ? body : JSON.parse(xhr.responseText || "{}");
+        msg = errBody?.error?.message || JSON.stringify(errBody) || msg;
+      } catch {
+        /* ignore */
+      }
+      reject(new Error(msg));
+    };
+    xhr.onerror = () => reject(new Error("network error"));
+    xhr.send(formData);
+  });
+}
+
 /** v2: import a single work zip as the project tree. */
 export async function importWorkZip(
   projectId: string,
-  work: File
+  work: File,
+  onProgress?: (pct: number) => void
 ): Promise<ProjectDetail> {
   const fd = new FormData();
   fd.append("work", work);
+  const url = `${BASE()}/api/v1/projects/${projectId}/work/import/zip`;
+  if (onProgress) {
+    return xhrUpload<ProjectDetail>(url, fd, onProgress);
+  }
   return parse(
-    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/import/zip`, {
+    await fetch(url, {
       method: "POST",
       body: fd,
     })
@@ -212,15 +263,17 @@ export async function activateZone(
 export async function importZoneZip(
   projectId: string,
   zoneId: string,
-  file: File
+  file: File,
+  onProgress?: (pct: number) => void
 ): Promise<Zone> {
   const fd = new FormData();
   fd.append("file", file);
+  const url = `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/import/zip`;
+  if (onProgress) {
+    return xhrUpload<Zone>(url, fd, onProgress);
+  }
   return parse(
-    await fetch(
-      `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/import/zip`,
-      { method: "POST", body: fd }
-    )
+    await fetch(url, { method: "POST", body: fd })
   );
 }
 
@@ -714,4 +767,145 @@ export async function agentChat(
   }
 ): Promise<AgentChatResult> {
   return agentPost(projectId, "chat", body);
+}
+
+export type AgentChatStreamHandlers = {
+  onToken?: (text: string) => void;
+  onMessage?: (data: {
+    reply?: string;
+    provider?: string;
+    suggested_patch?: unknown;
+  }) => void;
+  onDone?: (data: { status?: string }) => void;
+  onError?: (data: unknown) => void;
+};
+
+/** Parse SSE body from agent chat/stream. */
+export async function agentChatStream(
+  projectId: string,
+  body: {
+    message: string;
+    path?: string;
+    selection?: string;
+    zone_id?: string | null;
+  },
+  handlers: AgentChatStreamHandlers = {}
+): Promise<AgentChatResult> {
+  const res = await fetch(
+    `${BASE()}/api/v1/projects/${projectId}/agent/chat/stream`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) {
+    return parse(res);
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return { status: "error", message: "no stream body" };
+  }
+  const dec = new TextDecoder();
+  let buf = "";
+  let reply = "";
+  let provider: string | undefined;
+  let status = "ok";
+  let eventName = "message";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split("\n");
+    buf = parts.pop() || "";
+    for (const line of parts) {
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        const raw = line.slice(5).trim();
+        let data: Record<string, unknown> = {};
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = { text: raw };
+        }
+        if (eventName === "token") {
+          const t = String(data.text || "");
+          reply += t;
+          handlers.onToken?.(t);
+        } else if (eventName === "message") {
+          if (typeof data.reply === "string") reply = data.reply;
+          if (typeof data.provider === "string") provider = data.provider;
+          handlers.onMessage?.(data as { reply?: string; provider?: string });
+        } else if (eventName === "error") {
+          status = String(data.status || "error");
+          handlers.onError?.(data);
+        } else if (eventName === "done") {
+          if (data.status) status = String(data.status);
+          handlers.onDone?.(data as { status?: string });
+        }
+        eventName = "message";
+      }
+    }
+  }
+  return {
+    status,
+    provider,
+    project_id: projectId,
+    reply,
+  };
+}
+
+export type CsvPreviewResult = {
+  project_id?: string;
+  left_rows: number;
+  right_rows: number;
+  changed_rows: number;
+  changes: Array<{
+    row: number;
+    status: string;
+    left?: string | null;
+    right?: string | null;
+    cells?: Array<{ col: number; left?: string | null; right?: string | null }>;
+  }>;
+  truncated?: boolean;
+};
+
+export async function csvPreview(
+  projectId: string,
+  left: string,
+  right: string,
+  maxRows = 200
+): Promise<CsvPreviewResult> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/diff/csv-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ left, right, max_rows: maxRows }),
+    })
+  );
+}
+
+export function workFileRawUrl(projectId: string, path: string): string {
+  const q = new URLSearchParams({ path });
+  return `${BASE()}/api/v1/projects/${projectId}/work/file-raw?${q}`;
+}
+
+export function zoneFileRawUrl(
+  projectId: string,
+  zoneId: string,
+  path: string
+): string {
+  const q = new URLSearchParams({ path });
+  return `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/file-raw?${q}`;
+}
+
+export async function getHealth(): Promise<{
+  ok?: boolean;
+  status?: string;
+  version?: string;
+  model?: string;
+  agent_provider?: string;
+}> {
+  return parse(await fetch(`${BASE()}/api/v1/health`));
 }

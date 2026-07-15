@@ -1,6 +1,7 @@
 # paper-diff 补强 / 强化计划：诚实闭合 · 产品化缺口 · 质量门槛
 
-> **Status:** Draft / ready-to-execute — 2026-07-15  
+> **Status:** R0–R4 executed (L1 wiring + tests + presets/palette) — 2026-07-15  
+> **Remaining L3 / optional:** R5 platform items only  
 > **Origin:** 对 P0–P5、工作台、v2 三份计划的**二次复审**（验收表 × 路由 × 前端接线 × 测试 × 声称 vs 实质）  
 > **Does not supersede** 既有主航道交付；本文件是 **gap closure** 清单  
 > **Related:**  
@@ -146,9 +147,9 @@
 
 **验收：**
 
-- [ ] 打开文件后 Agent 面板可发送消息  
-- [ ] stub provider 返回 reply；`PROVIDER=off` 显示 not_configured  
-- [ ] 至少 1 个 API 测（已有）+ 1 个前端单元/组件测（新建轻测或 e2e 手测清单）
+- [x] 打开文件后 Agent 面板可发送消息  
+- [x] stub provider 返回 reply；`PROVIDER=off` 显示 not_configured  
+- [x] 至少 1 个 API 测（已有）+ 1 个前端单元/组件测（新建轻测或 e2e 手测清单）
 
 #### R1.2 CSV Preview 最小 UI（闭合 W2）
 
@@ -160,8 +161,8 @@
 
 **验收：**
 
-- [ ] 打开 csv + 激活 zone 后可见变更行摘要  
-- [ ] 上限 max_rows 不炸 UI（≤200）
+- [x] 打开 csv + 激活 zone 后可见变更行摘要  
+- [x] 上限 max_rows 不炸 UI（≤200）
 
 #### R1.3 图片预览（闭合 W3）
 
@@ -174,9 +175,9 @@
 
 **验收：**
 
-- [ ] png/jpg 可预览  
-- [ ] path traversal 仍 400  
-- [ ] 非图片 binary 仍提示文案  
+- [x] png/jpg 可预览  
+- [x] path traversal 仍 400  
+- [x] 非图片 binary 仍提示文案  
 
 #### R1.4 上传进度（闭合 U3）
 
@@ -274,23 +275,24 @@ R0 文档口径 + design v2
 
 ### 6.1 文档
 
-- [ ] 任何「完成」均标注 L0/L1/L2/L3  
-- [ ] design 含 v2 work/zones/git 章节  
-- [ ] v2 plan 头部不再写全量 0–8 done  
+- [x] 任何「完成」均标注 L0/L1/L2/L3  
+- [x] design 含 v2 work/zones/git 章节  
+- [x] v2 plan 头部不再写全量 0–8 done  
 
 ### 6.2 产品
 
-- [ ] Agent 可对话（stub）  
-- [ ] csv 文件有变更摘要入口  
-- [ ] 常见图片可预览  
-- [ ] 大 zip 有进度反馈  
+- [x] Agent 可对话（stub）  
+- [x] csv 文件有变更摘要入口  
+- [x] 常见图片可预览  
+- [x] 大 zip 有进度反馈  
+- [x] 布局预设 + 命令面板雏形  
 
 ### 6.3 质量
 
-- [ ] `pytest --ignore=test_compile_smoke` 全绿  
-- [ ] `npm test` + `vue-tsc` 全绿  
-- [ ] 前端关键 store 路径有测  
-- [ ] 手工 smoke 清单可走通  
+- [x] `pytest --ignore=test_compile_smoke` 全绿  
+- [x] `npm test` + `vue-tsc` 全绿  
+- [x] 前端关键 store 路径有测  
+- [x] 手工 smoke 清单可走通（`docs/superpowers/manual-smoke.md`）
 
 ---
 

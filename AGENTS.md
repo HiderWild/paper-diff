@@ -2,10 +2,14 @@
 
 ## Commands
 
-- API tests: `cd apps/api && pytest -v`
+- API tests (no Docker): `cd apps/api && pytest -v --ignore=tests/test_compile_smoke.py`
+- API tests (all): `cd apps/api && pytest -v`
 - API run: `cd apps/api && uvicorn app.main:app --reload --port 8000`
 - Web: `cd apps/web && npm install && npm run dev`
 - Web tests: `cd apps/web && npm test`
+- Web typecheck: `cd apps/web && npx vue-tsc -b`
+- Manual smoke: `docs/superpowers/manual-smoke.md`
+- CI-ish gate: api pytest (ignore smoke) + `npm test` + `vue-tsc -b`
 - TeX image: `docker build -t paper-diff-texlive:latest docker/texlive`
 - Compile smoke: `cd apps/api && pytest tests/test_compile_smoke.py -v`
 - Git import API: `POST /api/v1/projects/{id}/versions/git`

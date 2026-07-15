@@ -44,6 +44,19 @@ IMAGE_EXTS = {
     ".tiff",
 }
 
+# Browser-safe image preview (exclude pdf/eps from raw img tags)
+PREVIEW_IMAGE_EXTS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".bmp",
+    ".svg",
+    ".tif",
+    ".tiff",
+}
+
 
 def is_text_path(path: str) -> bool:
     return Path(path).suffix.lower() in TEXT_EXTS or Path(path).suffix == ""
