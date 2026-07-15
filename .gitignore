@@ -10,5 +10,6 @@ venv/
 .DS_Store
 apps/api/data/
 apps/web/dist/
+*.tsbuildinfo
 *.pdf
 !fixtures/**/*.pdf
