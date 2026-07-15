@@ -77,6 +77,7 @@ export default {
     workImage: "Project (work)",
     zoneImage: "Compare zone",
     loading: "Loading…",
+    imageLoadError: "Failed to load image",
     docLegacyUnsupported:
       "Legacy .doc is not previewable here — re-save as .docx in Word. .docx is rendered in-browser and may differ slightly from desktop Word.",
   },
