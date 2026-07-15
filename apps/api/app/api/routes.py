@@ -112,15 +112,35 @@ async def import_work_files(
     project_id: str,
     files: list[UploadFile] = File(...),
     paths: str | None = Form(default=None),
+    mode: str = Form(default="supplement"),
+    on_conflict: str = Form(default="overwrite"),
+    resolutions: str | None = Form(default=None),
+    finalize: bool = Form(default=False),
     svc: ProjectService = Depends(projects),
 ):
-    """Multipart upload. Optional `paths` JSON array of relative paths (same order as files)."""
+    """Multipart upload into work/.
+
+    Optional form fields:
+      paths: JSON string[] relative paths aligned with files
+      mode: supplement (default, merge) | replace (re-finalize as full tree)
+      on_conflict: overwrite|skip|cancel|rename
+      resolutions: JSON map path -> overwrite|skip|rename|rename:new/path
+      finalize: true to re-run full finalize_work (default false for supplement)
+    """
     rels: list[str] | None = None
     if paths:
         try:
             rels = json.loads(paths)
         except json.JSONDecodeError as e:
             raise AppError("VALIDATION_ERROR", f"invalid paths json: {e}", status_code=422) from e
+    res_map: dict[str, str] | None = None
+    if resolutions:
+        try:
+            res_map = json.loads(resolutions)
+        except json.JSONDecodeError as e:
+            raise AppError(
+                "VALIDATION_ERROR", f"invalid resolutions json: {e}", status_code=422
+            ) from e
     items = []
     for i, f in enumerate(files):
         data = await f.read()
@@ -130,7 +150,27 @@ async def import_work_files(
         else:
             rel = f.filename or f"file_{i}"
         items.append({"path": rel, "content": data})
-    return svc.import_work_files(project_id, items)
+    return svc.import_work_files(
+        project_id,
+        items,
+        mode=mode,
+        on_conflict=on_conflict,
+        resolutions=res_map,
+        finalize=finalize or mode == "replace",
+    )
+
+
+@router.post("/projects/{project_id}/work/import/dry-run")
+async def dry_run_work_import(
+    project_id: str,
+    body: dict,
+    svc: ProjectService = Depends(projects),
+):
+    """Body: { \"paths\": [\"a.tex\", \"figs/x.png\"] }"""
+    paths = body.get("paths") if isinstance(body, dict) else None
+    if not isinstance(paths, list) or not paths:
+        raise AppError("VALIDATION_ERROR", "paths required", status_code=422)
+    return svc.dry_run_work_files(project_id, [str(p) for p in paths])
 
 
 @router.get("/projects/{project_id}/work/tree")

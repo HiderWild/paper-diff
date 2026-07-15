@@ -137,3 +137,7 @@ class CsvPreviewRequest(BaseModel):
     left: str
     right: str
     max_rows: int = 200
+
+
+class DryRunImportRequest(BaseModel):
+    paths: list[str]

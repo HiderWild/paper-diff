@@ -165,35 +165,187 @@ class ProjectService:
         self._safe_extract_zip(zip_bytes, ws.work_dir, label="work.zip")
         return self._finalize_work(ws, source="upload")
 
-    def import_work_files(self, project_id: str, files: list[dict]) -> dict:
-        """files: list of {path, content bytes}."""
-        from app.services.zone_service import looks_like_text, IMAGE_EXTS
+    def _normalize_work_rel(self, rel: str) -> list[str] | None:
+        rel = (rel or "").replace("\\", "/").lstrip("/")
+        if not rel:
+            return None
+        parts = [p for p in rel.split("/") if p and p != "."]
+        if not parts or any(p == ".." for p in parts):
+            return None
+        if parts[0] == "__MACOSX" or parts[-1].startswith("._"):
+            return None
+        if parts[-1] in (".DS_Store", "Thumbs.db", "desktop.ini"):
+            return None
+        return parts
+
+    def dry_run_work_files(self, project_id: str, paths: list[str]) -> dict:
+        """Report which paths would conflict under work/ before upload."""
+        ws = self._ws(project_id)
+        if not ws.project_dir.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        existing = set(ws.list_files("work"))
+        conflicts = []
+        planned = []
+        invalid = []
+        for raw in paths:
+            parts = self._normalize_work_rel(raw)
+            if not parts:
+                invalid.append({"path": raw, "reason": "invalid_path"})
+                continue
+            rel = "/".join(parts)
+            entry = {"path": rel}
+            if rel in existing:
+                try:
+                    p = ws.resolve_under(ws.work_dir, rel)
+                    entry["existing_size"] = p.stat().st_size if p.is_file() else None
+                except AppError:
+                    entry["existing_size"] = None
+                conflicts.append(entry)
+            else:
+                planned.append(entry)
+        return {
+            "project_id": project_id,
+            "conflict": bool(conflicts),
+            "conflicts": conflicts,
+            "new_files": planned,
+            "invalid": invalid,
+            "existing_count": len(existing),
+        }
+
+    def import_work_files(
+        self,
+        project_id: str,
+        files: list[dict],
+        *,
+        mode: str = "replace",
+        on_conflict: str = "overwrite",
+        resolutions: dict[str, str] | None = None,
+        finalize: bool = True,
+    ) -> dict:
+        """Import files into work/.
+
+        mode:
+          - replace: used by full tree replace paths (legacy finalize)
+          - supplement: merge into existing tree (default for UI add-files)
+        on_conflict (default when path not in resolutions):
+          - overwrite | skip | cancel | rename
+        resolutions: map path -> overwrite|skip|rename[:newname] | rename:rel/path
+        """
+        from app.domain.media import IMAGE_EXTS, WORD_EXTS, RAW_PREVIEW_EXTS
 
         ws = self._ws(project_id)
         if not ws.project_dir.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        if on_conflict == "cancel":
+            raise AppError("IMPORT_CANCELLED", "import cancelled by client", status_code=400)
+
+        resolutions = resolutions or {}
         ws.work_dir.mkdir(parents=True, exist_ok=True)
-        skipped = []
+        existing = set(ws.list_files("work"))
+        written: list[str] = []
+        skipped: list[dict] = []
+        renamed: list[dict] = []
+        overwritten: list[str] = []
+
+        def unique_name(rel: str) -> str:
+            p = Path(rel)
+            stem, suf, parent = p.stem, p.suffix, p.parent.as_posix()
+            if parent == ".":
+                parent = ""
+            n = 1
+            while True:
+                name = f"{stem} ({n}){suf}"
+                cand = f"{parent}/{name}" if parent else name
+                if cand not in existing and cand not in written:
+                    return cand
+                n += 1
+
         for item in files:
-            rel = (item.get("path") or "").replace("\\", "/").lstrip("/")
+            rel_raw = (item.get("path") or "").replace("\\", "/").lstrip("/")
             content: bytes = item.get("content") or b""
-            if not rel:
+            parts = self._normalize_work_rel(rel_raw)
+            if not parts:
+                skipped.append({"path": rel_raw, "reason": "invalid_path"})
                 continue
-            parts = [p for p in rel.split("/") if p and p != "."]
-            if not parts or any(p == ".." for p in parts):
-                skipped.append({"path": rel, "reason": "path_traversal"})
-                continue
-            if parts[0] == "__MACOSX" or parts[-1].startswith("._"):
-                continue
-            is_image = Path(rel).suffix.lower() in IMAGE_EXTS
-            if not looks_like_text(content, rel) and not is_image:
-                skipped.append({"path": rel, "reason": "non_text"})
-                continue
-            target = ws.resolve_under(ws.work_dir, "/".join(parts))
+            rel = "/".join(parts)
+            exists = rel in existing
+            action = resolutions.get(rel) or (
+                "overwrite" if not exists else on_conflict
+            )
+            if exists:
+                if action == "skip":
+                    skipped.append({"path": rel, "reason": "conflict_skip"})
+                    continue
+                if action == "cancel":
+                    raise AppError(
+                        "IMPORT_CANCELLED",
+                        f"import cancelled on conflict: {rel}",
+                        status_code=400,
+                    )
+                if action.startswith("rename"):
+                    # rename | rename:new/path
+                    if ":" in action:
+                        new_rel = action.split(":", 1)[1].strip().replace("\\", "/").lstrip("/")
+                        np = self._normalize_work_rel(new_rel)
+                        if not np:
+                            skipped.append({"path": rel, "reason": "invalid_rename"})
+                            continue
+                        dest_rel = "/".join(np)
+                    else:
+                        dest_rel = unique_name(rel)
+                    if dest_rel in existing or dest_rel in written:
+                        dest_rel = unique_name(dest_rel)
+                    renamed.append({"from": rel, "to": dest_rel})
+                    rel = dest_rel
+                elif action == "overwrite":
+                    overwritten.append(rel)
+                else:
+                    # default overwrite
+                    overwritten.append(rel)
+
+            # allow any file type for supplement (binary office, media, text)
+            suf = Path(rel).suffix.lower()
+            _ = IMAGE_EXTS, WORD_EXTS, RAW_PREVIEW_EXTS, suf  # kept for policy hooks
+            target = ws.resolve_under(ws.work_dir, rel)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
-        result = self._finalize_work(ws, source="files")
+            written.append(rel)
+            existing.add(rel)
+
+        if finalize or mode == "replace":
+            result = self._finalize_work(ws, source="files")
+        else:
+            # supplement: refresh root candidates if needed, keep existing root
+            meta = ws.load_meta()
+            work_files = ws.list_files("work")
+
+            def read_work(p: str) -> str:
+                return ws.read_text("work", p)
+
+            if not meta.get("root_candidates"):
+                cands = detect_root_candidates(work_files, read_work)
+                meta["root_candidates"] = cands
+                meta["root_recommended"] = cands[0]["path"] if cands else None
+            revs = meta.setdefault("revisions", {})
+            for p in written:
+                if is_text_path(p) and p not in revs:
+                    revs[p] = 0
+            meta["status"] = "ready"
+            if meta.get("versions", {}).get("work"):
+                meta["versions"]["work"]["file_count"] = len(work_files)
+            ws.save_meta(meta)
+            from app.services.compare_service import CompareService
+
+            cmp = CompareService(self.settings)
+            meta = cmp.ensure_init_states(ws, meta)
+            ws.save_meta(meta)
+            result = self.get_project(project_id)
+
+        result["written"] = written
         result["skipped"] = skipped
+        result["renamed"] = renamed
+        result["overwritten"] = overwritten
+        result["mode"] = mode
         return result
 
     def _finalize_work(self, ws: Workspace, source: str = "upload") -> dict:
@@ -689,6 +841,8 @@ class ProjectService:
             ".pdf": "application/pdf",
             ".tif": "image/tiff",
             ".tiff": "image/tiff",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".doc": "application/msword",
         }.get(suf, "application/octet-stream")
         return data, media
 
