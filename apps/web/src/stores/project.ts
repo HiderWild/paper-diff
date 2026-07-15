@@ -7,12 +7,15 @@ import {
   activateZone,
   agentAnalyze,
   agentApply,
+  agentChat,
+  agentChatStream,
   agentPropose,
   compareFile,
   compileLatexdiff,
   compileProject,
   createProject,
   createZone,
+  csvPreview,
   deleteZone,
   enqueueCompare,
   exportWorkUrl,
@@ -20,6 +23,7 @@ import {
   getCompileLog,
   getDiffIndex,
   getFilePair,
+  getHealth,
   getProject,
   gitCommit,
   gitDiff,
@@ -38,9 +42,12 @@ import {
   setRoot,
   undo,
   uploadVersions,
+  workFileRawUrl,
+  zoneFileRawUrl,
   zoneFromWork,
   type AgentAnalyzeResult,
   type AgentProposeResult,
+  type CsvPreviewResult,
   type DiffIndexFile,
   type FilePair,
   type GitCommit,
@@ -100,14 +107,42 @@ export const useProjectStore = defineStore("project", () => {
   } | null>(null);
   const agentResult = ref<AgentAnalyzeResult | null>(null);
   const agentProposal = ref<AgentProposeResult | null>(null);
+  const agentChatLog = ref<
+    Array<{ role: "user" | "assistant" | "system"; text: string; at?: string }>
+  >([]);
+  const agentProvider = ref<string | null>(null);
   const binaryPreview = ref<{ path: string; message: string } | null>(null);
+  const imagePreview = ref<{
+    path: string;
+    workUrl: string;
+    zoneUrl?: string | null;
+  } | null>(null);
+  const csvPreviewResult = ref<CsvPreviewResult | null>(null);
+  const uploadProgress = ref<number | null>(null);
   let compileDebounce: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+  const CSV_EXT = /\.(csv|tsv)$/i;
 
   function isImagePath(path: string) {
     return IMAGE_EXT.test(path);
+  }
+
+  function isCsvPath(path: string) {
+    return CSV_EXT.test(path);
+  }
+
+  function pairLeftContent(p: FilePair): string {
+    return p.left?.content ?? p.merged.content;
+  }
+
+  function pairRightContent(p: FilePair): string {
+    return p.right?.content ?? p.revised.content;
+  }
+
+  function noteAgentProvider(provider?: string | null) {
+    if (provider) agentProvider.value = provider;
   }
 
   const modifiedCount = computed(
@@ -186,6 +221,8 @@ export const useProjectStore = defineStore("project", () => {
     currentPath.value = path;
     units.value = [];
     binaryPreview.value = null;
+    imagePreview.value = null;
+    csvPreviewResult.value = null;
     // Non-destructive git two-commit preview takes priority when active
     if (gitPreviewPair.value && gitPreviewPair.value.path === path) {
       pair.value = {
@@ -214,10 +251,13 @@ export const useProjectStore = defineStore("project", () => {
     }
     if (isImagePath(path)) {
       pair.value = null;
-      binaryPreview.value = {
-        path,
-        message: t("preview.binaryImage"),
-      };
+      const workUrl = workFileRawUrl(projectId.value, path);
+      let zoneUrl: string | null = null;
+      if (activeZoneId.value) {
+        zoneUrl = zoneFileRawUrl(projectId.value, activeZoneId.value, path);
+      }
+      imagePreview.value = { path, workUrl, zoneUrl };
+      binaryPreview.value = null;
       status.value = path;
       return;
     }
@@ -225,6 +265,9 @@ export const useProjectStore = defineStore("project", () => {
       void compareFile(projectId.value, path).catch(() => undefined);
       pair.value = await getFilePair(projectId.value, path);
       status.value = path;
+      if (isCsvPath(path) && pair.value) {
+        void doCsvPreview();
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // binary / non-text soft landing
@@ -264,16 +307,21 @@ export const useProjectStore = defineStore("project", () => {
   async function doImportWork(file: File) {
     error.value = "";
     busy.value = true;
+    uploadProgress.value = 0;
     try {
       const id = await ensureProject();
       status.value = t("store.uploading");
-      const detail = await importWorkZip(id, file);
+      const detail = await importWorkZip(id, file, (pct) => {
+        uploadProgress.value = pct;
+      });
+      uploadProgress.value = 100;
       status.value = t("store.project", { id });
       await afterImport(detail);
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
       busy.value = false;
+      uploadProgress.value = null;
     }
   }
 
@@ -319,9 +367,13 @@ export const useProjectStore = defineStore("project", () => {
     const id = projectId.value!;
     error.value = "";
     busy.value = true;
+    uploadProgress.value = 0;
     try {
       const z = await createZone(id, name);
-      await importZoneZip(id, z.id, file);
+      await importZoneZip(id, z.id, file, (pct) => {
+        uploadProgress.value = pct;
+      });
+      uploadProgress.value = 100;
       await activateZone(id, z.id);
       await refreshZones();
       await refreshIndex();
@@ -331,6 +383,7 @@ export const useProjectStore = defineStore("project", () => {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
       busy.value = false;
+      uploadProgress.value = null;
     }
   }
 
@@ -838,8 +891,8 @@ export const useProjectStore = defineStore("project", () => {
     try {
       const res = await agentAnalyze(projectId.value, {
         path: currentPath.value,
-        left_text: pair.value.merged.content,
-        right_text: pair.value.revised.content,
+        left_text: pairLeftContent(pair.value),
+        right_text: pairRightContent(pair.value),
         units: units.value.map((u) => ({
           id: u.id,
           granularity: u.granularity,
@@ -847,7 +900,9 @@ export const useProjectStore = defineStore("project", () => {
         zone_id: activeZoneId.value,
       });
       agentResult.value = res;
+      noteAgentProvider(res.provider);
       if (res.status === "not_configured") {
+        agentProvider.value = "off";
         status.value = t("agent.notConfigured");
       } else {
         status.value = t("agent.analyzeOk");
@@ -859,6 +914,7 @@ export const useProjectStore = defineStore("project", () => {
           status: "not_configured",
           message: msg,
         };
+        agentProvider.value = "off";
         status.value = t("agent.notConfigured");
       } else {
         error.value = msg;
@@ -878,8 +934,8 @@ export const useProjectStore = defineStore("project", () => {
     try {
       const res = await agentPropose(projectId.value, {
         path: currentPath.value,
-        left_text: pair.value.merged.content,
-        right_text: pair.value.revised.content,
+        left_text: pairLeftContent(pair.value),
+        right_text: pairRightContent(pair.value),
         units: units.value.map((u) => ({
           id: u.id,
           granularity: u.granularity,
@@ -888,7 +944,9 @@ export const useProjectStore = defineStore("project", () => {
         instruction,
       });
       agentProposal.value = res;
+      noteAgentProvider(res.provider);
       if (res.status === "not_configured") {
+        agentProvider.value = "off";
         status.value = t("agent.notConfigured");
       } else {
         status.value = t("agent.proposeOk");
@@ -900,6 +958,7 @@ export const useProjectStore = defineStore("project", () => {
           status: "not_configured",
           message: msg,
         };
+        agentProvider.value = "off";
         status.value = t("agent.notConfigured");
       } else {
         error.value = msg;
@@ -927,7 +986,9 @@ export const useProjectStore = defineStore("project", () => {
         content: agentProposal.value.proposed_content,
         expected_revision: rev,
       });
+      noteAgentProvider(res.provider);
       if (res.status === "not_configured") {
+        agentProvider.value = "off";
         status.value = t("agent.notConfigured");
         return;
       }
@@ -943,6 +1004,98 @@ export const useProjectStore = defineStore("project", () => {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
       busy.value = false;
+    }
+  }
+
+  async function doAgentChat(message: string, selection?: string) {
+    if (!projectId.value) {
+      error.value = t("agent.needFile");
+      return;
+    }
+    const msg = message.trim();
+    if (!msg) return;
+    const at = new Date().toISOString();
+    agentChatLog.value = [
+      ...agentChatLog.value,
+      { role: "user", text: msg, at },
+    ];
+    busy.value = true;
+    error.value = "";
+    try {
+      let streamReply = "";
+      const res = await agentChatStream(
+        projectId.value,
+        {
+          message: msg,
+          path: currentPath.value || undefined,
+          selection,
+          zone_id: activeZoneId.value,
+        },
+        {
+          onToken: (tok) => {
+            streamReply += tok;
+          },
+        }
+      ).catch(async () => {
+        return agentChat(projectId.value!, {
+          message: msg,
+          path: currentPath.value || undefined,
+          selection,
+          zone_id: activeZoneId.value,
+        });
+      });
+      noteAgentProvider(res.provider);
+      if (res.status === "not_configured") {
+        agentProvider.value = "off";
+        agentChatLog.value = [
+          ...agentChatLog.value,
+          {
+            role: "system",
+            text: res.message || t("agent.notConfigured"),
+            at: new Date().toISOString(),
+          },
+        ];
+        status.value = t("agent.notConfigured");
+        return;
+      }
+      const reply = res.reply || streamReply || "";
+      agentChatLog.value = [
+        ...agentChatLog.value,
+        { role: "assistant", text: reply, at: new Date().toISOString() },
+      ];
+      status.value = t("agent.chatOk");
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doCsvPreview() {
+    if (!projectId.value || !pair.value || !currentPath.value) return;
+    if (!isCsvPath(currentPath.value)) {
+      csvPreviewResult.value = null;
+      return;
+    }
+    try {
+      csvPreviewResult.value = await csvPreview(
+        projectId.value,
+        pairLeftContent(pair.value),
+        pairRightContent(pair.value),
+        200
+      );
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+      csvPreviewResult.value = null;
+    }
+  }
+
+  async function refreshAgentProvider() {
+    try {
+      const h = await getHealth();
+      if (h.agent_provider) agentProvider.value = h.agent_provider;
+    } catch {
+      /* ignore */
     }
   }
 
@@ -974,8 +1127,16 @@ export const useProjectStore = defineStore("project", () => {
     gitPreviewPair,
     agentResult,
     agentProposal,
+    agentChatLog,
+    agentProvider,
     binaryPreview,
+    imagePreview,
+    csvPreviewResult,
+    uploadProgress,
     modifiedCount,
+    pairLeftContent,
+    pairRightContent,
+    isCsvPath,
     ensureProject,
     refreshIndex,
     refreshProjectMeta,
@@ -1014,6 +1175,9 @@ export const useProjectStore = defineStore("project", () => {
     doAgentAnalyze,
     doAgentPropose,
     doAgentApply,
+    doAgentChat,
+    doCsvPreview,
+    refreshAgentProvider,
     startPolling,
     stopPolling,
   };

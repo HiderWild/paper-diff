@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import MonacoDiff from "./features/diff/MonacoDiff.vue";
+import ImagePreview from "./features/preview/ImagePreview.vue";
 import PdfPane from "./features/preview/PdfPane.vue";
 import FileTree from "./features/tree/FileTree.vue";
 import { setLocale, type AppLocale } from "./i18n";
@@ -40,7 +41,12 @@ const {
   gitPreviewPair,
   agentResult,
   agentProposal,
+  agentChatLog,
+  agentProvider,
   binaryPreview,
+  imagePreview,
+  csvPreviewResult,
+  uploadProgress,
 } = storeToRefs(store);
 
 const {
@@ -72,7 +78,106 @@ const gitRevisedRef = ref("");
 const gitSubdir = ref("");
 const gitCommitMsg = ref("");
 const agentInstruction = ref("");
+const agentChatInput = ref("");
+const commandOpen = ref(false);
+const commandQuery = ref("");
 const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
+
+const layoutPresets = [
+  { id: "default", label: "toolbar.presetDefault" },
+  { id: "editorPdf", label: "toolbar.presetEditorPdf" },
+  { id: "filesEditor", label: "toolbar.presetFilesEditor" },
+] as const;
+
+function applyPreset(id: string) {
+  if (!id) return;
+  if (id === "default") {
+    layout.reset();
+  } else if (id === "editorPdf") {
+    showFiles.value = false;
+    showPdf.value = true;
+  } else if (id === "filesEditor") {
+    showFiles.value = true;
+    showPdf.value = false;
+  }
+}
+
+const commandItems = computed(() => {
+  const q = commandQuery.value.trim().toLowerCase();
+  const items = [
+    {
+      id: "compile",
+      label: t("toolbar.compile"),
+      run: () => void store.doCompile("latexmk"),
+    },
+    {
+      id: "togglePdf",
+      label: t("toolbar.togglePdf"),
+      run: () => layout.togglePdf(),
+    },
+    {
+      id: "toggleFiles",
+      label: t("toolbar.toggleFiles"),
+      run: () => layout.toggleFiles(),
+    },
+    {
+      id: "commit",
+      label: t("git.commitBtn"),
+      run: () => void onGitCommit(),
+    },
+    {
+      id: "zones",
+      label: t("panels.zones"),
+      run: () => openActivity("zones"),
+    },
+    {
+      id: "agent",
+      label: t("panels.agent"),
+      run: () => openActivity("agent"),
+    },
+    {
+      id: "reset",
+      label: t("toolbar.resetLayout"),
+      run: () => layout.reset(),
+    },
+  ];
+  if (!q) return items;
+  return items.filter((i) => i.label.toLowerCase().includes(q));
+});
+
+function runCommand(item: { run: () => void }) {
+  commandOpen.value = false;
+  commandQuery.value = "";
+  item.run();
+}
+
+function onGlobalKey(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+    e.preventDefault();
+    commandOpen.value = !commandOpen.value;
+  } else if (e.key === "Escape") {
+    commandOpen.value = false;
+  }
+}
+
+const leftContent = computed(() => {
+  if (!pair.value) return "";
+  return store.pairLeftContent(pair.value);
+});
+const rightContent = computed(() => {
+  if (!pair.value) return "";
+  return store.pairRightContent(pair.value);
+});
+const isCsvFile = computed(
+  () => !!currentPath.value && store.isCsvPath(currentPath.value)
+);
+const providerLabel = computed(() => {
+  const p = (agentProvider.value || "").toLowerCase();
+  if (p === "http") return t("agent.providerHttp");
+  if (p === "off") return t("agent.providerOff");
+  if (p === "stub") return t("agent.providerStub");
+  return p || t("agent.providerStub");
+});
 
 const rootOptions = computed(() => {
   const paths = new Set<string>();
@@ -90,15 +195,18 @@ const activeZoneName = computed(() => {
   return z?.name || "";
 });
 
-watch(
-  () => pair.value?.merged.content,
-  (c) => {
-    if (c != null) diffRef.value?.setLeftContent(c);
-  }
-);
+watch(leftContent, (c) => {
+  if (c != null) diffRef.value?.setLeftContent(c);
+});
+
+onMounted(() => {
+  void store.refreshAgentProvider();
+  window.addEventListener("keydown", onGlobalKey);
+});
 
 onBeforeUnmount(() => {
   store.stopPolling();
+  window.removeEventListener("keydown", onGlobalKey);
 });
 
 async function onImportWork() {
@@ -284,7 +392,18 @@ async function onAgentPropose() {
 async function onAgentApply() {
   if (!confirm(t("agent.applyConfirm"))) return;
   await store.doAgentApply();
-  if (pair.value) diffRef.value?.setLeftContent(pair.value.merged.content);
+  if (pair.value) diffRef.value?.setLeftContent(leftContent.value);
+}
+
+async function onAgentChat() {
+  const msg = agentChatInput.value;
+  if (!msg.trim()) return;
+  agentChatInput.value = "";
+  await store.doAgentChat(msg);
+}
+
+async function onCsvPreview() {
+  await store.doCsvPreview();
 }
 
 async function onZoneZipSelected(e: Event) {
@@ -423,6 +542,24 @@ function formatCommitDate(iso?: string) {
       <button class="secondary" :disabled="!projectId" @click="onReport">
         {{ t("toolbar.acceptReport") }}
       </button>
+      <select
+        class="preset-select"
+        :title="t('toolbar.layoutPreset')"
+        @change="applyPreset(($event.target as HTMLSelectElement).value)"
+      >
+        <option value="" disabled selected>{{ t("toolbar.layoutPreset") }}</option>
+        <option v-for="p in layoutPresets" :key="p.id" :value="p.id">
+          {{ t(p.label) }}
+        </option>
+      </select>
+      <button
+        class="secondary"
+        type="button"
+        :title="t('toolbar.commandPalette')"
+        @click="commandOpen = true"
+      >
+        ⌘⇧P
+      </button>
       <label class="status-inline">
         <input v-model="autoCompile" type="checkbox" />
         {{ t("toolbar.autoCompile") }}
@@ -466,6 +603,14 @@ function formatCommitDate(iso?: string) {
           <option value="en">{{ t("lang.en") }}</option>
         </select>
       </label>
+      <span
+        v-if="agentProvider"
+        class="provider-badge"
+        :class="agentProvider"
+        :title="t('panels.agent')"
+      >
+        {{ providerLabel }}
+      </span>
       <span class="status">
         {{ status }}
         <template v-if="activeZoneName"> · {{ activeZoneName }}</template>
@@ -474,6 +619,16 @@ function formatCommitDate(iso?: string) {
         </template>
       </span>
     </header>
+    <div
+      v-if="uploadProgress != null"
+      class="upload-progress"
+      role="progressbar"
+      :aria-valuenow="uploadProgress"
+      aria-valuemin="0"
+      aria-valuemax="100"
+    >
+      <div class="upload-progress-bar" :style="{ width: uploadProgress + '%' }" />
+    </div>
 
     <p v-if="error" class="error-bar">{{ error }}</p>
 
@@ -802,6 +957,13 @@ function formatCommitDate(iso?: string) {
         <template v-else-if="activity === 'agent'">
           <div class="panel-header side-header">
             <span>{{ t("panels.agent") }}</span>
+            <span
+              v-if="agentProvider"
+              class="provider-badge mini-badge"
+              :class="agentProvider"
+            >
+              {{ providerLabel }}
+            </span>
             <button
               type="button"
               class="header-hide"
@@ -812,12 +974,12 @@ function formatCommitDate(iso?: string) {
             </button>
           </div>
           <div class="side-body">
-            <p v-if="!currentPath || !pair" class="muted">
+            <p v-if="!currentPath" class="muted">
               {{ t("agent.empty") }}
             </p>
             <template v-else>
               <p class="muted">{{ currentPath }}</p>
-              <div class="zone-actions">
+              <div v-if="pair" class="zone-actions">
                 <button
                   type="button"
                   class="mini"
@@ -843,7 +1005,7 @@ function formatCommitDate(iso?: string) {
                   {{ t("agent.apply") }}
                 </button>
               </div>
-              <label class="block-label">
+              <label v-if="pair" class="block-label">
                 {{ t("agent.instruction") }}
                 <input
                   v-model="agentInstruction"
@@ -851,6 +1013,35 @@ function formatCommitDate(iso?: string) {
                 />
               </label>
             </template>
+            <div class="panel-header zone-subhead">{{ t("agent.chatTitle") }}</div>
+            <div class="agent-chat-log">
+              <div
+                v-for="(m, i) in agentChatLog"
+                :key="i"
+                class="agent-chat-msg"
+                :class="m.role"
+              >
+                <span class="role">{{ m.role }}</span>
+                <p>{{ m.text }}</p>
+              </div>
+              <p v-if="!agentChatLog.length" class="muted">…</p>
+            </div>
+            <div class="agent-chat-input">
+              <input
+                v-model="agentChatInput"
+                :placeholder="t('agent.chatPlaceholder')"
+                :disabled="busy || !projectId"
+                @keydown.enter.prevent="onAgentChat"
+              />
+              <button
+                type="button"
+                class="mini"
+                :disabled="busy || !projectId || !agentChatInput.trim()"
+                @click="onAgentChat"
+              >
+                {{ t("agent.chatSend") }}
+              </button>
+            </div>
             <div v-if="agentResult" class="agent-block">
               <p v-if="agentResult.status === 'not_configured'" class="muted">
                 {{ agentResult.message || t("agent.notConfigured") }}
@@ -978,7 +1169,7 @@ function formatCommitDate(iso?: string) {
               : t("panels.diffHeader")
           }}
         </div>
-        <div v-if="pair && !binaryPreview" class="unit-bar">
+        <div v-if="pair && !binaryPreview && !imagePreview" class="unit-bar">
           <button
             v-for="u in visibleUnits"
             :key="u.id"
@@ -999,6 +1190,15 @@ function formatCommitDate(iso?: string) {
             {{ t("units.empty") }}
           </span>
           <button
+            v-if="isCsvFile && pair"
+            type="button"
+            class="mini secondary"
+            :disabled="busy"
+            @click="onCsvPreview"
+          >
+            {{ t("csv.run") }}
+          </button>
+          <button
             v-if="gitPreviewPair"
             type="button"
             class="mini secondary"
@@ -1007,14 +1207,44 @@ function formatCommitDate(iso?: string) {
             {{ t("git.clearPreview") }}
           </button>
         </div>
+        <div
+          v-if="isCsvFile && csvPreviewResult"
+          class="csv-preview-panel"
+        >
+          <div class="panel-header zone-subhead">
+            {{ t("csv.preview") }} ·
+            {{ t("csv.changed", { n: csvPreviewResult.changed_rows }) }}
+          </div>
+          <ul v-if="csvPreviewResult.changes?.length" class="csv-list">
+            <li
+              v-for="ch in csvPreviewResult.changes.slice(0, 50)"
+              :key="ch.row"
+            >
+              <span class="badge" :class="ch.status">{{ ch.status }}</span>
+              <span class="csv-row">{{ t("csv.row", { n: ch.row }) }}</span>
+              <span class="csv-snip muted">{{
+                (ch.left || "").slice(0, 40)
+              }}</span>
+              <span class="csv-arrow">→</span>
+              <span class="csv-snip">{{ (ch.right || "").slice(0, 40) }}</span>
+            </li>
+          </ul>
+          <p v-else class="muted">{{ t("csv.empty") }}</p>
+        </div>
         <MonacoDiff
-          v-if="pair && !binaryPreview"
+          v-if="pair && !binaryPreview && !imagePreview"
           ref="diffRef"
           :key="(currentPath || 'x') + (gitPreviewPair ? '-gp' : '')"
           :path="currentPath || ''"
-          :left="pair.merged.content"
-          :right="pair.revised.content"
+          :left="leftContent"
+          :right="rightContent"
           @units="store.units = $event"
+        />
+        <ImagePreview
+          v-else-if="imagePreview"
+          :path="imagePreview.path"
+          :work-url="imagePreview.workUrl"
+          :zone-url="imagePreview.zoneUrl"
         />
         <div v-else-if="binaryPreview" class="empty-editor binary-preview">
           <p class="muted">{{ binaryPreview.path }}</p>
@@ -1074,6 +1304,31 @@ function formatCommitDate(iso?: string) {
       </div>
       <div class="log-box flex-log">
         {{ logText || t("panels.compileLog") }}
+      </div>
+    </div>
+
+    <div
+      v-if="commandOpen"
+      class="cmd-overlay"
+      @click.self="commandOpen = false"
+    >
+      <div class="cmd-panel" role="dialog" aria-label="command palette">
+        <input
+          v-model="commandQuery"
+          class="cmd-input"
+          :placeholder="t('toolbar.commandPalette')"
+          autofocus
+          @keydown.enter.prevent="
+            commandItems[0] && runCommand(commandItems[0])
+          "
+        />
+        <ul class="cmd-list">
+          <li v-for="item in commandItems" :key="item.id">
+            <button type="button" class="cmd-item" @click="runCommand(item)">
+              {{ item.label }}
+            </button>
+          </li>
+        </ul>
       </div>
     </div>
   </div>
@@ -1449,5 +1704,167 @@ function formatCommitDate(iso?: string) {
   gap: 0.5rem;
   justify-content: center;
   align-items: flex-start;
+}
+.upload-progress {
+  height: 3px;
+  background: #1a2332;
+  flex-shrink: 0;
+}
+.upload-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease-out;
+}
+.provider-badge {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: #334155;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.provider-badge.stub {
+  background: #3b4d1f;
+  color: #d9f99d;
+}
+.provider-badge.off {
+  background: #3f1d1d;
+  color: #fecaca;
+}
+.provider-badge.http {
+  background: #1e3a5f;
+  color: #bfdbfe;
+}
+.mini-badge {
+  margin-left: auto;
+  margin-right: 0.25rem;
+}
+.agent-chat-log {
+  max-height: 180px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.35rem;
+}
+.agent-chat-msg {
+  font-size: 0.75rem;
+}
+.agent-chat-msg .role {
+  color: var(--muted);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  margin-right: 0.3rem;
+}
+.agent-chat-msg p {
+  margin: 0.1rem 0 0;
+  white-space: pre-wrap;
+}
+.agent-chat-msg.user p {
+  color: #93c5fd;
+}
+.agent-chat-input {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+.cmd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.cmd-panel {
+  width: min(420px, 92vw);
+  background: #0f172a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.cmd-input {
+  width: 100%;
+  margin-bottom: 0.4rem;
+}
+.cmd-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+.cmd-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+}
+.cmd-item:hover {
+  background: #1e293b;
+}
+.preset-select {
+  max-width: 8rem;
+  font-size: 0.75rem;
+}
+.upload-bar {
+  width: 4rem;
+  height: 4px;
+  background: #1a2332;
+  border-radius: 2px;
+  overflow: hidden;
+  align-self: center;
+}
+.upload-fill {
+  height: 100%;
+  background: var(--accent, #3b82f6);
+  transition: width 0.12s ease-out;
+}
+.agent-chat-input input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: #0b0f14;
+  color: var(--text);
+}
+.csv-preview-panel {
+  flex-shrink: 0;
+  max-height: 140px;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  padding: 0.25rem 0.5rem 0.4rem;
+  font-size: 0.72rem;
+}
+.csv-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.csv-list li {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  min-width: 0;
+}
+.csv-snip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
+}
+.csv-arrow {
+  color: var(--muted);
 }
 </style>

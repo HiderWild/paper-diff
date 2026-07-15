@@ -138,6 +138,12 @@ def work_file(project_id: str, path: str, svc: ProjectService = Depends(projects
     return svc.work_file(project_id, path)
 
 
+@router.get("/projects/{project_id}/work/file-raw")
+def work_file_raw(project_id: str, path: str, svc: ProjectService = Depends(projects)):
+    data, media_type = svc.work_file_raw(project_id, path)
+    return Response(content=data, media_type=media_type)
+
+
 @router.put("/projects/{project_id}/work/file")
 def put_work_file(
     project_id: str,
@@ -333,6 +339,17 @@ def zone_file(
     svc: ZoneService = Depends(zones),
 ):
     return svc.zone_file(project_id, zone_id, path)
+
+
+@router.get("/projects/{project_id}/zones/{zone_id}/file-raw")
+def zone_file_raw(
+    project_id: str,
+    zone_id: str,
+    path: str,
+    svc: ProjectService = Depends(projects),
+):
+    data, media_type = svc.zone_file_raw(project_id, zone_id, path)
+    return Response(content=data, media_type=media_type)
 
 
 @router.post("/projects/{project_id}/zones/from-work")
@@ -724,9 +741,21 @@ def agent_sessions(project_id: str, svc: AgentService = Depends(agent)):
 
 @router.get("/health")
 def api_health(settings: Settings = Depends(get_settings)):
+    provider = (settings.agent_provider or "stub").strip().lower()
+    if provider in ("off", "disabled", "none"):
+        agent_provider = "off"
+    elif provider == "http":
+        agent_provider = "http" if (settings.agent_api_key or settings.agent_http_url) else (
+            "stub" if settings.agent_stub else "off"
+        )
+    elif provider == "stub" or settings.agent_stub:
+        agent_provider = "stub"
+    else:
+        agent_provider = "off"
     return {
         "ok": True,
         "status": "ok",
         "version": settings.api_version,
         "model": "v2",
+        "agent_provider": agent_provider,
     }

@@ -32,6 +32,11 @@ export default {
     resetLayout: "Reset layout",
     gitCommit: "Git commit",
     gitStatus: "Git status",
+    layoutPreset: "Layout preset",
+    presetDefault: "Default three panes",
+    presetEditorPdf: "Editor + PDF",
+    presetFilesEditor: "Files + editor",
+    commandPalette: "Command palette",
   },
   filter: {
     sentences: "sentences",
@@ -56,6 +61,8 @@ export default {
   preview: {
     binaryImage: "Binary image — text diff unavailable",
     binaryNotText: "Binary / non-text file — cannot show in editor",
+    workImage: "Project (work)",
+    zoneImage: "Compare zone",
   },
   agent: {
     title: "Agent",
@@ -78,6 +85,21 @@ export default {
     applyOk: "Applied agent draft → rev {revision}",
     instruction: "Optional instruction",
     instructionPlaceholder: "e.g. prefer concise methods wording",
+    chatSend: "Send",
+    chatPlaceholder: "Ask about the open file…",
+    chatOk: "Agent replied",
+    providerStub: "stub",
+    providerOff: "off",
+    providerHttp: "http",
+    chatTitle: "Chat",
+  },
+  csv: {
+    preview: "Table diff",
+    run: "Preview CSV changes",
+    changed: "{n} changed rows",
+    empty: "No row differences in preview window",
+    row: "row {n}",
+    status: "status",
   },
   zones: {
     empty: "No compare zones yet",

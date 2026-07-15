@@ -127,6 +127,7 @@ def test_health_v2(client: TestClient):
     body = r.json()
     assert body.get("ok") is True
     assert body.get("version") == "v2" or body.get("model") == "v2"
+    assert body.get("agent_provider") == "stub"
 
 
 def test_csv_preview(client: TestClient):

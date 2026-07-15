@@ -571,9 +571,31 @@ class ProjectService:
         if not ws.meta_path.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
 
+        current_rev = ws.load_meta().get("revisions", {}).get(path, 0)
+        try:
+            before = ws.read_text("work", path)
+        except AppError as e:
+            if e.code == "FILE_NOT_FOUND":
+                before = ""
+            else:
+                raise
+        snap_id = f"{path.replace('/', '__')}__{current_rev}"
+        ws.snapshots_dir.mkdir(parents=True, exist_ok=True)
+        (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
+
         def mut(meta: dict) -> dict:
             current = meta.setdefault("revisions", {}).get(path, 0)
-            meta["revisions"][path] = current + 1
+            new_rev = current + 1
+            meta["revisions"][path] = new_rev
+            meta.setdefault("accept_log", []).append(
+                {
+                    "file": path,
+                    "from_revision": current,
+                    "to_revision": new_rev,
+                    "ops": [{"type": "put_work_file"}],
+                    "snapshot": f"{snap_id}.txt",
+                }
+            )
             if meta.get("versions", {}).get("merged"):
                 meta["versions"]["merged"]["dirty"] = True
             return meta
@@ -588,6 +610,51 @@ class ProjectService:
             "sha256": ws.file_sha256(content),
             "revision": rev,
         }
+
+    def work_file_raw(self, project_id: str, path: str) -> tuple[bytes, str]:
+        return self._file_raw(project_id, "work", path)
+
+    def zone_file_raw(self, project_id: str, zone_id: str, path: str) -> tuple[bytes, str]:
+        return self._file_raw(project_id, f"zone:{zone_id}", path)
+
+    def _file_raw(self, project_id: str, side: str, path: str) -> tuple[bytes, str]:
+        from pathlib import Path as _Path
+
+        from app.domain.media import PREVIEW_IMAGE_EXTS
+
+        # Fail closed on traversal before media-type checks
+        if ".." in path.replace("\\", "/").split("/"):
+            raise AppError("PATH_TRAVERSAL", "path traversal denied", status_code=400)
+
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        suf = _Path(path).suffix.lower()
+        if suf not in PREVIEW_IMAGE_EXTS:
+            raise AppError(
+                "UNSUPPORTED_MEDIA",
+                "only image paths are allowed for raw preview",
+                status_code=415,
+            )
+        side_dir = ws._side_dir(side)
+        target = ws.resolve_under(side_dir, path)
+        if not target.is_file():
+            raise AppError("FILE_NOT_FOUND", f"file not found: {path}", status_code=404)
+        data = target.read_bytes()
+        media = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+            ".bmp": "image/bmp",
+            ".svg": "image/svg+xml",
+            ".pdf": "application/pdf",
+            ".eps": "application/postscript",
+            ".tif": "image/tiff",
+            ".tiff": "image/tiff",
+        }.get(suf, "application/octet-stream")
+        return data, media
 
     def file_pair(self, project_id: str, path: str) -> dict:
         ws = self._ws(project_id)

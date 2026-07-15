@@ -32,6 +32,11 @@ export default {
     resetLayout: "重置布局",
     gitCommit: "提交到 Git",
     gitStatus: "Git 状态",
+    layoutPreset: "布局预设",
+    presetDefault: "三栏默认",
+    presetEditorPdf: "编辑器 + PDF",
+    presetFilesEditor: "文件 + 编辑器",
+    commandPalette: "命令面板",
   },
   filter: {
     sentences: "句子",
@@ -56,6 +61,8 @@ export default {
   preview: {
     binaryImage: "二进制图片 — 无法在文本 diff 中显示",
     binaryNotText: "二进制/非文本文件 — 无法在编辑器中显示",
+    workImage: "项目 (work)",
+    zoneImage: "比较区",
   },
   agent: {
     title: "智能体",
@@ -78,6 +85,21 @@ export default {
     applyOk: "已应用智能体草稿 → 版本 {revision}",
     instruction: "可选指令",
     instructionPlaceholder: "例如：方法描述更简洁",
+    chatSend: "发送",
+    chatPlaceholder: "针对当前文件提问…",
+    chatOk: "智能体已回复",
+    providerStub: "stub",
+    providerOff: "off",
+    providerHttp: "http",
+    chatTitle: "对话",
+  },
+  csv: {
+    preview: "表格差异",
+    run: "预览 CSV 变更",
+    changed: "{n} 行有变更",
+    empty: "预览范围内无行差异",
+    row: "第 {n} 行",
+    status: "状态",
   },
   zones: {
     empty: "尚无比较区",

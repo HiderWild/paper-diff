@@ -98,11 +98,23 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health():
         settings = get_settings()
+        provider = (settings.agent_provider or "stub").strip().lower()
+        if provider in ("off", "disabled", "none"):
+            agent_provider = "off"
+        elif provider == "http":
+            agent_provider = "http" if (settings.agent_api_key or settings.agent_http_url) else (
+                "stub" if settings.agent_stub else "off"
+            )
+        elif provider == "stub" or settings.agent_stub:
+            agent_provider = "stub"
+        else:
+            agent_provider = "off"
         return {
             "ok": True,
             "status": "ok",
             "version": settings.api_version,
             "model": "v2",
+            "agent_provider": agent_provider,
         }
 
     return app
