@@ -1,6 +1,6 @@
 # paper-diff UX 缺口闭合计划：导入 · 工作台 · 顶栏 · 编辑保存
 
-> **Status:** **In progress (v1.1 impl)** — Steps A–D largely landed in code 2026-07-15; verify smoke then close P0 DoD  
+> **Status:** **Scaffold landed (v1.1)** — Steps A–D largely in tree; **comparer true-source pull deferred** to `2026-07-15-comparer-preview-hardening.md` (display≠accept for git). Close remaining only after that plan P0.  
 > **Origin:** 对「近期对话需求 vs 代码落地」的复审 + **对本计划本身的二次复审**（顺序/歧义/回归/验收可测性）  
 > **Does not supersede:** `project-core-zones-git-llm.md`、`hardening-followups.md`；本文件专收 **产品可见 UX 缺口**  
 > **Related:**  

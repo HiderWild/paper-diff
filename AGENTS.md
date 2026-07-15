@@ -33,13 +33,14 @@
 - **Product v2 (project core + zones + git + agent):** `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`
 - **Hardening / gap closure (post-audit R0–R5):** `docs/superpowers/plans/2026-07-15-hardening-followups.md`
 - **Import modal + diff chrome + autosave (draft, largely superseded):** `docs/superpowers/plans/2026-07-15-import-diffchrome-autosave.md`
-- **UX gap closure v1.1 (execute next; re-reviewed order/DoD):** `docs/superpowers/plans/2026-07-15-ux-gap-closure.md`
+- **UX gap closure v1.1 (scaffold landed; remaining P0 mixed):** `docs/superpowers/plans/2026-07-15-ux-gap-closure.md`
+- **Comparer + preview hardening (true-source pull / arrows / word zoom — execute next):** `docs/superpowers/plans/2026-07-15-comparer-preview-hardening.md`
 
 ## Completion tiers (use in status claims)
 
 - **L0 main path:** work + zones + accept + compile + local git — **done**
 - **L1 API↔UI wiring:** every public API has UI or is explicitly deferred — **partial** (accept-report via command palette; advanced import in modal)
-- **L2 product depth:** columns/tabs + sash, unified import (+ advanced dual/git/supplement), comparer chrome, autosave (default on), docx — **partial** (real agent provider, polish)
+- **L2 product depth:** columns/tabs + sash, unified import, autosave, docx, compare-target **preview** — **partial** (**do not claim git/zone pull-to-work until comparer-preview-hardening Step 1**; real agent still partial)
 - **L3 platform:** remote git auth, multi-tenant, virtualized tree — **deferred**
 - Merge line/col: `apps/api/app/domain/merge_engine.py`
 - Accept/import (work + dual-zip compat): `apps/api/app/services/project_service.py`
