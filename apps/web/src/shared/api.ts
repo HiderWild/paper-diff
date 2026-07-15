@@ -952,23 +952,44 @@ export async function supplementWorkFiles(
     paths?: string[];
     on_conflict?: "overwrite" | "skip" | "cancel" | "rename";
     resolutions?: Record<string, string>;
+    mode?: "supplement" | "replace";
+    finalize?: boolean;
     onProgress?: (pct: number) => void;
   } = {}
 ): Promise<SupplementImportResult> {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
   if (opts.paths?.length) fd.append("paths", JSON.stringify(opts.paths));
-  fd.append("mode", "supplement");
+  const mode = opts.mode || "supplement";
+  fd.append("mode", mode);
   fd.append("on_conflict", opts.on_conflict || "overwrite");
   if (opts.resolutions && Object.keys(opts.resolutions).length) {
     fd.append("resolutions", JSON.stringify(opts.resolutions));
   }
-  fd.append("finalize", "false");
+  const finalize =
+    opts.finalize != null ? opts.finalize : mode === "replace";
+  fd.append("finalize", finalize ? "true" : "false");
   const url = `${BASE()}/api/v1/projects/${projectId}/work/import/files`;
   if (opts.onProgress) {
     return xhrUpload<SupplementImportResult>(url, fd, opts.onProgress);
   }
   return parse(await fetch(url, { method: "POST", body: fd }));
+}
+
+/** Full project tree from loose files / folder (replace + finalize). */
+export async function importWorkFilesReplace(
+  projectId: string,
+  files: File[],
+  paths?: string[],
+  onProgress?: (pct: number) => void
+): Promise<SupplementImportResult> {
+  return supplementWorkFiles(projectId, files, {
+    paths,
+    mode: "replace",
+    finalize: true,
+    on_conflict: "overwrite",
+    onProgress,
+  });
 }
 
 export async function getHealth(): Promise<{

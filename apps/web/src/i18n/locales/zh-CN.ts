@@ -108,6 +108,23 @@ export default {
     cancelAll: "取消本次导入",
     continueImport: "继续导入",
   },
+  importModal: {
+    open: "导入",
+    projectTitle: "项目导入",
+    zoneTitle: "比较区导入",
+    name: "名称",
+    methodZip: "ZIP 包",
+    methodFolder: "文件夹",
+    methodFiles: "多文件",
+    analyzing: "正在解析…",
+    preview: "导入预览",
+    previewSummary:
+      "共 {total} 个路径 · 新增约 {fresh} · 与现有冲突 {conflicts}",
+    morePaths: "另有 {n} 个路径未列出",
+    conflictNote: "与当前项目路径有冲突时，确认后默认覆盖同名文件。",
+    cancel: "取消",
+    confirm: "确认导入",
+  },
   agent: {
     title: "智能体",
     analyze: "分析当前文件",

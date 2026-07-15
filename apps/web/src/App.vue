@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import MonacoDiff from "./features/diff/MonacoDiff.vue";
 import ConflictImportModal from "./features/import/ConflictImportModal.vue";
+import ImportModal from "./features/import/ImportModal.vue";
 import ToastStack from "./components/ToastStack.vue";
 import ToolStrip from "./components/ToolStrip.vue";
 import WorkbenchGrid from "./components/workbench/WorkbenchGrid.vue";
@@ -86,13 +87,7 @@ const visibleUnits = computed(() => {
   return units.value.filter((u) => u.granularity === unitFilter.value);
 });
 
-const workInput = ref<HTMLInputElement | null>(null);
-const baseInput = ref<HTMLInputElement | null>(null);
-const revisedInput = ref<HTMLInputElement | null>(null);
-const zoneZipInput = ref<HTMLInputElement | null>(null);
-const zoneFolderInput = ref<HTMLInputElement | null>(null);
 const supplementInput = ref<HTMLInputElement | null>(null);
-const showAdvanced = ref(false);
 const conflictOpen = ref(false);
 const pendingSupplement = ref<{
   files: File[];
@@ -101,10 +96,10 @@ const pendingSupplement = ref<{
 const dryRunResult = ref<import("./shared/api").DryRunImportResult | null>(
   null
 );
-const gitRepo = ref("");
-const gitBaseRef = ref("");
-const gitRevisedRef = ref("");
-const gitSubdir = ref("");
+const importOpen = ref(false);
+const importServerDryRun = ref<import("./shared/api").DryRunImportResult | null>(
+  null
+);
 const gitCommitMsg = ref("");
 const agentInstruction = ref("");
 const agentChatInput = ref("");
@@ -155,6 +150,11 @@ const commandItems = computed(() => {
       id: "commit",
       label: t("git.commitBtn"),
       run: () => void onGitCommit(),
+    },
+    {
+      id: "import",
+      label: t("importModal.open"),
+      run: () => openImportModal(),
     },
     {
       id: "zones",
@@ -274,37 +274,52 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onGlobalKey);
 });
 
-async function onImportWork() {
-  const f = workInput.value?.files?.[0];
-  if (!f) {
-    store.error = t("errors.selectWorkZip");
-    return;
-  }
-  await store.doImportWork(f);
-  if (workInput.value) workInput.value.value = "";
+function openImportModal() {
+  importServerDryRun.value = null;
+  importOpen.value = true;
 }
 
-async function onUpload() {
-  const baseFile = baseInput.value?.files?.[0];
-  const revFile = revisedInput.value?.files?.[0];
-  if (!baseFile || !revFile) {
-    store.error = t("errors.selectZips");
+const importTarget = computed<"project" | "zone">(() =>
+  projectId.value ? "zone" : "project"
+);
+
+async function onImportAnalyze(paths: string[]) {
+  importServerDryRun.value = null;
+  // Server dry-run only meaningful when importing files into an existing work tree
+  // as supplement; for zone we show local path list. For project replace, list only.
+  if (importTarget.value === "zone" && projectId.value && paths.length) {
+    // zone has no server dry-run — local list only
     return;
   }
-  await store.doUpload(baseFile, revFile);
+  if (importTarget.value === "project" && projectId.value && paths.length) {
+    const dry = await store.dryRunSupplement(paths);
+    if (dry) importServerDryRun.value = dry;
+  }
 }
 
-async function onGitImport() {
-  if (!gitRepo.value || !gitBaseRef.value || !gitRevisedRef.value) {
-    store.error = t("errors.fillGit");
+async function onImportConfirm(payload: {
+  target: "project" | "zone";
+  method: "zip" | "folder" | "files";
+  name: string;
+  files: File[];
+  paths: string[];
+  zip?: File | null;
+}) {
+  importOpen.value = false;
+  if (payload.target === "project") {
+    if (payload.method === "zip" && payload.zip) {
+      await store.doImportWork(payload.zip);
+    } else if (payload.files.length) {
+      await store.doImportWorkFiles(payload.files, payload.paths);
+    }
     return;
   }
-  await store.doGitImport({
-    repo_url: gitRepo.value,
-    base_ref: gitBaseRef.value,
-    revised_ref: gitRevisedRef.value,
-    subdir: gitSubdir.value || undefined,
-  });
+  // zone
+  if (payload.method === "zip" && payload.zip) {
+    await store.doAddZoneZip(payload.zip, payload.name);
+  } else if (payload.files.length) {
+    await store.doAddZoneFiles(payload.files, payload.name);
+  }
 }
 
 async function onAccept(unit: (typeof units.value)[0]) {
@@ -555,19 +570,8 @@ async function onCsvPreview() {
   await store.doCsvPreview();
 }
 
-async function onZoneZipSelected(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const f = input.files?.[0];
-  if (!f) return;
-  await store.doAddZoneZip(f);
-  input.value = "";
-}
-
-async function onZoneFolderSelected(e: Event) {
-  const input = e.target as HTMLInputElement;
-  if (!input.files?.length) return;
-  await store.doAddZoneFiles(input.files);
-  input.value = "";
+function openZoneImport() {
+  openImportModal();
 }
 
 async function onRenameZone(zoneId: string, current: string) {
@@ -704,57 +708,9 @@ function formatCommitDate(iso?: string) {
         @open="onOpenTool"
         @drag-start="() => undefined"
       />
-      <label>
-        {{ t("toolbar.importProject") }}
-        <input ref="workInput" type="file" accept=".zip" />
-      </label>
-      <button :disabled="busy" @click="onImportWork">
-        {{ t("toolbar.importWork") }}
+      <button type="button" :disabled="busy" @click="openImportModal">
+        {{ t("importModal.open") }}
       </button>
-      <button
-        class="secondary"
-        type="button"
-        :class="{ 'active-toggle': showAdvanced }"
-        @click="showAdvanced = !showAdvanced"
-      >
-        {{ t("toolbar.advancedDualZip") }}
-      </button>
-      <template v-if="showAdvanced">
-        <label>
-          {{ t("toolbar.base") }}
-          <input ref="baseInput" type="file" accept=".zip" />
-        </label>
-        <label>
-          {{ t("toolbar.revised") }}
-          <input ref="revisedInput" type="file" accept=".zip" />
-        </label>
-        <button class="secondary" :disabled="busy" @click="onUpload">
-          {{ t("toolbar.importZips") }}
-        </button>
-        <input
-          v-model="gitRepo"
-          :placeholder="t('toolbar.gitRepoPlaceholder')"
-          style="min-width: 8rem"
-        />
-        <input
-          v-model="gitBaseRef"
-          :placeholder="t('toolbar.baseRefPlaceholder')"
-          style="width: 5rem"
-        />
-        <input
-          v-model="gitRevisedRef"
-          :placeholder="t('toolbar.revisedRefPlaceholder')"
-          style="width: 5rem"
-        />
-        <input
-          v-model="gitSubdir"
-          :placeholder="t('toolbar.subdirPlaceholder')"
-          style="width: 4rem"
-        />
-        <button class="secondary" :disabled="busy" @click="onGitImport">
-          {{ t("toolbar.importGit") }}
-        </button>
-      </template>
       <label class="root-select" :title="t('toolbar.rootSelect')">
         <select
           :value="rootFile || ''"
@@ -1011,17 +967,9 @@ function formatCommitDate(iso?: string) {
                 type="button"
                 class="secondary mini"
                 :disabled="busy || !projectId"
-                @click="zoneZipInput?.click()"
+                @click="openZoneImport"
               >
-                {{ t("zones.fromZip") }}
-              </button>
-              <button
-                type="button"
-                class="secondary mini"
-                :disabled="busy || !projectId"
-                @click="zoneFolderInput?.click()"
-              >
-                {{ t("zones.fromFolder") }}
+                {{ t("importModal.open") }}
               </button>
               <button
                 type="button"
@@ -1032,21 +980,6 @@ function formatCommitDate(iso?: string) {
                 {{ t("zones.fromWork") }}
               </button>
             </div>
-            <input
-              ref="zoneZipInput"
-              type="file"
-              accept=".zip"
-              hidden
-              @change="onZoneZipSelected"
-            />
-            <input
-              ref="zoneFolderInput"
-              type="file"
-              webkitdirectory
-              multiple
-              hidden
-              @change="onZoneFolderSelected"
-            />
             <p v-if="!zones.length" class="muted">{{ t("zones.empty") }}</p>
             <ul class="zone-list">
               <li
@@ -1485,6 +1418,16 @@ function formatCommitDate(iso?: string) {
       @close="onConflictCancel"
       @cancel="onConflictCancel"
       @confirm="onConflictConfirm"
+    />
+
+    <ImportModal
+      :open="importOpen"
+      :target="importTarget"
+      :busy="busy"
+      :server-dry-run="importServerDryRun"
+      @close="importOpen = false"
+      @analyze="onImportAnalyze"
+      @confirm="onImportConfirm"
     />
 
     <div
