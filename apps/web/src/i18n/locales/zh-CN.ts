@@ -270,6 +270,15 @@ export default {
     emptyProjectHint: "尚未绑定项目文件。打开资源树选择一个文件。",
     emptyCompareHint: "尚未绑定对照目标。可从对比区或某个 Git 提交中选择文件。",
   },
+  hoverAccept: {
+    title: "词/短语差异",
+    work: "工作区",
+    compare: "对照",
+    apply: "采纳此处",
+    dismiss: "关闭",
+    insertHint: "将在工作区插入对照文本",
+    deleteHint: "将从工作区删除该片段",
+  },
   gitPick: {
     title: "从 Git 提交选择对照文件",
     hint: "选择提交后浏览该提交的目录树；确认后通过 git show 加载内容（不落盘临时目录）。",

@@ -276,6 +276,15 @@ export default {
     emptyCompareHint:
       "No compare target yet. Pick a file from a zone or a git commit.",
   },
+  hoverAccept: {
+    title: "Word / phrase change",
+    work: "Work",
+    compare: "Compare",
+    apply: "Apply here",
+    dismiss: "Dismiss",
+    insertHint: "Inserts the compare text into work",
+    deleteHint: "Deletes this span from work",
+  },
   gitPick: {
     title: "Pick compare file from git",
     hint: "Select a commit, then a path in that tree. Content loads via git show (no temp checkout).",

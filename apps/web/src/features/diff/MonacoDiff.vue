@@ -14,6 +14,16 @@ import {
   estimatePairTier,
   type FileTier,
 } from "./largeFileTier";
+import WordHoverCard from "./WordHoverCard.vue";
+import {
+  hitTestWordUnit,
+  MAX_WORD_DECORATIONS,
+  trueSideForVisualEditor,
+  unitCardModel,
+  unitToMonacoRange,
+  wordUnitsOf,
+  type WordCardModel,
+} from "./wordHover";
 
 self.MonacoEnvironment = {
   getWorker() {
@@ -35,6 +45,13 @@ const props = withDefaults(
     wordWrap?: boolean;
     /** Override content tier; omit to derive from left+right size */
     fileTier?: FileTier;
+    /**
+     * When true, props.left is compare and props.right is work (display flip).
+     * Unit left/right still match props order; true-source labels use this flag.
+     */
+    sidesSwapped?: boolean;
+    /** Enable word/phrase hover card (default on for diff when word units exist) */
+    enableWordHover?: boolean;
   }>(),
   {
     editableLeft: false,
@@ -42,6 +59,8 @@ const props = withDefaults(
     monacoTheme: "vs-dark",
     showGutterActions: true,
     wordWrap: false,
+    sidesSwapped: false,
+    enableWordHover: true,
   }
 );
 
@@ -69,11 +88,21 @@ let modified: monaco.editor.ITextModel | null = null;
 let sub: monaco.IDisposable | null = null;
 let contentSub: monaco.IDisposable | null = null;
 const viewSubs: monaco.IDisposable[] = [];
+const mouseSubs: monaco.IDisposable[] = [];
 let suppressEmit = false;
 let lastUnits: DiffUnit[] = [];
 /** Cancel pending idle unit build when content changes / unmount. */
 let unitIdleHandle: number | null = null;
 let unitTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+let wordDecoOrig: monaco.editor.IEditorDecorationsCollection | null = null;
+let wordDecoMod: monaco.editor.IEditorDecorationsCollection | null = null;
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+const hoverCard = ref<{
+  model: WordCardModel;
+  x: number;
+  y: number;
+} | null>(null);
 
 const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
 /** Max vertical offset (px) for one secondary arrow when primary is already on the line. */
@@ -85,6 +114,14 @@ const resolvedTier = computed<FileTier>(() => {
 });
 
 const tierOpts = computed(() => diffOptionsForTier(resolvedTier.value));
+
+const wordHoverEnabled = computed(
+  () =>
+    props.enableWordHover &&
+    !props.singlePane &&
+    props.showGutterActions &&
+    tierOpts.value.wordUnits
+);
 
 function cancelPendingUnits() {
   if (unitIdleHandle != null && typeof cancelIdleCallback === "function") {
@@ -117,15 +154,65 @@ function scheduleRecomputeUnits() {
   recomputeUnitsNow();
 }
 
+function clearWordHover() {
+  if (hoverTimer != null) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+  hoverCard.value = null;
+}
+
+function syncWordDecorations(units: DiffUnit[]) {
+  if (!editor || props.singlePane || !wordHoverEnabled.value) {
+    wordDecoOrig?.clear();
+    wordDecoMod?.clear();
+    return;
+  }
+  const words = wordUnitsOf(units).slice(0, MAX_WORD_DECORATIONS);
+  const origDecs: monaco.editor.IModelDeltaDecoration[] = [];
+  const modDecs: monaco.editor.IModelDeltaDecoration[] = [];
+  const opts: monaco.editor.IModelDecorationOptions = {
+    className: "pd-word-hover-deco",
+    inlineClassName: "pd-word-hover-inline",
+    stickiness:
+      monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    zIndex: 1,
+  };
+  for (const u of words) {
+    // Ranges are in props/original-modified (display) order
+    origDecs.push({
+      range: unitToMonacoRange(u.left),
+      options: opts,
+    });
+    modDecs.push({
+      range: unitToMonacoRange(u.right),
+      options: opts,
+    });
+  }
+  if (!wordDecoOrig) {
+    wordDecoOrig = editor.getOriginalEditor().createDecorationsCollection();
+  }
+  if (!wordDecoMod) {
+    wordDecoMod = editor.getModifiedEditor().createDecorationsCollection();
+  }
+  wordDecoOrig.set(origDecs);
+  wordDecoMod.set(modDecs);
+}
+
 function recomputeUnitsNow() {
   if (!editor || props.singlePane) {
     lastUnits = [];
     emit("units", []);
     arrows.value = [];
+    clearWordHover();
+    wordDecoOrig?.clear();
+    wordDecoMod?.clear();
     return;
   }
   const opts = tierOpts.value;
   const changes = (editor.getLineChanges() || []) as LineChange[];
+  // When word hover is enabled, force wordUnits even if tier said false for M —
+  // stay aligned with tierOpts.wordUnits (S only by default).
   const units = buildDiffUnits(
     original?.getValue() ?? props.left,
     modified?.getValue() ?? props.right,
@@ -137,7 +224,94 @@ function recomputeUnitsNow() {
   );
   lastUnits = units;
   emit("units", units);
+  syncWordDecorations(units);
+  clearWordHover();
   void nextTick(() => placeArrows());
+}
+
+function onEditorMouseMove(
+  visual: "original" | "modified",
+  e: monaco.editor.IEditorMouseEvent
+) {
+  if (!wordHoverEnabled.value || !editor) {
+    clearWordHover();
+    return;
+  }
+  const t = e.target;
+  const pos = t.position;
+  // CONTENT_TEXT = 6 in Monaco MouseTargetType
+  if (!pos || (t.type !== 6 && t.type !== 7)) {
+    // still allow content empty to clear soon
+    if (hoverTimer != null) clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => {
+      hoverCard.value = null;
+      hoverTimer = null;
+    }, 200);
+    return;
+  }
+  const trueSide = trueSideForVisualEditor(visual, props.sidesSwapped);
+  // Monaco columns are 1-based → DiffUnit 0-based
+  const col0 = Math.max(0, pos.column - 1);
+  const unit = hitTestWordUnit(
+    lastUnits,
+    trueSide,
+    pos.lineNumber,
+    col0,
+    props.sidesSwapped
+  );
+  if (!unit) {
+    if (hoverTimer != null) clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => {
+      hoverCard.value = null;
+      hoverTimer = null;
+    }, 250);
+    return;
+  }
+  const bx = e.event.posx;
+  const by = e.event.posy;
+  if (hoverTimer != null) clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => {
+    hoverCard.value = {
+      model: unitCardModel(unit, props.sidesSwapped),
+      x: bx,
+      y: by,
+    };
+    hoverTimer = null;
+  }, 350);
+}
+
+function bindWordHoverListeners() {
+  while (mouseSubs.length) mouseSubs.pop()?.dispose();
+  if (!editor || props.singlePane || !wordHoverEnabled.value) return;
+  const orig = editor.getOriginalEditor();
+  const mod = editor.getModifiedEditor();
+  mouseSubs.push(
+    orig.onMouseMove((e) => onEditorMouseMove("original", e)),
+    mod.onMouseMove((e) => onEditorMouseMove("modified", e)),
+    orig.onMouseLeave(() => {
+      if (hoverTimer != null) clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        hoverCard.value = null;
+        hoverTimer = null;
+      }, 400);
+    }),
+    mod.onMouseLeave(() => {
+      if (hoverTimer != null) clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        hoverCard.value = null;
+        hoverTimer = null;
+      }, 400);
+    }),
+    orig.onDidScrollChange(() => clearWordHover()),
+    mod.onDidScrollChange(() => clearWordHover())
+  );
+}
+
+function onHoverApply() {
+  const h = hoverCard.value;
+  if (!h) return;
+  emit("pullUnit", h.model.unit);
+  clearWordHover();
 }
 
 /** Public / exposed recompute (synchronous). */
@@ -371,6 +545,7 @@ function mountEditor() {
     emit("leftChange", original!.getValue());
   });
   bindViewListeners();
+  bindWordHoverListeners();
   setTimeout(() => {
     scheduleRecomputeUnits();
     emit("ready");
@@ -422,13 +597,28 @@ watch(
   () => applyWordWrap()
 );
 
+watch(
+  () => [props.sidesSwapped, props.enableWordHover, resolvedTier.value] as const,
+  () => {
+    syncWordDecorations(lastUnits);
+    bindWordHoverListeners();
+    clearWordHover();
+  }
+);
+
 onMounted(mountEditor);
 
 onBeforeUnmount(() => {
   cancelPendingUnits();
+  clearWordHover();
   contentSub?.dispose();
   sub?.dispose();
   while (viewSubs.length) viewSubs.pop()?.dispose();
+  while (mouseSubs.length) mouseSubs.pop()?.dispose();
+  wordDecoOrig?.clear();
+  wordDecoMod?.clear();
+  wordDecoOrig = null;
+  wordDecoMod = null;
   codeEditor?.dispose();
   codeEditor = null;
   editor?.dispose();
@@ -488,6 +678,16 @@ defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
         {{ a.glyph }}
       </button>
     </div>
+    <Teleport to="body">
+      <WordHoverCard
+        v-if="hoverCard"
+        :model="hoverCard.model"
+        :x="hoverCard.x"
+        :y="hoverCard.y"
+        @apply="onHoverApply"
+        @dismiss="clearWordHover"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -510,6 +710,15 @@ defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
   pointer-events: none;
   z-index: 4;
 }
+/* Word-hover decorations (global class names for Monaco DOM) */
+:global(.pd-word-hover-inline) {
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent, #3b82f6) 70%, transparent);
+  cursor: help;
+}
+:global(.pd-word-hover-deco) {
+  /* range marker; keep light so Monaco char diff stays primary */
+}
+
 .gutter-arrow {
   position: absolute;
   /* left set from real Monaco split rail in placeArrows */

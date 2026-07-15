@@ -445,6 +445,8 @@ function onAfterMutation(content: string | null) {
           :monaco-theme="monacoTheme"
           :word-wrap="wordWrap"
           :show-gutter-actions="tab.kind === 'comparer' && compareReady"
+          :sides-swapped="tab.kind === 'comparer' && sidesSwapped"
+          :enable-word-hover="tab.kind === 'comparer' && compareReady"
           @units="onUnits"
           @left-change="onLeftChange"
           @pull-unit="onPullUnit"
