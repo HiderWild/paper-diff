@@ -377,24 +377,40 @@ function startResize(
 
 function onPaneDragStart(id: MainPaneId, e: DragEvent) {
   dragPane.value = id;
+  dropTarget.value = null;
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = "move";
+    // Some browsers need a plain-text type for DnD to allow drops.
+    e.dataTransfer.setData("text/plain", id);
     e.dataTransfer.setData("text/pane-id", id);
   }
 }
 
 function onPaneDragOver(id: MainPaneId, e: DragEvent) {
-  if (!dragPane.value || dragPane.value === id) return;
+  // Always preventDefault while a pane drag is active so drop is allowed
+  // (even when hovering the same id, which can happen on nested children).
+  if (!dragPane.value) return;
   e.preventDefault();
-  dropTarget.value = id;
+  e.stopPropagation();
+  if (dragPane.value !== id) {
+    dropTarget.value = id;
+  }
   if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
 }
 
 function onPaneDrop(id: MainPaneId, e: DragEvent) {
   e.preventDefault();
-  const from = dragPane.value || (e.dataTransfer?.getData("text/pane-id") as MainPaneId);
-  if (from && from !== id) {
-    layout.reorderMain(from, id, "before");
+  e.stopPropagation();
+  const fromRaw =
+    dragPane.value ||
+    e.dataTransfer?.getData("text/pane-id") ||
+    e.dataTransfer?.getData("text/plain") ||
+    "";
+  const from = fromRaw as MainPaneId;
+  const valid: MainPaneId[] = ["files", "editor", "pdf"];
+  if (from && valid.includes(from) && from !== id && valid.includes(id)) {
+    // Swap is symmetric L↔R (insert-before was a no-op for adjacent left→right).
+    layout.swapMain(from, id);
   }
   dragPane.value = null;
   dropTarget.value = null;
@@ -791,8 +807,9 @@ function formatCommitDate(iso?: string) {
         :class="paneDropClass('files')"
         :style="paneStyle('files')"
         data-pane="files"
-        @dragover="onPaneDragOver('files', $event)"
-        @drop="onPaneDrop('files', $event)"
+        @dragenter.prevent="onPaneDragOver('files', $event)"
+        @dragover.prevent="onPaneDragOver('files', $event)"
+        @drop.prevent="onPaneDrop('files', $event)"
         @dragend="onPaneDragEnd"
       >
         <template v-if="activity === 'explorer'">
@@ -1304,8 +1321,9 @@ function formatCommitDate(iso?: string) {
         :class="paneDropClass('editor')"
         :style="paneStyle('editor')"
         data-pane="editor"
-        @dragover="onPaneDragOver('editor', $event)"
-        @drop="onPaneDrop('editor', $event)"
+        @dragenter.prevent="onPaneDragOver('editor', $event)"
+        @dragover.prevent="onPaneDragOver('editor', $event)"
+        @drop.prevent="onPaneDrop('editor', $event)"
         @dragend="onPaneDragEnd"
       >
         <div
@@ -1430,8 +1448,9 @@ function formatCommitDate(iso?: string) {
         :class="paneDropClass('pdf')"
         :style="paneStyle('pdf')"
         data-pane="pdf"
-        @dragover="onPaneDragOver('pdf', $event)"
-        @drop="onPaneDrop('pdf', $event)"
+        @dragenter.prevent="onPaneDragOver('pdf', $event)"
+        @dragover.prevent="onPaneDragOver('pdf', $event)"
+        @drop.prevent="onPaneDrop('pdf', $event)"
         @dragend="onPaneDragEnd"
       >
         <div
