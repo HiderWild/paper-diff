@@ -15,6 +15,9 @@ import {
   type FileTier,
 } from "./largeFileTier";
 import WordHoverCard from "./WordHoverCard.vue";
+import MathHoverCard from "../viewer/MathHoverCard.vue";
+import { findMathAtOffset } from "../viewer/findMathAtOffset";
+import { injectMathHoverCss } from "../viewer/renderMathHoverHtml";
 import {
   hitTestHoverUnit,
   MAX_WORD_DECORATIONS,
@@ -112,6 +115,17 @@ const hoverCard = ref<{
   y: number;
 } | null>(null);
 
+/** KaTeX formula preview (editor / tex language) — not Monaco built-in hover. */
+const mathHover = ref<{
+  latex: string;
+  display: boolean;
+  x: number;
+  y: number;
+} | null>(null);
+const mathSubs: monaco.IDisposable[] = [];
+let mathHoverTimer: ReturnType<typeof setTimeout> | null = null;
+let pointerOnMathCard = false;
+
 const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
 /** Max vertical offset (px) for one secondary arrow when primary is already on the line. */
 const SECONDARY_OFFSET_PX = 16;
@@ -169,6 +183,107 @@ function clearWordHover() {
   }
   pointerOnCard = false;
   hoverCard.value = null;
+}
+
+function clearMathHover() {
+  if (mathHoverTimer != null) {
+    clearTimeout(mathHoverTimer);
+    mathHoverTimer = null;
+  }
+  pointerOnMathCard = false;
+  mathHover.value = null;
+}
+
+function scheduleMathDismiss(ms = 280) {
+  if (pointerOnMathCard) return;
+  if (mathHoverTimer != null) clearTimeout(mathHoverTimer);
+  mathHoverTimer = setTimeout(() => {
+    if (!pointerOnMathCard) mathHover.value = null;
+    mathHoverTimer = null;
+  }, ms);
+}
+
+function onMathCardEnter() {
+  pointerOnMathCard = true;
+  if (mathHoverTimer != null) {
+    clearTimeout(mathHoverTimer);
+    mathHoverTimer = null;
+  }
+}
+
+function onMathCardLeave() {
+  pointerOnMathCard = false;
+  scheduleMathDismiss(200);
+}
+
+function latexMathEnabled() {
+  return (props.language || "") === "latex";
+}
+
+function tryShowMathHover(
+  ed: monaco.editor.ICodeEditor,
+  e: monaco.editor.IEditorMouseEvent
+) {
+  if (!latexMathEnabled()) {
+    clearMathHover();
+    return false;
+  }
+  // Word-accept card takes priority in comparer when active
+  if (hoverCard.value) return false;
+
+  const target = e.target;
+  // CONTENT_TEXT=6, CONTENT_EMPTY=7 — also allow numeric for older typings
+  const t = target.type as number;
+  if (t !== 6 && t !== 7) {
+    scheduleMathDismiss(150);
+    return false;
+  }
+  const model = ed.getModel();
+  const pos = target.position;
+  if (!model || !pos) return false;
+  const offset = model.getOffsetAt(pos);
+  const snip = findMathAtOffset(model.getValue(), offset);
+  if (!snip) {
+    scheduleMathDismiss(120);
+    return false;
+  }
+  // Prefer viewport client coords for position:fixed card
+  const be = e.event.browserEvent as MouseEvent | undefined;
+  const px = be?.clientX ?? e.event.posx ?? 0;
+  const py = be?.clientY ?? e.event.posy ?? 0;
+
+  if (mathHoverTimer != null) clearTimeout(mathHoverTimer);
+  mathHoverTimer = setTimeout(() => {
+    mathHover.value = {
+      latex: snip.latex,
+      display: snip.display,
+      x: px,
+      y: py + 14,
+    };
+    mathHoverTimer = null;
+  }, 220);
+  return true;
+}
+
+function bindLatexMathHoverListeners() {
+  while (mathSubs.length) mathSubs.pop()?.dispose();
+  if (!latexMathEnabled()) return;
+  injectMathHoverCss();
+  const editors: monaco.editor.ICodeEditor[] = [];
+  if (codeEditor) editors.push(codeEditor);
+  if (editor) {
+    editors.push(editor.getOriginalEditor(), editor.getModifiedEditor());
+  }
+  for (const ed of editors) {
+    mathSubs.push(
+      ed.onMouseMove((ev) => {
+        tryShowMathHover(ed, ev);
+      }),
+      ed.onMouseLeave(() => {
+        scheduleMathDismiss(220);
+      })
+    );
+  }
 }
 
 function scheduleDismiss(ms = 280) {
@@ -545,6 +660,7 @@ function mountEditor() {
       if (suppressEmit || !props.editableLeft) return;
       emit("leftChange", original!.getValue());
     });
+    bindLatexMathHoverListeners();
     emit("units", []);
     setTimeout(() => emit("ready"), 100);
     return;
@@ -588,6 +704,7 @@ function mountEditor() {
   });
   bindViewListeners();
   bindWordHoverListeners();
+  bindLatexMathHoverListeners();
   setTimeout(() => {
     scheduleRecomputeUnits();
     emitSplitRatio();
@@ -626,6 +743,8 @@ watch(
     if (modified && modified.getLanguageId() !== id) {
       monaco.editor.setModelLanguage(modified, id);
     }
+    clearMathHover();
+    bindLatexMathHoverListeners();
   }
 );
 
@@ -668,10 +787,12 @@ onMounted(mountEditor);
 onBeforeUnmount(() => {
   cancelPendingUnits();
   clearWordHover();
+  clearMathHover();
   contentSub?.dispose();
   sub?.dispose();
   while (viewSubs.length) viewSubs.pop()?.dispose();
   while (mouseSubs.length) mouseSubs.pop()?.dispose();
+  while (mathSubs.length) mathSubs.pop()?.dispose();
   wordDecoOrig?.clear();
   wordDecoMod?.clear();
   wordDecoOrig = null;
@@ -751,6 +872,16 @@ defineExpose({
         @dismiss="clearWordHover"
         @pointer-enter="onCardPointerEnter"
         @pointer-leave="onCardPointerLeave"
+      />
+      <MathHoverCard
+        v-if="mathHover"
+        :latex="mathHover.latex"
+        :display="mathHover.display"
+        :x="mathHover.x"
+        :y="mathHover.y"
+        @dismiss="clearMathHover"
+        @pointer-enter="onMathCardEnter"
+        @pointer-leave="onMathCardLeave"
       />
     </Teleport>
   </div>
