@@ -12,22 +12,19 @@ export function injectMathHoverCss() {
   const style = document.createElement("style");
   style.id = "pd-latex-math-hover-css";
   style.textContent = `
-    .monaco-hover .pd-math-hover,
-    .monaco-editor-hover .pd-math-hover {
+    .pd-math-hover {
       padding: 0.55rem 0.75rem;
       border-radius: 6px;
       max-width: min(36rem, 80vw);
       overflow: auto;
       line-height: 1.4;
     }
-    .monaco-hover .pd-math-hover.dark,
-    .monaco-editor-hover .pd-math-hover.dark {
+    .pd-math-hover.dark {
       background: #0b0f14;
       color: #e8eef7;
       border: 1px solid #2a3544;
     }
-    .monaco-hover .pd-math-hover.light,
-    .monaco-editor-hover .pd-math-hover.light {
+    .pd-math-hover.light {
       background: #ffffff;
       color: #111827;
       border: 1px solid #d1d5db;
@@ -89,6 +86,7 @@ export function renderMathHoverHtml(
 ): string {
   injectMathHoverCss();
   try {
+    // Prefer HTML-only (no MathML) so v-html + CSS color overrides apply cleanly
     const body = katex.renderToString(latex, {
       displayMode: display,
       throwOnError: false,
@@ -96,6 +94,10 @@ export function renderMathHoverHtml(
       trust: false,
       output: "html",
     });
+    // Fail closed: if KaTeX produced nothing useful, surface latex as error
+    if (!body || !body.includes("katex")) {
+      return `<div class="pd-math-hover ${theme}"><div class="pd-math-err">${escapeHtml(latex)}</div></div>`;
+    }
     const src = latex.length > 200 ? latex.slice(0, 200) + "…" : latex;
     return `<div class="pd-math-hover ${theme}"><div class="pd-math-body">${body}</div><div class="pd-math-src">${escapeHtml(src)}</div></div>`;
   } catch (e) {
