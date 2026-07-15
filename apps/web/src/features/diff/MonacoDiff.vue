@@ -113,6 +113,8 @@ const hoverCard = ref<{
   model: WordCardModel;
   x: number;
   y: number;
+  /** Stable key so re-hover same unit does not move the card */
+  anchorKey: string;
 } | null>(null);
 
 /** KaTeX formula preview (editor / tex language) — not Monaco built-in hover. */
@@ -121,10 +123,45 @@ const mathHover = ref<{
   display: boolean;
   x: number;
   y: number;
+  startOffset: number;
+  endOffset: number;
 } | null>(null);
 const mathSubs: monaco.IDisposable[] = [];
 let mathHoverTimer: ReturnType<typeof setTimeout> | null = null;
 let pointerOnMathCard = false;
+
+/**
+ * Pin float cards under content: horizontal center of the target span,
+ * slightly below its line. Position is client/viewport coords for position:fixed.
+ * Never follow the cursor once a card is open for the same anchor.
+ */
+function clientAnchorForRange(
+  ed: monaco.editor.ICodeEditor,
+  start: { lineNumber: number; column: number },
+  end: { lineNumber: number; column: number }
+): { x: number; y: number } | null {
+  const dom = ed.getDomNode();
+  if (!dom) return null;
+  const rect = dom.getBoundingClientRect();
+  const p0 = ed.getScrolledVisiblePosition(start);
+  const p1 = ed.getScrolledVisiblePosition({
+    lineNumber: end.lineNumber,
+    // for empty range end may equal start; still ok
+    column: Math.max(end.column, start.column),
+  });
+  if (!p0) return null;
+  const left = rect.left + p0.left;
+  const right = rect.left + (p1 ? p1.left : p0.left);
+  const top = rect.top + p0.top;
+  const lineH = p0.height || 18;
+  // Center under span; if mono-column empty, just use that x
+  const x = (left + right) / 2;
+  const y = top + lineH + 4;
+  // Clamp roughly into viewport so card is reachable
+  const cx = Math.min(Math.max(x, 24), window.innerWidth - 24);
+  const cy = Math.min(Math.max(y, 8), window.innerHeight - 48);
+  return { x: cx, y: cy };
+}
 
 const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
 /** Max vertical offset (px) for one secondary arrow when primary is already on the line. */
@@ -249,18 +286,34 @@ function tryShowMathHover(
     scheduleMathDismiss(0);
     return false;
   }
-  // Prefer viewport client coords for position:fixed card
-  const be = e.event.browserEvent as MouseEvent | undefined;
-  const px = be?.clientX ?? e.event.posx ?? 0;
-  const py = be?.clientY ?? e.event.posy ?? 0;
+
+  // Same formula already open → freeze position (do not follow cursor)
+  if (
+    mathHover.value &&
+    mathHover.value.startOffset === snip.startOffset &&
+    mathHover.value.endOffset === snip.endOffset
+  ) {
+    if (mathHoverTimer != null) {
+      clearTimeout(mathHoverTimer);
+      mathHoverTimer = null;
+    }
+    return true;
+  }
+
+  const startPos = model.getPositionAt(snip.startOffset);
+  const endPos = model.getPositionAt(snip.endOffset);
+  const anchor = clientAnchorForRange(ed, startPos, endPos);
+  if (!anchor) return false;
 
   if (mathHoverTimer != null) clearTimeout(mathHoverTimer);
   mathHoverTimer = setTimeout(() => {
     mathHover.value = {
       latex: snip.latex,
       display: snip.display,
-      x: px,
-      y: py + 14,
+      x: anchor.x,
+      y: anchor.y,
+      startOffset: snip.startOffset,
+      endOffset: snip.endOffset,
     };
     mathHoverTimer = null;
   }, 220);
@@ -435,26 +488,53 @@ function onEditorMouseMove(
     scheduleDismiss();
     return;
   }
-  const bx = e.event.posx;
-  const by = e.event.posy;
   const model = unitCardModel(unit, props.sidesSwapped);
-  // Keep showing same unit without re-delay (less flicker on shaky pointer)
-  if (hoverCard.value?.model.unit.id === unit.id) {
-    hoverCard.value = { model, x: bx, y: by };
+  const anchorKey = `${unit.id}:${trueSide}:${visual}`;
+
+  // Same unit open → keep x/y frozen so apply button stays clickable
+  if (hoverCard.value?.anchorKey === anchorKey) {
     if (hoverTimer != null) {
       clearTimeout(hoverTimer);
       hoverTimer = null;
     }
+    // Refresh model text if needed but never move
+    if (hoverCard.value.model !== model) {
+      hoverCard.value = {
+        ...hoverCard.value,
+        model,
+      };
+    }
     return;
   }
+
+  // Anchor to the span on the editor the user is hovering (visual buffer)
+  const ed =
+    visual === "original"
+      ? editor.getOriginalEditor()
+      : editor.getModifiedEditor();
+  const visRange = visual === "original" ? unit.left : unit.right;
+  const mr = unitToMonacoRange(visRange);
+  const anchor = clientAnchorForRange(
+    ed,
+    { lineNumber: mr.startLineNumber, column: mr.startColumn },
+    { lineNumber: mr.endLineNumber, column: mr.endColumn }
+  );
+  // Fallback: if layout not ready, use last mouse once (only for first open)
+  const be = e.event.browserEvent as MouseEvent | undefined;
+  const fallbackX = be?.clientX ?? e.event.posx ?? 0;
+  const fallbackY = (be?.clientY ?? e.event.posy ?? 0) + 14;
+  const ax = anchor?.x ?? fallbackX;
+  const ay = anchor?.y ?? fallbackY;
+
   if (hoverTimer != null) clearTimeout(hoverTimer);
   // Insert/delete open slightly faster (harder to re-hit); replace stays 350ms
   const openMs = model.isInsert || model.isDelete ? 220 : 350;
   hoverTimer = setTimeout(() => {
     hoverCard.value = {
       model,
-      x: bx,
-      y: by,
+      x: ax,
+      y: ay,
+      anchorKey,
     };
     hoverTimer = null;
   }, openMs);
