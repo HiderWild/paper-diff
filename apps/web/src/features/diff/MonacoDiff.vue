@@ -70,6 +70,8 @@ const emit = defineEmits<{
   ready: [];
   leftChange: [content: string];
   pullUnit: [unit: DiffUnit];
+  /** Original-pane width ratio 0–1 relative to diff host (for header alignment) */
+  splitRatio: [ratio: number];
 }>();
 
 const { t } = useI18n();
@@ -363,9 +365,21 @@ function splitRailLeftPx(): number | null {
   return mid;
 }
 
+/** Emit original pane width / host width so headers can match Monaco columns. */
+function emitSplitRatio() {
+  if (!editor || !host.value || props.singlePane) return;
+  const hostRect = host.value.getBoundingClientRect();
+  if (hostRect.width <= 0) return;
+  const mid = splitRailLeftPx();
+  if (mid == null) return;
+  const ratio = Math.min(0.92, Math.max(0.08, mid / hostRect.width));
+  emit("splitRatio", ratio);
+}
+
 function placeArrows() {
   if (!props.showGutterActions || props.singlePane || !editor || !host.value) {
     arrows.value = [];
+    emitSplitRatio();
     return;
   }
   const railLeft = splitRailLeftPx();
@@ -373,6 +387,7 @@ function placeArrows() {
     arrows.value = [];
     return;
   }
+  emitSplitRatio();
 
   const leftEd = editor.getOriginalEditor();
   const acts = gutterActionsFromUnits(lastUnits);
@@ -483,7 +498,10 @@ function bindViewListeners() {
   if (!editor || props.singlePane) return;
   const leftEd = editor.getOriginalEditor();
   const rightEd = editor.getModifiedEditor();
-  const onView = () => placeArrows();
+  const onView = () => {
+    placeArrows();
+    emitSplitRatio();
+  };
   viewSubs.push(
     leftEd.onDidScrollChange(onView),
     rightEd.onDidScrollChange(onView),
@@ -569,6 +587,7 @@ function mountEditor() {
   bindWordHoverListeners();
   setTimeout(() => {
     scheduleRecomputeUnits();
+    emitSplitRatio();
     emit("ready");
   }, 200);
 }
@@ -675,7 +694,13 @@ function onArrowClick(a: GutterAction) {
   emit("pullUnit", a.unit);
 }
 
-defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
+defineExpose({
+  setLeftContent,
+  recomputeUnits,
+  revealLine,
+  getLeftContent,
+  emitSplitRatio,
+});
 </script>
 
 <template>

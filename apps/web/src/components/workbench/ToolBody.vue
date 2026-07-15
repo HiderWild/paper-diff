@@ -55,6 +55,30 @@ const rawUrl = ref<string | null>(null);
 const isLegacyDoc = ref(false);
 const units = ref<DiffUnit[]>([]);
 const diffRef = ref<InstanceType<typeof MonacoDiff> | null>(null);
+/** Fraction of width for the original Monaco pane (default 50%) */
+const splitRatio = ref(0.5);
+
+function onSplitRatio(r: number) {
+  if (!Number.isFinite(r) || r <= 0 || r >= 1) return;
+  // Avoid thrashing layout for sub-pixel noise
+  if (Math.abs(r - splitRatio.value) < 0.002) return;
+  splitRatio.value = r;
+}
+
+/**
+ * Headers: first label over Monaco original column, second over modified.
+ * Without swap: original=work (project), modified=compare.
+ * With swap: displayLeft/Right flip buffers into original/modified; labels
+ * still say project | compare in DOM order (row-reverse flips them visually
+ * to stay over the correct buffer).
+ * splitRatio = original width / host — always the first flex cell after reverse.
+ */
+const headerOrigStyle = computed(() => ({
+  flex: `0 0 ${(splitRatio.value * 100).toFixed(3)}%`,
+}));
+const headerModStyle = computed(() => ({
+  flex: "1 1 auto",
+}));
 
 const editableLeft = computed(
   () => props.tab.kind === "editor" || props.tab.kind === "comparer"
@@ -421,14 +445,22 @@ function onAfterMutation(content: string | null) {
       <div
         v-else-if="tab.kind === 'comparer' && compareReady"
         class="comparer-ready"
-        :class="{ swapped: sidesSwapped }"
       >
         <div class="side-headers">
-          <div class="side-label" :title="projectSideLabel">
-            {{ projectSideLabel }}
+          <!-- Always original | modified (same geometry as Monaco); swap only changes labels -->
+          <div
+            class="side-label"
+            :style="headerOrigStyle"
+            :title="sidesSwapped ? compareSideLabel : projectSideLabel"
+          >
+            {{ sidesSwapped ? compareSideLabel : projectSideLabel }}
           </div>
-          <div class="side-label" :title="compareSideLabel">
-            {{ compareSideLabel }}
+          <div
+            class="side-label"
+            :style="headerModStyle"
+            :title="sidesSwapped ? projectSideLabel : compareSideLabel"
+          >
+            {{ sidesSwapped ? projectSideLabel : compareSideLabel }}
           </div>
         </div>
         <MonacoDiff
@@ -454,6 +486,7 @@ function onAfterMutation(content: string | null) {
           @units="onUnits"
           @left-change="onLeftChange"
           @pull-unit="onPullUnit"
+          @split-ratio="onSplitRatio"
         />
       </div>
       <!-- Comparer empty / one-sided shells -->
@@ -654,24 +687,17 @@ function onAfterMutation(content: string | null) {
   flex-direction: row;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-}
-.comparer-ready.swapped .side-headers {
-  flex-direction: row-reverse;
+  width: 100%;
 }
 .side-headers .side-label {
-  flex: 1 1 50%;
+  /* first = Monaco original width; second fills remainder (incl. sash) */
   min-width: 0;
+  box-sizing: border-box;
   border-right: 1px solid var(--border);
   border-bottom: none;
 }
 .side-headers .side-label:last-child {
   border-right: none;
-}
-.comparer-ready.swapped .side-headers .side-label:first-child {
-  border-right: none;
-}
-.comparer-ready.swapped .side-headers .side-label:last-child {
-  border-right: 1px solid var(--border);
 }
 .comparer-ready :deep(.diff-wrap) {
   flex: 1 1 auto;
