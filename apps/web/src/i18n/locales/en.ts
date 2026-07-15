@@ -276,6 +276,11 @@ export default {
     emptyCompareHint:
       "No compare target yet. Pick a file from a zone or a git commit.",
     loadFailedShort: "load failed",
+    workLoadFailed:
+      "Could not load the work file (project not ready, missing path, or not text). Pick the file again.",
+    compareLoadFailed:
+      "Could not load the compare file (missing zone/git path or binary). Pick a compare target again.",
+    compareBinary: "That compare file is binary; the text comparer cannot open it.",
   },
   hoverAccept: {
     title: "Word / phrase change",

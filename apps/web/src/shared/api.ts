@@ -438,7 +438,7 @@ export async function getZoneFileText(
   projectId: string,
   zoneId: string,
   path: string
-): Promise<{ path: string; content: string }> {
+): Promise<{ path: string; content: string | null; kind?: string; size?: number }> {
   const q = new URLSearchParams({ path });
   return parse(
     await fetch(
