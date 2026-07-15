@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TreeNode } from "./buildTree";
+import { fileIconForPath } from "./fileIcons";
 
 withDefaults(
   defineProps<{
@@ -25,18 +26,26 @@ const emit = defineEmits<{
   compareDir: [path: string];
   fileContext: [path: string, e: MouseEvent];
 }>();
+
+function iconFor(node: TreeNode) {
+  return fileIconForPath(node.path, node.file?.kind);
+}
 </script>
 
 <template>
-  <!-- Directory row -->
+  <!-- Directory row: VS Code-style chevron only (no folder emoji) -->
   <div v-if="node.type === 'dir'" class="tree-dir">
     <div
       class="tree-row dir"
       :style="{ paddingLeft: `${6 + depth * 12}px` }"
       @click="emit('toggle', node.path)"
     >
-      <span class="chevron">{{ expanded[node.path] ? "▾" : "▸" }}</span>
-      <span class="folder-icon">📁</span>
+      <span
+        class="chevron"
+        :class="{ open: expanded[node.path] }"
+        aria-hidden="true"
+        >▸</span
+      >
       <span class="tree-name dir-name">{{ node.name }}</span>
       <button
         class="cmp-btn"
@@ -70,7 +79,7 @@ const emit = defineEmits<{
     </template>
   </div>
 
-  <!-- File row: basename only -->
+  <!-- File row: type icon + name; status is small badge at end (not prefix "work") -->
   <div v-else class="tree-file-block">
     <div
       class="tree-row file"
@@ -97,28 +106,38 @@ const emit = defineEmits<{
           ($event as DragEvent).dataTransfer!.effectAllowed = 'copy';
       "
     >
-      <span class="chevron placeholder" />
+      <span class="chevron placeholder" aria-hidden="true" />
       <span
-        v-if="node.file?.status && node.file.status !== 'unknown'"
-        class="badge"
+        class="file-icon"
+        :style="{ color: iconFor(node).color }"
+        :title="iconFor(node).label"
+        >{{ iconFor(node).label }}</span
+      >
+      <span class="tree-name">{{ node.name }}</span>
+      <span
+        v-if="node.file?.status && node.file.status !== 'unknown' && node.file.status !== 'same'"
+        class="badge status-badge"
         :class="node.file.status"
+        :title="statusLabel(node.file.status)"
       >
         {{ statusLabel(node.file.status) }}
       </span>
       <span
-        v-else-if="node.file?.compare_state"
-        class="badge"
+        v-else-if="
+          node.file?.compare_state &&
+          !['ready', 'same', 'unknown'].includes(node.file.compare_state)
+        "
+        class="badge status-badge"
         :class="node.file.compare_state"
+        :title="statusLabel(node.file.compare_state)"
       >
         {{ statusLabel(node.file.compare_state) }}
       </span>
-      <span class="tree-name">{{ node.name }}</span>
-      <span v-if="node.file?.kind === 'binary'" class="badge binary">bin</span>
     </div>
     <div
       v-if="fileActions(node.file?.status).length"
       class="file-ops"
-      :style="{ paddingLeft: `${24 + depth * 12}px` }"
+      :style="{ paddingLeft: `${28 + depth * 12}px` }"
     >
       <button
         v-for="a in fileActions(node.file?.status)"
@@ -159,20 +178,38 @@ const emit = defineEmits<{
   font-weight: 600;
   color: var(--text);
 }
+/* VS Code-like twisty: ▸ collapsed, rotates when open */
 .chevron {
-  width: 0.9rem;
+  width: 1rem;
   flex-shrink: 0;
   text-align: center;
   color: var(--muted);
   font-size: 0.7rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease;
+  transform: rotate(0deg);
+}
+.chevron.open {
+  transform: rotate(90deg);
 }
 .chevron.placeholder {
   visibility: hidden;
 }
-.folder-icon {
-  font-size: 0.75rem;
+.file-icon {
   flex-shrink: 0;
-  opacity: 0.85;
+  min-width: 1.7rem;
+  max-width: 2.1rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.95;
+  user-select: none;
 }
 .tree-name {
   overflow: hidden;
@@ -205,13 +242,21 @@ const emit = defineEmits<{
   gap: 0.2rem;
   margin: 0 0 0.15rem;
 }
+/* Diff status: trailing, compact — was looking like a "work" prefix when first in the row */
+.status-badge {
+  margin-left: 0.15rem;
+}
 .badge {
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   padding: 0.05rem 0.25rem;
   border-radius: 3px;
   background: var(--secondary-btn);
   color: var(--muted);
   flex-shrink: 0;
+  max-width: 4.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .badge.modified {
   background: color-mix(in srgb, var(--green) 28%, var(--panel));
