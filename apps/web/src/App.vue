@@ -7,7 +7,7 @@ import ImagePreview from "./features/preview/ImagePreview.vue";
 import PdfPane from "./features/preview/PdfPane.vue";
 import FileTree from "./features/tree/FileTree.vue";
 import { setLocale, type AppLocale } from "./i18n";
-import { useLayoutStore } from "./stores/layout";
+import { useLayoutStore, type MainPaneId } from "./stores/layout";
 import { useProjectStore } from "./stores/project";
 
 const { t, locale } = useI18n();
@@ -61,7 +61,12 @@ const {
   showBottom,
   showDotFiles,
   activity,
+  mainOrder,
+  visibleMainOrder,
 } = storeToRefs(layout);
+
+const dragPane = ref<MainPaneId | null>(null);
+const dropTarget = ref<MainPaneId | null>(null);
 
 const unitFilter = ref<"all" | "sentence" | "word" | "hunk">("sentence");
 const visibleUnits = computed(() => {
@@ -99,9 +104,11 @@ function applyPreset(id: string) {
   } else if (id === "editorPdf") {
     showFiles.value = false;
     showPdf.value = true;
+    mainOrder.value = ["editor", "pdf", "files"];
   } else if (id === "filesEditor") {
     showFiles.value = true;
     showPdf.value = false;
+    mainOrder.value = ["files", "editor", "pdf"];
   }
 }
 
@@ -332,7 +339,12 @@ function onRootChange(e: Event) {
   if (v) void store.doSetRoot(v);
 }
 
-function startResize(kind: "files" | "pdf" | "bottom", ev: MouseEvent) {
+function startResize(
+  kind: "files" | "pdf" | "bottom",
+  ev: MouseEvent,
+  /** which side of the sash the resizable pane is on */
+  edge: "left" | "right" = kind === "pdf" ? "right" : "left"
+) {
   ev.preventDefault();
   const startX = ev.clientX;
   const startY = ev.clientY;
@@ -341,16 +353,13 @@ function startResize(kind: "files" | "pdf" | "bottom", ev: MouseEvent) {
   const startBottom = bottomHeight.value;
 
   function onMove(e: MouseEvent) {
+    const dx = e.clientX - startX;
     if (kind === "files") {
-      filesWidth.value = Math.min(
-        480,
-        Math.max(160, startFiles + (e.clientX - startX))
-      );
+      const delta = edge === "left" ? dx : -dx;
+      filesWidth.value = Math.min(480, Math.max(160, startFiles + delta));
     } else if (kind === "pdf") {
-      pdfWidth.value = Math.min(
-        640,
-        Math.max(200, startPdf - (e.clientX - startX))
-      );
+      const delta = edge === "right" ? -dx : dx;
+      pdfWidth.value = Math.min(640, Math.max(200, startPdf + delta));
     } else {
       bottomHeight.value = Math.min(
         320,
@@ -364,6 +373,84 @@ function startResize(kind: "files" | "pdf" | "bottom", ev: MouseEvent) {
   }
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseup", onUp);
+}
+
+function onPaneDragStart(id: MainPaneId, e: DragEvent) {
+  dragPane.value = id;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/pane-id", id);
+  }
+}
+
+function onPaneDragOver(id: MainPaneId, e: DragEvent) {
+  if (!dragPane.value || dragPane.value === id) return;
+  e.preventDefault();
+  dropTarget.value = id;
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+}
+
+function onPaneDrop(id: MainPaneId, e: DragEvent) {
+  e.preventDefault();
+  const from = dragPane.value || (e.dataTransfer?.getData("text/pane-id") as MainPaneId);
+  if (from && from !== id) {
+    layout.reorderMain(from, id, "before");
+  }
+  dragPane.value = null;
+  dropTarget.value = null;
+}
+
+function onPaneDragEnd() {
+  dragPane.value = null;
+  dropTarget.value = null;
+}
+
+function sashResizeFor(leftId: MainPaneId, rightId: MainPaneId): {
+  kind: "files" | "pdf";
+  edge: "left" | "right";
+} | null {
+  if (leftId === "files") return { kind: "files", edge: "left" };
+  if (rightId === "files") return { kind: "files", edge: "right" };
+  if (rightId === "pdf") return { kind: "pdf", edge: "right" };
+  if (leftId === "pdf") return { kind: "pdf", edge: "left" };
+  return null;
+}
+
+function onSashDown(leftId: MainPaneId, rightId: MainPaneId, e: MouseEvent) {
+  const conf = sashResizeFor(leftId, rightId);
+  if (!conf) return;
+  startResize(conf.kind, e, conf.edge);
+}
+
+function orderOf(id: MainPaneId): number {
+  const i = visibleMainOrder.value.indexOf(id);
+  return i < 0 ? 99 : i * 2;
+}
+
+function paneStyle(id: MainPaneId): Record<string, string> {
+  const o = String(orderOf(id));
+  if (id === "files") {
+    return { width: filesWidth.value + "px", flex: "0 0 auto", order: o };
+  }
+  if (id === "pdf") {
+    return { width: pdfWidth.value + "px", flex: "0 0 auto", order: o };
+  }
+  return { flex: "1 1 auto", minWidth: "200px", order: o };
+}
+
+function sashOrder(leftId: MainPaneId, rightId: MainPaneId): number {
+  // place sash between the two panes' order values
+  const a = orderOf(leftId);
+  const b = orderOf(rightId);
+  return Math.min(a, b) + 1;
+}
+
+function paneDropClass(id: MainPaneId): string {
+  if (dropTarget.value === id && dragPane.value && dragPane.value !== id) {
+    return "pane-drop-target";
+  }
+  if (dragPane.value === id) return "pane-dragging";
+  return "";
 }
 
 async function onGitCommit() {
@@ -701,7 +788,12 @@ function formatCommitDate(iso?: string) {
       <aside
         v-if="showFiles"
         class="pane files-pane"
-        :style="{ width: filesWidth + 'px', flex: '0 0 auto' }"
+        :class="paneDropClass('files')"
+        :style="paneStyle('files')"
+        data-pane="files"
+        @dragover="onPaneDragOver('files', $event)"
+        @drop="onPaneDrop('files', $event)"
+        @dragend="onPaneDragEnd"
       >
         <template v-if="activity === 'explorer'">
           <FileTree
@@ -709,11 +801,14 @@ function formatCommitDate(iso?: string) {
             :current-path="currentPath"
             :show-dot-files="showDotFiles"
             :busy="busy"
+            :draggable-title="true"
             @update:show-dot-files="showDotFiles = $event"
             @open="store.openFile($event)"
             @action="(p, a) => store.doAcceptFile(p, a)"
             @compare-dir="store.doEnqueueDir($event)"
             @hide="layout.toggleFiles()"
+            @title-drag-start="onPaneDragStart('files', $event)"
+            @title-drag-end="onPaneDragEnd"
           />
           <div v-if="lastCompileErrors.length" class="err-list">
             <div class="panel-header">{{ t("panels.compileErrors") }}</div>
@@ -730,13 +825,20 @@ function formatCommitDate(iso?: string) {
         </template>
 
         <template v-else-if="activity === 'zones'">
-          <div class="panel-header side-header">
+          <div
+            class="panel-header side-header pane-drag-handle"
+            draggable="true"
+            :title="t('panels.dragToRearrange')"
+            @dragstart="onPaneDragStart('files', $event)"
+            @dragend="onPaneDragEnd"
+          >
+            <span class="drag-grip" aria-hidden="true">⋮⋮</span>
             <span>{{ t("panels.zones") }}</span>
             <button
               type="button"
               class="header-hide"
               :title="t('toolbar.toggleFiles')"
-              @click="layout.toggleFiles()"
+              @click.stop="layout.toggleFiles()"
             >
               ◀
             </button>
@@ -831,13 +933,20 @@ function formatCommitDate(iso?: string) {
         </template>
 
         <template v-else-if="activity === 'git'">
-          <div class="panel-header side-header">
+          <div
+            class="panel-header side-header pane-drag-handle"
+            draggable="true"
+            :title="t('panels.dragToRearrange')"
+            @dragstart="onPaneDragStart('files', $event)"
+            @dragend="onPaneDragEnd"
+          >
+            <span class="drag-grip" aria-hidden="true">⋮⋮</span>
             <span>{{ t("panels.git") }}</span>
             <button
               type="button"
               class="header-hide"
               :title="t('toolbar.toggleFiles')"
-              @click="layout.toggleFiles()"
+              @click.stop="layout.toggleFiles()"
             >
               ◀
             </button>
@@ -976,7 +1085,14 @@ function formatCommitDate(iso?: string) {
         </template>
 
         <template v-else-if="activity === 'agent'">
-          <div class="panel-header side-header">
+          <div
+            class="panel-header side-header pane-drag-handle"
+            draggable="true"
+            :title="t('panels.dragToRearrange')"
+            @dragstart="onPaneDragStart('files', $event)"
+            @dragend="onPaneDragEnd"
+          >
+            <span class="drag-grip" aria-hidden="true">⋮⋮</span>
             <span>{{ t("panels.agent") }}</span>
             <span
               v-if="agentProvider"
@@ -989,7 +1105,7 @@ function formatCommitDate(iso?: string) {
               type="button"
               class="header-hide"
               :title="t('toolbar.toggleFiles')"
-              @click="layout.toggleFiles()"
+              @click.stop="layout.toggleFiles()"
             >
               ◀
             </button>
@@ -1140,13 +1256,20 @@ function formatCommitDate(iso?: string) {
         </template>
 
         <template v-else>
-          <div class="panel-header side-header">
+          <div
+            class="panel-header side-header pane-drag-handle"
+            draggable="true"
+            :title="t('panels.dragToRearrange')"
+            @dragstart="onPaneDragStart('files', $event)"
+            @dragend="onPaneDragEnd"
+          >
+            <span class="drag-grip" aria-hidden="true">⋮⋮</span>
             <span>{{ t("panels.compile") }}</span>
             <button
               type="button"
               class="header-hide"
               :title="t('toolbar.toggleFiles')"
-              @click="layout.toggleFiles()"
+              @click.stop="layout.toggleFiles()"
             >
               ◀
             </button>
@@ -1174,16 +1297,25 @@ function formatCommitDate(iso?: string) {
           </div>
         </template>
       </aside>
-      <div
-        v-if="showFiles"
-        class="sash-v"
-        title="resize"
-        @mousedown="startResize('files', $event)"
-      />
 
       <!-- Comparer (always grows) -->
-      <section class="pane editor-pane">
-        <div class="panel-header side-header comparer-header">
+      <section
+        class="pane editor-pane"
+        :class="paneDropClass('editor')"
+        :style="paneStyle('editor')"
+        data-pane="editor"
+        @dragover="onPaneDragOver('editor', $event)"
+        @drop="onPaneDrop('editor', $event)"
+        @dragend="onPaneDragEnd"
+      >
+        <div
+          class="panel-header side-header comparer-header pane-drag-handle"
+          draggable="true"
+          :title="t('panels.dragToRearrange')"
+          @dragstart="onPaneDragStart('editor', $event)"
+          @dragend="onPaneDragEnd"
+        >
+          <span class="drag-grip" aria-hidden="true">⋮⋮</span>
           <span>{{ comparerTitle }}</span>
           <button
             v-if="pair && !gitPreviewPair"
@@ -1191,7 +1323,7 @@ function formatCommitDate(iso?: string) {
             class="mini secondary"
             :title="t('panels.swapSides')"
             :class="{ 'active-toggle': sidesSwapped }"
-            @click="store.toggleSidesSwapped()"
+            @click.stop="store.toggleSidesSwapped()"
           >
             ⇄ {{ t("panels.swapSides") }}
           </button>
@@ -1292,31 +1424,47 @@ function formatCommitDate(iso?: string) {
         <div v-else class="empty-editor">{{ t("panels.comparerEmpty") }}</div>
       </section>
 
-      <div
-        v-if="showPdf"
-        class="sash-v"
-        title="resize"
-        @mousedown="startResize('pdf', $event)"
-      />
-
       <section
         v-if="showPdf"
         class="pane pdf-pane"
-        :style="{ width: pdfWidth + 'px', flex: '0 0 auto' }"
+        :class="paneDropClass('pdf')"
+        :style="paneStyle('pdf')"
+        data-pane="pdf"
+        @dragover="onPaneDragOver('pdf', $event)"
+        @drop="onPaneDrop('pdf', $event)"
+        @dragend="onPaneDragEnd"
       >
-        <div class="panel-header side-header">
+        <div
+          class="panel-header side-header pane-drag-handle"
+          draggable="true"
+          :title="t('panels.dragToRearrange')"
+          @dragstart="onPaneDragStart('pdf', $event)"
+          @dragend="onPaneDragEnd"
+        >
+          <span class="drag-grip" aria-hidden="true">⋮⋮</span>
           <span>{{ pdfPaneTitle }}</span>
           <button
             type="button"
             class="header-hide"
             :title="t('toolbar.togglePdf')"
-            @click="layout.togglePdf()"
+            @click.stop="layout.togglePdf()"
           >
             ▶
           </button>
         </div>
         <PdfPane :url="pdfHref" />
       </section>
+
+      <!-- Sashes between adjacent visible panes (order via flex) -->
+      <template v-for="(id, i) in visibleMainOrder" :key="'sash-' + id">
+        <div
+          v-if="i > 0"
+          class="sash-v"
+          title="resize"
+          :style="{ order: sashOrder(visibleMainOrder[i - 1], id) }"
+          @mousedown="onSashDown(visibleMainOrder[i - 1], id, $event)"
+        />
+      </template>
     </div>
 
     <div
@@ -1330,13 +1478,18 @@ function formatCommitDate(iso?: string) {
       class="bottom-panel"
       :style="{ height: bottomHeight + 'px' }"
     >
-      <div class="panel-header side-header">
+      <div
+        class="panel-header side-header pane-drag-handle"
+        :title="t('panels.dragBottomResize')"
+        @mousedown="startResize('bottom', $event)"
+      >
+        <span class="drag-grip" aria-hidden="true">⋯</span>
         <span>{{ t("panels.bottomLog") }}</span>
         <button
           type="button"
           class="header-hide"
           :title="t('toolbar.toggleBottom')"
-          @click="layout.toggleBottom()"
+          @click.stop="layout.toggleBottom()"
         >
           ▾
         </button>
@@ -1462,6 +1615,40 @@ function formatCommitDate(iso?: string) {
   background: var(--border);
   z-index: 1;
 }
+.pane-drag-handle {
+  cursor: grab;
+  user-select: none;
+  gap: 0.35rem;
+}
+.pane-drag-handle:active {
+  cursor: grabbing;
+}
+.drag-grip {
+  color: var(--muted);
+  font-size: 0.65rem;
+  letter-spacing: -0.1em;
+  opacity: 0.7;
+}
+.pane-drop-target {
+  outline: 2px solid #3b82f6;
+  outline-offset: -2px;
+}
+.pane-dragging {
+  opacity: 0.55;
+}
+.files-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.files-pane :deep(.file-tree),
+.files-pane .side-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 .sash-v:hover {
   background: var(--accent);
 }

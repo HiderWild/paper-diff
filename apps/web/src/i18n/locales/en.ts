@@ -65,6 +65,8 @@ export default {
     bottomLog: "Output",
     sideProject: "project",
     sideZone: "zone",
+    dragToRearrange: "Drag title bar to rearrange panes",
+    dragBottomResize: "Drag to resize bottom panel height",
   },
   preview: {
     binaryImage: "Binary image — text diff unavailable",
