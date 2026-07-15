@@ -7,6 +7,8 @@
 - Web: `cd apps/web && npm install && npm run dev`
 - Web tests: `cd apps/web && npm test`
 - TeX image: `docker build -t paper-diff-texlive:latest docker/texlive`
+- Compile smoke: `cd apps/api && pytest tests/test_compile_smoke.py -v`
+- Git import API: `POST /api/v1/projects/{id}/versions/git`
 
 ## Env
 

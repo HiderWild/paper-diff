@@ -11,8 +11,8 @@ from pathlib import Path
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.infra.docker_mount import docker_volume_spec
 from app.infra.workspace_fs import Workspace
-from app.services.project_service import ProjectService
 
 
 class CompileService:
@@ -109,10 +109,33 @@ class CompileService:
             "revised": ws.revised_dir,
         }[side]
         root = job["root_file"]
-        # strip extension for latexmk %DOC% style
-        root_doc = root[:-4] if root.endswith(".tex") else root
+        # Prefer full filename for latexmk; stem also works
+        root_arg = root if root.endswith(".tex") else f"{root}.tex"
         work = side_dir.resolve()
         image = self.settings.tex_image
+        # Preflight: image must exist
+        img_check = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+        )
+        if img_check.returncode != 0:
+            job["status"] = "failed"
+            job["phase"] = "done"
+            job["message"] = f"IMAGE_MISSING: build with `docker build -t {image} docker/texlive`"
+            job["errors"] = [
+                {
+                    "file": None,
+                    "line": None,
+                    "message": job["message"],
+                    "severity": "error",
+                }
+            ]
+            job["finished_at"] = datetime.now(timezone.utc).isoformat()
+            self._save_job(ws, job)
+            return
+
+        vol = docker_volume_spec(work, "/work")
         cmd = [
             "docker",
             "run",
@@ -121,7 +144,7 @@ class CompileService:
             "--memory=2g",
             "--cpus=2",
             "-v",
-            f"{work}:/work",
+            vol,
             "-w",
             "/work",
             image,
@@ -129,9 +152,10 @@ class CompileService:
             "-pdf",
             "-interaction=nonstopmode",
             "-file-line-error",
-            root_doc,
+            root_arg,
         ]
         job["phase"] = "latexmk"
+        job["docker_cmd"] = " ".join(cmd)
         self._save_job(ws, job)
         try:
             proc = subprocess.run(
@@ -145,20 +169,25 @@ class CompileService:
             log_path.write_text(log_text, encoding="utf-8", errors="replace")
             job["exit_code"] = proc.returncode
             pdf_path = work / f"{Path(root).stem}.pdf"
-            if proc.returncode == 0 and pdf_path.is_file():
+            if pdf_path.is_file() and proc.returncode == 0:
                 artifacts = ws.project_dir / "artifacts"
                 artifacts.mkdir(exist_ok=True)
                 dest = artifacts / f"{job['job_id']}.pdf"
                 shutil.copy2(pdf_path, dest)
-                # also latest
                 shutil.copy2(pdf_path, artifacts / "latest.pdf")
                 job["status"] = "succeeded"
-                job["pdf_url"] = f"/api/v1/projects/{job['project_id']}/artifacts/pdf?job_id={job['job_id']}"
+                job["pdf_url"] = (
+                    f"/api/v1/projects/{job['project_id']}/artifacts/pdf?job_id={job['job_id']}"
+                )
             else:
                 job["status"] = "failed"
                 job["errors"] = self._parse_errors(log_text)
-                if not pdf_path.is_file():
-                    job["message"] = "compile failed or image missing"
+                tail = log_text[-1500:] if log_text else ""
+                job["message"] = (
+                    f"compile failed exit={proc.returncode}. {tail}"
+                    if tail
+                    else f"compile failed exit={proc.returncode}"
+                )
         except subprocess.TimeoutExpired:
             job["status"] = "failed"
             job["message"] = "COMPILE_TIMEOUT"
@@ -168,6 +197,7 @@ class CompileService:
         job["phase"] = "done"
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
         self._save_job(ws, job)
+
 
     def _parse_errors(self, log: str) -> list[dict]:
         errors = []
@@ -212,3 +242,11 @@ class CompileService:
         if not path.is_file():
             raise AppError("FILE_NOT_FOUND", "pdf not found", status_code=404)
         return path.read_bytes()
+
+    def get_log_text(self, project_id: str, job_id: str) -> str:
+        ws = self._ws(project_id)
+        path = self._jobs_dir(ws) / f"{job_id}.log"
+        if not path.is_file():
+            raise AppError("FILE_NOT_FOUND", "log not found", status_code=404)
+        return path.read_text(encoding="utf-8", errors="replace")
+

@@ -10,8 +10,10 @@ import {
   createProject,
   exportMergedUrl,
   getCompileJob,
+  getCompileLog,
   getDiffIndex,
   getFilePair,
+  importGit,
   pdfUrl,
   undo,
   uploadVersions,
@@ -39,6 +41,11 @@ const visibleUnits = computed(() => {
 
 const baseInput = ref<HTMLInputElement | null>(null);
 const revisedInput = ref<HTMLInputElement | null>(null);
+const gitRepo = ref("");
+const gitBaseRef = ref("");
+const gitRevisedRef = ref("");
+const gitSubdir = ref("");
+
 
 async function ensureProject() {
   if (!projectId.value) {
@@ -69,6 +76,32 @@ async function onUpload() {
     busy.value = false;
   }
 }
+
+async function onGitImport() {
+  error.value = "";
+  busy.value = true;
+  try {
+    if (!gitRepo.value || !gitBaseRef.value || !gitRevisedRef.value) {
+      error.value = "Fill repo path/url and both refs";
+      return;
+    }
+    const id = await ensureProject();
+    status.value = "Importing from git…";
+    await importGit(id, {
+      repo_url: gitRepo.value,
+      base_ref: gitBaseRef.value,
+      revised_ref: gitRevisedRef.value,
+      subdir: gitSubdir.value || undefined,
+    });
+    status.value = `Project ${id} (git)`;
+    await refreshIndex();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
 
 async function refreshIndex() {
   if (!projectId.value) return;
@@ -180,7 +213,12 @@ async function onCompile() {
     logText.value += `status=${job.status}\n`;
     if (job.message) logText.value += job.message + "\n";
     if (job.errors?.length) {
-      logText.value += job.errors.map((e) => e.message).join("\n");
+      logText.value += job.errors.map((e) => e.message).join("\n") + "\n";
+    }
+    try {
+      logText.value += await getCompileLog(projectId.value, job_id);
+    } catch {
+      /* log optional */
     }
     if (job.status === "succeeded") {
       pdfHref.value = pdfUrl(projectId.value, job_id) + `&t=${Date.now()}`;
@@ -189,6 +227,7 @@ async function onCompile() {
       status.value = "Compile failed";
       error.value = job.message || "compile failed";
     }
+
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -215,9 +254,25 @@ function onExport() {
         <input ref="revisedInput" type="file" accept=".zip" />
       </label>
       <button :disabled="busy" @click="onUpload">Import zips</button>
+      <input
+        v-model="gitRepo"
+        placeholder="git repo path or URL"
+        style="min-width: 12rem"
+      />
+      <input v-model="gitBaseRef" placeholder="base ref" style="width: 7rem" />
+      <input
+        v-model="gitRevisedRef"
+        placeholder="revised ref"
+        style="width: 7rem"
+      />
+      <input v-model="gitSubdir" placeholder="subdir" style="width: 5rem" />
+      <button class="secondary" :disabled="busy" @click="onGitImport">
+        Import git
+      </button>
       <button class="secondary" :disabled="busy || !pair" @click="onAcceptAll">
         Accept file
       </button>
+
       <button class="secondary" :disabled="busy || !projectId" @click="onUndo">
         Undo
       </button>

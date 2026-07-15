@@ -40,3 +40,11 @@ class CompileRequest(BaseModel):
     engine: str = "pdflatex"
     root_file: str | None = None
     force: bool = False
+
+
+class GitImportRequest(BaseModel):
+    repo_url: str
+    base_ref: str
+    revised_ref: str
+    subdir: str | None = None
+

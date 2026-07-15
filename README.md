@@ -35,13 +35,36 @@ cd apps/api && pytest -v
 cd apps/web && npm test
 ```
 
-### Docker TeX image (optional, for compile)
+### Docker TeX image (for compile)
 
 ```bash
 docker build -t paper-diff-texlive:latest docker/texlive
 ```
 
-Without Docker, **Compile** returns a clear failure (`DOCKER_UNAVAILABLE` / docker not on PATH).
+Image is Debian + TeX Live base + latexmk (~550MB). Without Docker / without image,
+**Compile** returns an actionable error (`DOCKER_UNAVAILABLE` / `IMAGE_MISSING`).
+
+Smoke test (runs only if image present):
+
+```bash
+cd apps/api && pytest tests/test_compile_smoke.py -v
+```
+
+### Git dual-ref import
+
+API:
+
+```http
+POST /api/v1/projects/{id}/versions/git
+{
+  "repo_url": "D:/path/to/repo",
+  "base_ref": "<sha-or-branch>",
+  "revised_ref": "<sha-or-branch>",
+  "subdir": "paper/"   // optional
+}
+```
+
+UI toolbar also has repo / base / revised / subdir fields.
 
 ## Workflow
 

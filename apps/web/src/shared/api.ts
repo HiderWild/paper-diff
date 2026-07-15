@@ -58,6 +58,36 @@ export async function uploadVersions(
   );
 }
 
+export async function importGit(
+  projectId: string,
+  body: {
+    repo_url: string;
+    base_ref: string;
+    revised_ref: string;
+    subdir?: string;
+  }
+): Promise<unknown> {
+  return parse(
+    await fetch(`${BASE}/api/v1/projects/${projectId}/versions/git`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
+}
+
+export async function getCompileLog(
+  projectId: string,
+  jobId: string
+): Promise<string> {
+  const res = await fetch(
+    `${BASE}/api/v1/projects/${projectId}/compile/${jobId}/log`
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.text();
+}
+
+
 export async function getDiffIndex(
   projectId: string
 ): Promise<{ files: DiffIndexFile[] }> {
