@@ -138,11 +138,6 @@ const commandItems = computed(() => {
       label: t("panels.agent"),
       run: () => openActivity("agent"),
     },
-    {
-      id: "reset",
-      label: t("toolbar.resetLayout"),
-      run: () => layout.reset(),
-    },
   ];
   if (!q) return items;
   return items.filter((i) => i.label.toLowerCase().includes(q));
@@ -296,11 +291,6 @@ async function onUndo() {
 
 function onExport() {
   const u = store.exportUrl();
-  if (u) window.open(u, "_blank");
-}
-
-function onReport() {
-  const u = store.reportUrl();
   if (u) window.open(u, "_blank");
 }
 
@@ -576,9 +566,6 @@ function formatCommitDate(iso?: string) {
       <button class="secondary" :disabled="!projectId" @click="onExport">
         {{ t("toolbar.exportWork") }}
       </button>
-      <button class="secondary" :disabled="!projectId" @click="onReport">
-        {{ t("toolbar.acceptReport") }}
-      </button>
       <select
         class="preset-select"
         :title="t('toolbar.layoutPreset')"
@@ -630,9 +617,6 @@ function formatCommitDate(iso?: string) {
         @click="layout.toggleBottom()"
       >
         {{ t("toolbar.toggleBottom") }}
-      </button>
-      <button class="secondary" @click="layout.reset()">
-        {{ t("toolbar.resetLayout") }}
       </button>
       <label class="status-inline" :title="t('lang.switch')">
         <select :value="locale" style="width: auto" @change="onLocaleChange">
