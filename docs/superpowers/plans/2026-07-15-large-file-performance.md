@@ -1,298 +1,271 @@
-# paper-diff 长文件浏览 / 比较性能方案
+# paper-diff 长文件浏览 / 比较性能方案（收紧版）
 
-> **Status:** Design ready · not implemented — 2026-07-15  
-> **Scope:** 超长/超大文本在 **编辑器** 与 **比较器** 中的卡顿治理；API 按需读、前端渲染与 diff 计算分层  
+> **Status:** Design ready · v1.1 **语义锁定 + 防过度设计** — 2026-07-15  
+> **Scope:** 超长/超大 **文本** 在编辑器与比较器中的性能；**不改变** 产品既有功能语义  
 > **Related:**  
-> - 比较器真源：`2026-07-15-comparer-preview-hardening.md`  
-> - UX 骨架：`2026-07-15-ux-gap-closure.md`  
+> - 真源拉取：`2026-07-15-comparer-preview-hardening.md`（C0 语义优先）  
+> - UX：`2026-07-15-ux-gap-closure.md`  
 > - Agent：`AGENTS.md`  
 
 ---
 
 ## 0. 一句话
 
-**Monaco 已自带视口虚拟渲染，但我们目前仍「全量下载 + 全量 `setValue` + 全量 diff/unit」——卡顿主因在载荷与计算，不在 DOM 行数。方案分三层：资源/Worker 加速、按阈值窗口加载、比较器专用分块 diff。**
-
-你提出的「目标区 → 后文 1 屏 → 前文 1 屏」**可采纳**，作为 **L2 窗口策略** 的默认 prefetch 形状；再补 **行级索引 API、阈值化门槛、Worker 与降级策略**。
+**卡顿来自「全文下载 + 全文 diff/unit」，不是 Monaco 不会虚拟滚。用「门槛 + 少算 + 按行切片」三档治；比较器大文件走「变更目录 + 局部 Diff」，禁止另起一套交互语义。**
 
 ---
 
-## 1. 现状瓶颈（对照代码）
+## 1. 语义不漂移（硬约束）
 
-| 环节 | 现状 | 卡顿点 |
-|------|------|--------|
-| 传输 | `GET work/file` / `file-pair` 整文件 JSON | 大文件主线程 JSON.parse + 内存翻倍 |
-| 模型 | `createModel(fullText)` + `setValue` | 大字符串分配、tokenizer 扫描 |
-| Diff | DiffEditor 默认 advanced 对两份全文 | CPU 爆；行级 change 列表巨大 |
-| Units | `buildDiffUnits` 在 **主线程** 遍历所有 lineChanges → hunk/word/sentence | 二次放大 CPU/GC |
-| 箭头 | 每次 diff 更新 `placeArrows` | change 多时布局抖动 |
-| 保存 | `PUT` 全文 | 大文件写回延迟 |
+下列 **现有产品语义** 优化后必须保持；任何实现若做不到，**降级为慢路径**，不得 silent 改行为。
 
-结论：**不是「没有虚拟列表」**，而是 **还没虚拟「数据面」**。浏览器层加速不能替代分块策略。
+| ID | 语义 | 大文件下的要求 |
+|----|------|----------------|
+| **S1** | 文本单击 → **编辑器**；右键「新建比较」→ **比较器** | 不变 |
+| **S2** | 比较器左 = **work 路径**；右 = **CompareTarget**（zone/git + path） | 不变；目标选择/记忆 API 不变 |
+| **S3** | 箭头/拉取 = **对照侧可见文本 → work**（真源） | 窗口模式下必须用 **全局行号 + range 写**；禁止 put 半截全文 |
+| **S4** | autosave / undo / 整文件接受 的用户可见含义 | 可改 **实现**（range PUT）；用户仍感知「改的是这个文件」 |
+| **S5** | 小文件体验 | **零新概念**；无「变更地图」强制 UI |
+| **S6** | 坏文件/二进制 | 与现网一致：不进文本比较器 |
 
----
+### 1.1 明确不做什么（防过度设计）
 
-## 2. 设计原则
-
-1. **渲染层**：继续用 Monaco（已有 viewport 渲染）；不开「整页滚动手写虚拟列表」替代 Monaco。  
-2. **数据层**：按 **行区间** 拉取/缓存；客户端维护 **稀疏全文件模型** 或 **滑动窗口模型**。  
-3. **比较层**：先 **粗 diff（行哈希）**，再对可见/近可见 hunk **细 diff**；unit 延迟到需要 accept 时。  
-4. **计算层**：重活进 **Web Worker**（hash / 行切 / 可选 diff）；主线程只改 model 与 UI。  
-5. **门槛分级**：小文件零成本；中等优化选项；大文件强制窗口模式。  
-6. **正确性**：accept / autosave / 真源拉取必须定义「全局行号 ↔ 窗口」映射；**禁止在仅加载窗口时写出残缺全文**。
-
----
-
-## 3. 规模门槛（建议默认）
-
-| 级别 | 条件（约） | 策略 |
-|------|------------|------|
-| **S 小** | &lt; 256 KiB 且 &lt; 3k 行 | 现状全量；可开 Worker 可选 |
-| **M 中** | 256 KiB–2 MiB 或 3k–20k 行 | 全量可载，但 **关 word 级 unit**、diff 用 `legacy`/`advanced` 可配置；Worker 做 hash |
-| **L 大** | &gt; 2 MiB 或 &gt; 20k 行 | **窗口加载** + 粗 diff 索引；禁止开局全量 sentence unit |
-| **XL 极大** | &gt; 8 MiB 或 &gt; 80k 行 | 强制只读预览优先；编辑需「明确打开」确认；比较默认 **分块侧车 UI**（见 §5） |
-
-阈值用服务端 `HEAD`/meta：`byte_size` + `line_count`（Step A 增加）。
-
----
-
-## 4. 三层架构
-
-### 4.1 L0 — 浏览器 / 框架资源（低成本、先做）
-
-| 项 | 做法 | 收益 |
-|----|------|------|
-| **Monaco Worker** | 确保 `MonacoEnvironment.getWorker` 分离；可选增加 editor worker 配额 | 语法/排版不堵 UI |
-| **差分算法** | 大文件 `diffAlgorithm: 'legacy'` 或降采样；可设置开关 | 立刻降 CPU |
-| **关闭昂贵 UI** | 大文件默认 `renderIndicators` 可关、wordWrap 默认关、箭头上限 N | 减 layout |
-| **Scheduler** | `requestIdleCallback` / `scheduler.postTask` 做 unit 构建 | 减卡死 |
-| **Offscreen 不适用** | 文本编辑不用 Canvas；PDF 已单独优化 | — |
-| **WASM**（可选） | 后期再议 LCS/diff（如 patience/histogram 的 wasm 实现） | 非 P0 |
-
-**不建议**：盲目多 WebWorker 并行打开同一文件（抢主线程 postMessage 带宽）。
-
-### 4.2 L1 — 后端按行窗口 API（数据面）
-
-新增（示意）：
-
-```
-GET /projects/{id}/work/file-slice?path=&start_line=&end_line=
-→ { path, start_line, end_line, line_count, content, encoding, truncated? }
-
-GET /projects/{id}/work/file-meta?path=
-→ { path, byte_size, line_count, sha256, mtime }
-
-# 比较侧
-GET .../zones/{zid}/file-slice?...
-GET .../git/show-slice?ref=&path=&start_line=&end_line=
-```
-
-约束：
-
-- **行闭区间**，1-based；`end_line` 可封顶（如单次 ≤ 4000 行）。  
-- 超大响应拒绝（与 `max_upload` 类似的 `max_slice_bytes`）。  
-- 提供 **line index**：可选 companion `.lineidx` 或首次扫描缓存 offset 表（服务端，便于 O(1) seek）。
-
-### 4.3 L2 — 前端滑动窗口（你提的加载形状）
-
-对每个打开的 path 维护：
-
-```
-Window = {
-  startLine, endLine,     // 已加载闭区间
-  targetStart, targetEnd, // 视口 ± overscan
-  lines: Map<lineNo, string> | rope,
-  fullLineCount,
-  sha256?
-}
-```
-
-**Prefetch 策略（默认，与你描述对齐，粒度=行）**
-
-设视口可见 `[V0, V1]`（行），`H = V1 - V0 + 1`（约一屏行数）：
-
-1. **优先**：加载 `[V0, V1]`  
-2. **后文**：`[V1+1, V1+H]`（一倍浏览长度）  
-3. **前文**：`[V0-H, V0-1]`  
-4. 之后按滚动方向 **半屏步进** 扩展，合并相邻空洞  
-5. 窗口总行数上限 `Wmax`（如 3H～5H）；超出则 **丢弃远离视口** 的一侧（方向：反滚动方向）
-
-Monaco 集成两种模式（二选一，推荐 **B 进阶**）：
-
-| 模式 | 做法 | 利弊 |
-|------|------|------|
-| **A 填充占位** | 模型仍是「全文件」，未加载行用 `…` 或空行 + decoration；滚动到洞时 fetch 再 `applyEdits` | 实现快；仍占行结构内存 |
-| **B 虚拟模型 + 固定虚拟高度** | model 仅窗口文本；`scrollTop` 用 **总行数 × lineHeight** 伪装文档高度；换窗口时重设 model 并校正 scroll | 内存最小；滚动条/跳转/选区复杂 |
-
-**推荐路径：** S/M 用全量；L 用 **A 填充占位 + 真切片**；XL 评估 B 或侧车。
-
-### 4.4 L3 — 比较器专用（比单文件更重）
-
-全量 DiffEditor 对「两侧各 5 万行」不现实。建议 **双轨**：
-
-**轨 1：快速导航（索引）**
-
-1. 两侧按行 hash（Worker）→ 列表对齐（Patience/Myers 行级，或简单 LCS 在行序列上 **分块**）。  
-2. 得到 **hunk 目录**：`[{left:[a,b], right:[c,d]}]`，UI 显示「变更列表」可跳转。  
-3. 用户跳到 hunk 时，只对 **该 hunk ± 上下文 K 行** 开 Monaco Diff（小窗口全文）。
-
-**轨 2：连贯阅读（窗口 Diff）**
-
-1. 视口仍用滑动窗口同步两侧（共同滚动策略：锁「逻辑行锚点」）。  
-2. 仅对 **当前窗口交集** 跑 DiffEditor 或内联 diff。  
-3. 跨窗口的 accept：通过 **全局行号** 把 snippet 应用到服务端或客户端 full buffer 策略：
-
-| 编辑策略 | 说明 |
-|----------|------|
-| **整文件写回** | 若本会话曾全量加载或服务端有 patch API：`PUT` 或 `PATCH` 带 range |
-| **range PUT**（推荐新增） | `PUT work/file-range { start_line, end_line, content }` 服务端 splice |
-
-**accept 与真源：** 继续遵循 comparer-preview-hardening——拉取文本来自当前对照缓冲；大文件缓冲只含窗口时，**accept 必须带绝对行号并向服务端 range 写入**，不能 `put` 残缺全文。
-
----
-
-## 5. 「更好 / 更系统」的补充方案
-
-### 5.1 变更地图 + 局部 Diff（强烈推荐作 L 默认）
-
-比「超长双边 DiffEditor 硬撑」更接近 VS Code/IDE 对超大 diff 的做法：
-
-- 顶部/侧栏：**Hunk list**（统计 + 过滤）  
-- 主区：只渲染 **当前 hunk 上下文**  
-- 「在全文中打开」：再进编辑器窗口模式  
-
-### 5.2 搜索与跳转
-
-- `GET file-search?q=` 或客户端只在已加载窗口搜 + 「全文件搜索」异步任务  
-- `Ctrl+G` 行号 → 先 seek slice 再定位  
-
-### 5.3 二进制 / 伪文本
-
-- 超过阈值：默认不进 Monaco，提示下载或十六进制/只读前缀  
-
-### 5.4 内存预算
-
-- 每项目打开 Tab 的窗口缓存 **总字节上限**（如 32–64 MiB），超出 LRU 关闭非焦点缓冲  
-
-### 5.5 与 autosave
-
-- 脏区只记 **编辑过的行范围**；autoSave 用 range PUT，避免无改动大文件回写  
-
----
-
-## 6. 实施步骤（可执行）
-
-### Step 0 — 度量与门槛（0.5–1d）
-
-- [ ] 统计典型卡顿：打开 10k/50k 行的 TTI、内存、`buildDiffUnits` 耗时  
-- [ ] 落地 `file-meta`（size/lines）到 open 路径  
-- [ ] 设置项：`largeFileMode: auto | full | window`  
-
-### Step A — 低成本开关（L0，0.5–1d）〔P0 体验〕
-
-- [ ] 行数/体积超 M：默认 `diffAlgorithm: 'legacy'`、禁用开局 sentence unit  
-- [ ] unit 构建 `requestIdleCallback` + 上限（如前 200 hunk）  
-- [ ] 比较器箭头只渲染 **视口附近** hunk  
-
-**验收：** 10k 行打开主线程 long task &lt; 基线 50%。
-
-### Step B — Slice API（L1，1–2d）〔P0 数据〕
-
-- [ ] `file-meta` / `file-slice`（work + zone + git show-slice）  
-- [ ] 单测：边界行、超限 422、path 安全  
-
-### Step C — 编辑器窗口加载（L2，2–3d）〔P1〕
-
-- [ ] `TextWindowStore`：按视口 prefetch（后文 1H、前文 1H）  
-- [ ] 模式 A 接入单文件 Editor Tab  
-- [ ] 跳转行号、status 显示「已加载 L–R / 共 N」  
-
-**验收：** 50k 行可滚动浏览，内存远低于全文。
-
-### Step D — 比较器分块（L3，3–5d）〔P0 比较〕
-
-- [ ] Worker 行 hash 粗 diff → hunk index UI  
-- [ ] 点击 hunk → 局部 Diff 会话（小 buffer）  
-- [ ] accept → `file-range` PUT + 真源 snippet  
-
-**验收：** 两侧 30k 行可浏览变更列表并完成单 hunk 拉取，无整页冻死。
-
-### Step E — range 写回与 autosave（1–2d）〔P0 正确性〕
-
-- [ ] `PUT work/file-range`  
-- [ ] dirty 区间合并；autoSave 走 range  
-- [ ] 与 undo 策略文档化（range undo 或整文件 snapshot 继续）  
-
-### Step F — 可选增强（P2）
-
-- [ ] 模式 B 虚拟高度  
-- [ ] WASM diff  
-- [ ] 全文件后台 index 任务进度条  
-
----
-
-## 7. 与「按需更多计算资源」的对应关系
-
-| 诉求 | 方案位置 |
-|------|----------|
-| 浏览器/框架加速 | §4.1 Worker、idle、算法降级 |
-| 动态加载目标区 + 后文 1× + 前文 1× | §4.3 Prefetch（默认） |
-| 行粒度 | 全程以 line 为 API 与窗口单位 |
-| 更系统 | §5 变更地图 + 局部 Diff + range PUT |
-
----
-
-## 8. 风险与非目标
-
-| 风险 | 缓解 |
+| 不做 | 原因 |
 |------|------|
-| 窗口未加载就 accept 写坏文件 | 强制 range API；缺行时先补全再写 |
-| Diff 行错位（两侧窗口不同步） | 粗索引锚点 + 禁止跨未加载区 fine diff |
-| word wrap + 虚拟高度不准 | 大文件默认关 wrap |
-| 服务端缺 line index 首次慢 | 缓存 offset 表；异步建索引 |
+| 自研编辑器 / 替换 Monaco | 成本高，Monaco 已有视口渲染 |
+| 默认模式 B「假全文高度 + 仅窗口 model」 | 滚动/选区/跳转易漂语义；留给 XL 可选 |
+| 一上来 WASM diff / OT / 协作 | 非瓶颈首解 |
+| 服务端全文流式 SSE | 复杂度高；slice 足够 |
+| 多 Worker 并行灌同一全文 | 增加拷贝与主线程压力 |
+| 为长文件重做整套「侧边预览语言」 | 与比较器/编辑器概念分叉 |
+| 改变 accept 的「应用对照」含义 | 与真源计划冲突 |
 
-**非目标（本方案不做）：** 多用户 OT；服务端流式 SSE 全文；替代 Monaco 的自研编辑器。
+### 1.2 允许的唯一 UX 增量（且仅在大文件）
 
----
+当且仅当文件达到 **L 档**（§3）时，比较器可多一块：
 
-## 9. 完成定义（分阶段）
+- **变更目录（hunk list）**：点击后主区展示 **该 hunk ± 上下文** 的 Diff（仍是同一比较器工具，不是新工具类型）。
 
-| 阶段 | DoD |
-|------|-----|
-| **A** | 大文件打开明显减轻；无错误写回 |
-| **B+C** | 50k 行可滑览；meta/slice 测通 |
-| **D+E** | 大文件比较可导航 + 可安全拉取/保存 |
-| **声称** | 文档写清「全量 Diff 仅用于 S/M」 |
+小文件 **不得** 出现该目录强占 UI。
 
 ---
 
-## 10. 文件触点（未来实现）
+## 2. 现状瓶颈（对照实现）
+
+| 环节 | 代码现实 | 问题 |
+|------|----------|------|
+| 读 | `work/file`、`file-pair` 整文件 | 大 JSON + 内存 |
+| 模型 | Monaco `setValue` 全文 | 分配与 tokenization |
+| Diff | DiffEditor advanced 全文 | CPU |
+| Unit | `buildDiffUnits` 主线程全量 | 二次放大 |
+| 写 | `PUT` 全文 | 大回写 |
+
+结论：优先 **少传、少 diff、少 unit**；再做切片。
+
+---
+
+## 3. 门槛（简单、可调）
+
+| 档 | 条件（任一满足） | 行为 |
+|----|------------------|------|
+| **S** | &lt; 256KiB 且 &lt; 3k 行 | 现状全量；可选 idle 调度 unit |
+| **M** | 256KiB–2MiB 或 3k–20k 行 | 仍可全量载入；**默认** legacy diff、限制开局 unit 数量、箭头视口裁剪 |
+| **L** | &gt; 2MiB 或 &gt; 20k 行 | 编辑：滑动窗口读；比较：**hunk 目录 + 局部 Diff**；range 写 |
+| **硬顶** | 单次 slice &gt; 4000 行或响应 &gt; 配置字节 | API 422 |
+
+元数据：`byte_size` + `line_count`（缺省则先流式数行或首次打开时统计并缓存）。
+
+---
+
+## 4. 目标架构（只保留必要层）
+
+```
+┌─────────────────────────────────────────┐
+│  L0  便宜开关：算法/unit 上限/idle/Worker │  ← 先做
+├─────────────────────────────────────────┤
+│  L1  按行 slice + meta（work/zone/git）   │  ← 数据面
+├─────────────────────────────────────────┤
+│  L2  编辑器窗口：视口 → 后 H → 前 H        │  ← 浏览
+├─────────────────────────────────────────┤
+│  L3  比较器：行 hash 目录 + 局部 Diff      │  ← 比较
+├─────────────────────────────────────────┤
+│  L4  range 写回（保存/拉取/autosave）       │  ← 正确性
+└─────────────────────────────────────────┘
+```
+
+### 4.1 L0 — 不改 API 的降载（P0 体验）
+
+| 动作 | 语义影响 |
+|------|----------|
+| 大文件 `diffAlgorithm: 'legacy'` | 无；仅速度 |
+| 开局 **不** 跑全量 sentence/word unit；箭头仅用 line/hunk 且 **视口附近** | 无顶栏 chips 依赖（已去掉） |
+| `requestIdleCallback` 建 unit | 无 |
+| 保持 Monaco worker | 无 |
+
+### 4.2 L1 — Slice / Meta API（P0 数据）
+
+最小集：
+
+```
+GET .../work/file-meta?path=
+GET .../work/file-slice?path=&start_line=&end_line=
+
+GET .../zones/{id}/file-meta|file-slice?...
+GET .../git/show-meta|show-slice?ref=&path=&start_line=&end_line=
+```
+
+规则：
+
+- 行号 **1-based 闭区间**；单次行数上限。  
+- 返回 `{ start_line, end_line, line_count, content, sha256? }`。  
+- **path 安全** 与现有 file API 一致。  
+
+可选（非阻塞）：服务端 line-offset 缓存，仅当 slice 过慢再做。
+
+### 4.3 L2 — 编辑器窗口（P1，语义 S1/S4）
+
+Prefetch（粒度=**行**，与用户描述一致）：
+
+1. 视口 `[V0,V1]`，`H = V1-V0+1`  
+2. 后文 `[V1+1, V1+H]`  
+3. 前文 `[V0-H, V0-1]`  
+4. 沿滚动方向半屏扩展；总缓存 ≤ `Wmax`（约 3–5 屏）淘汰远端  
+
+**集成（唯一推荐实现，避免双模式纠结）：**
+
+- Monaco model 仍表示 **逻辑全文**，但对未加载行使用 **统一占位行**（如空行或 `·`）+ decoration 标明「未加载」；  
+- 进入视口前/后按上式 fetch，用 `applyEdits` 换成真文本；  
+- **禁止**在仍有占位洞时 `PUT` 全文；保存/autosave 见 L4。  
+
+不实现模式 B（假高度），除非 L 实测内存仍炸再开附录。
+
+### 4.4 L3 — 比较器（P0 比较语义 S2/S3）
+
+对 **L 档** 两侧：
+
+1. **Worker** 按行 hash（或长度+采样 hash）→ 行级对齐 → **hunk 列表**（全局行号）。  
+2. UI：hunk 列表 + 主区 **只 Diff 当前 hunk ± K 行**（仍是 comparer Tab）。  
+3. 拉取：对当前局部 buffer 做真源 snippet，写入用 **全局行号** 的 L4。  
+4. S/M 档：保持现有双边 DiffEditor + 真源 apply，**不**强塞 hunk 列表。
+
+**不做**「窗口双边硬 Diff 全文连贯阅读」作为默认——那是复杂度陷阱；连贯阅读用编辑器窗口即可。
+
+### 4.5 L4 — 写回（P0 正确性，S3/S4）
+
+```
+PUT .../work/file-range
+{ path, start_line, end_line, content, base_sha256? }
+```
+
+- autosave / 箭头拉取 / 局部编辑：优先 range。  
+- 小文件可继续全文 PUT。  
+- **绝对禁止** 用「仅窗口文本」当全文 PUT。  
+- undo：继续现有 snapshot 策略即可（可先整文件快照，不必第一步就 range-undo）。
+
+---
+
+## 5. 实施步骤（短、可交付）
+
+### Step 0 — 门槛与观测（≤1d）
+
+- [ ] open 路径取 size/lines（先客户端粗算也可：length + split 计数，仅 M+ 提示）  
+- [ ] 设置预留：`largeFileMode: auto`（暂不暴露复杂 UI）  
+- [ ] 记录基线：10k/30k 行打开卡顿  
+
+### Step 1 — L0 降载（≤1d）〔必须先做〕
+
+- [ ] 阈值触发：legacy diff、unit 上限、箭头视口过滤  
+- [ ] idle 调度 `buildDiffUnits`  
+- [ ] 回归：S 档行为与现在一致  
+
+### Step 2 — Meta + Slice 读 API（1–2d）
+
+- [ ] work/zone/git slice+meta  
+- [ ] pytest：边界、超限、遍历拒绝  
+
+### Step 3 — 编辑器窗口读（2d）
+
+- [ ] 视口→后 H→前 H  
+- [ ] 占位 + applyEdits  
+- [ ] 状态：`已加载 a–b / 共 N`（可放 tab 副标题或 status 一行）  
+
+### Step 4 — range 写 + 接 autosave/拉取（1–2d）
+
+- [ ] `file-range` PUT  
+- [ ] 大文件 autosave / `applyCompareUnit` 走 range  
+- [ ] 有洞则先补 slice 再写或拒绝并 toast  
+
+### Step 5 — 比较器 hunk 目录 + 局部 Diff（2–4d）
+
+- [ ] Worker 行 hash 索引  
+- [ ] L 档 UI 切换到「列表 + 局部」；S/M 不变  
+- [ ] 拉取用真源 + 全局行号 + range  
+
+### Step 6 — 文档与声称
+
+- [ ] manual-smoke：大文件打开/滚动/保存/拉取  
+- [ ] AGENTS：写明 L 档比较器形态  
+
+---
+
+## 6. 验收（防语义漂）
+
+| 场景 | 期望 |
+|------|------|
+| 小 `.tex` 单击 | 编辑器，全功能，无 hunk 强制 UI |
+| 大文件滚动 | 先清视口再扩展，可卡顿提示但不可假死 |
+| 大文件保存 | 磁盘与编辑一致；无截断 |
+| L 比较：选 git 目标拉一行 | work 该行 = 右侧该行（真源） |
+| 非 active zone 对照 | 与 hardening 计划一致 |
+| 关闭大文件 Tab | 缓存释放，无泄漏暴涨 |
+
+---
+
+## 7. 风险（只列真的）
+
+| 风险 | 处理 |
+|------|------|
+| 占位行被用户误存 | 写前检测洞；toast |
+| hash 粗 diff 漏/多 hunk | 可接受索引误差；局部 Diff 再确认 |
+| 无 line-index 时 slice 慢 | 懒建缓存；首包可稍慢 |
+| 与 word wrap | L 默认建议关 wrap（已有 Alt+Z） |
+
+---
+
+## 8. 决策锁定（默认已拍板，无需再开产品会）
+
+| 项 | 默认 |
+|----|------|
+| Prefetch | **视口 → 后 1 屏 → 前 1 屏** |
+| L 比较 UI | **hunk 目录 + 局部 Diff** |
+| 大文件编辑 | **允许**，range 写 |
+| 模式 B 虚拟高度 | **不做**（附录） |
+| WASM / 搜索全集 | **不做**（本计划） |
+
+---
+
+## 9. 附录：仅当 Step 3 内存仍爆再考虑
+
+- 模式 B：仅窗口 model + 虚拟 scrollHeight  
+- 须单独立项，重验收滚动与选区  
+
+---
+
+## 10. 文件触点（实现时）
 
 | 层 | 路径 |
 |----|------|
-| API | `routes.py` slice/meta/range；`workspace_fs` line seek |
-| Web store | 新 `textWindow.ts`；`project.ts` open 分流 |
-| UI | `MonacoDiff.vue` 选项；可选 `HunkNav.vue` |
-| Worker | `apps/web/src/workers/lineHash.ts` |
-| 设置 | `settings.largeFileMode` |
+| API | `routes.py`，`workspace_fs` / project_service 读切片写 range |
+| Web | 新 `textWindow.ts`（尽量薄）；`MonacoDiff` 选项；`project` open/save 分流 |
+| Worker | `workers/lineHash.ts`（可仅 Step 5） |
+| 测试 | slice/range pytest；窗口 merge vitest；大文件 smoke |
 
 ---
 
-## 11. 建议排期（摘要）
+## 11. 与既有计划关系
 
-1. **先 A**（一周内可感）  
-2. **再 B+C**（浏览长文件）  
-3. **然后 D+E**（比较器才真正可用）  
-4. F 视资源  
-
----
-
-## 12. 决策待确认（实施前可选）
-
-若产品拍板，请勾：
-
-- [ ] L 默认 **变更地图** 还是 **双边窗口 Diff**？  
-- [ ] 大文件是否允许 **编辑** 还是默认只读？  
-- [ ] Prefetch 是否严格 **后 1H 再 前 1H**，还是 **双向同时**？  
-
-（未勾选时实现默认：**变更地图 + 局部 Diff**、**可编辑但 range 写**、**先后再前** 如你所述。）
+```
+comparer-preview-hardening  ──真源──►  本计划 L4/L3 不得违背
+ux-gap-closure              ──骨架──►  本计划不重做工作台
+本计划                       ──只加性能路径与 L 档比较形态──
+```
