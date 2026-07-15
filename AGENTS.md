@@ -32,13 +32,14 @@
 - Workbench track: `docs/superpowers/plans/2026-07-15-workbench-git-async-diff.md`
 - **Product v2 (project core + zones + git + agent):** `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`
 - **Hardening / gap closure (post-audit R0–R5):** `docs/superpowers/plans/2026-07-15-hardening-followups.md`
-- **Import modal + diff chrome + autosave (draft):** `docs/superpowers/plans/2026-07-15-import-diffchrome-autosave.md`
+- **Import modal + diff chrome + autosave (draft, largely superseded):** `docs/superpowers/plans/2026-07-15-import-diffchrome-autosave.md`
+- **UX gap closure (post workbench/import audit — execute next):** `docs/superpowers/plans/2026-07-15-ux-gap-closure.md`
 
 ## Completion tiers (use in status claims)
 
 - **L0 main path:** work + zones + accept + compile + local git — **done**
-- **L1 API↔UI wiring:** every public API has UI or is explicitly deferred — **partial** (chat/CSV/image)
-- **L2 product depth:** real agent provider, upload progress, layout presets — **partial**
+- **L1 API↔UI wiring:** every public API has UI or is explicitly deferred — **partial** (accept-report export UI; advanced import restored via gap plan)
+- **L2 product depth:** real agent provider, upload progress, layout presets, **columns/tabs workbench skeleton**, **unified import modal skeleton**, docx preview — **partial** (sash/autosave/comparer chrome — see ux-gap-closure)
 - **L3 platform:** remote git auth, multi-tenant, virtualized tree — **deferred**
 - Merge line/col: `apps/api/app/domain/merge_engine.py`
 - Accept/import (work + dual-zip compat): `apps/api/app/services/project_service.py`
