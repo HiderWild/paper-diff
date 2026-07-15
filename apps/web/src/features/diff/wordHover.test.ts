@@ -46,6 +46,30 @@ describe("rangeContains", () => {
     expect(rangeContains(r, 2, 5)).toBe(true);
     expect(rangeContains(r, 2, 6)).toBe(false);
   });
+
+  it("pads empty range for shaky insert/delete aim", () => {
+    const r = {
+      start_line: 2,
+      start_col: 5,
+      end_line: 2,
+      end_col: 5,
+    };
+    expect(rangeContains(r, 2, 7, 3)).toBe(true);
+    expect(rangeContains(r, 2, 2, 3)).toBe(true);
+    expect(rangeContains(r, 1, 5, 3)).toBe(true); // adjacent line
+    expect(rangeContains(r, 2, 10, 3)).toBe(false);
+  });
+
+  it("pads short delete spans slightly", () => {
+    const r = {
+      start_line: 1,
+      start_col: 4,
+      end_line: 1,
+      end_col: 5,
+    };
+    expect(rangeContains(r, 1, 6, 2)).toBe(true);
+    expect(rangeContains(r, 1, 3, 2)).toBe(true);
+  });
 });
 
 describe("hitTestWordUnit", () => {

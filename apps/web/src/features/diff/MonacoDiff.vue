@@ -194,13 +194,14 @@ function clearMathHover() {
   mathHover.value = null;
 }
 
-function scheduleMathDismiss(ms = 280) {
+/** Math preview: leave-to-hide immediately (no sticky lag). */
+function scheduleMathDismiss(_ms = 0) {
   if (pointerOnMathCard) return;
-  if (mathHoverTimer != null) clearTimeout(mathHoverTimer);
-  mathHoverTimer = setTimeout(() => {
-    if (!pointerOnMathCard) mathHover.value = null;
+  if (mathHoverTimer != null) {
+    clearTimeout(mathHoverTimer);
     mathHoverTimer = null;
-  }, ms);
+  }
+  mathHover.value = null;
 }
 
 function onMathCardEnter() {
@@ -213,7 +214,8 @@ function onMathCardEnter() {
 
 function onMathCardLeave() {
   pointerOnMathCard = false;
-  scheduleMathDismiss(200);
+  // immediate hide when leaving the card
+  clearMathHover();
 }
 
 function latexMathEnabled() {
@@ -235,7 +237,7 @@ function tryShowMathHover(
   // CONTENT_TEXT=6, CONTENT_EMPTY=7 — also allow numeric for older typings
   const t = target.type as number;
   if (t !== 6 && t !== 7) {
-    scheduleMathDismiss(150);
+    scheduleMathDismiss(0);
     return false;
   }
   const model = ed.getModel();
@@ -244,7 +246,7 @@ function tryShowMathHover(
   const offset = model.getOffsetAt(pos);
   const snip = findMathAtOffset(model.getValue(), offset);
   if (!snip) {
-    scheduleMathDismiss(120);
+    scheduleMathDismiss(0);
     return false;
   }
   // Prefer viewport client coords for position:fixed card
@@ -280,19 +282,29 @@ function bindLatexMathHoverListeners() {
         tryShowMathHover(ed, ev);
       }),
       ed.onMouseLeave(() => {
-        scheduleMathDismiss(220);
+        // leave editor → hide formula immediately
+        if (!pointerOnMathCard) clearMathHover();
       })
     );
   }
 }
 
-function scheduleDismiss(ms = 280) {
+/**
+ * Word-accept dismiss:
+ * - replace: short leave delay (feels snappy)
+ * - insert/delete: longer grace (thin decorations; hand shake)
+ */
+function scheduleDismiss(ms?: number) {
   if (pointerOnCard) return;
+  const model = hoverCard.value?.model;
+  const isInsDel = !!(model && (model.isInsert || model.isDelete));
+  const delay =
+    ms ?? (isInsDel ? 520 : 80);
   if (hoverTimer != null) clearTimeout(hoverTimer);
   hoverTimer = setTimeout(() => {
     if (!pointerOnCard) hoverCard.value = null;
     hoverTimer = null;
-  }, ms);
+  }, delay);
 }
 
 function onCardPointerEnter() {
@@ -402,35 +414,50 @@ function onEditorMouseMove(
   const pos = t.position;
   // CONTENT_TEXT = 6 in Monaco MouseTargetType
   if (!pos || (t.type !== 6 && t.type !== 7)) {
-    scheduleDismiss(200);
+    // leave text band: replace snaps off; insert/delete keep grace
+    scheduleDismiss();
     return;
   }
   const trueSide = trueSideForVisualEditor(visual, props.sidesSwapped);
   // Monaco columns are 1-based → DiffUnit 0-based
   const col0 = Math.max(0, pos.column - 1);
+  // Pad hit box so thin insert/delete underlines stay pickable
   const unit = hitTestHoverUnit(
     lastUnits,
     trueSide,
     pos.lineNumber,
     col0,
     props.sidesSwapped,
-    true // include sentence if no smaller word hit
+    true, // include sentence if no smaller word hit
+    3 // base pad cols; empty ranges get more via padForRange
   );
   if (!unit) {
-    scheduleDismiss(250);
+    scheduleDismiss();
     return;
   }
   const bx = e.event.posx;
   const by = e.event.posy;
+  const model = unitCardModel(unit, props.sidesSwapped);
+  // Keep showing same unit without re-delay (less flicker on shaky pointer)
+  if (hoverCard.value?.model.unit.id === unit.id) {
+    hoverCard.value = { model, x: bx, y: by };
+    if (hoverTimer != null) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+    return;
+  }
   if (hoverTimer != null) clearTimeout(hoverTimer);
+  // Insert/delete open slightly faster (harder to re-hit); replace stays 350ms
+  const openMs = model.isInsert || model.isDelete ? 220 : 350;
   hoverTimer = setTimeout(() => {
     hoverCard.value = {
-      model: unitCardModel(unit, props.sidesSwapped),
+      model,
       x: bx,
       y: by,
     };
     hoverTimer = null;
-  }, 350);
+  }, openMs);
 }
 
 function bindWordHoverListeners() {
@@ -441,8 +468,8 @@ function bindWordHoverListeners() {
   mouseSubs.push(
     orig.onMouseMove((e) => onEditorMouseMove("original", e)),
     mod.onMouseMove((e) => onEditorMouseMove("modified", e)),
-    orig.onMouseLeave(() => scheduleDismiss(450)),
-    mod.onMouseLeave(() => scheduleDismiss(450)),
+    orig.onMouseLeave(() => scheduleDismiss()),
+    mod.onMouseLeave(() => scheduleDismiss()),
     orig.onDidScrollChange(() => clearWordHover()),
     mod.onDidScrollChange(() => clearWordHover())
   );

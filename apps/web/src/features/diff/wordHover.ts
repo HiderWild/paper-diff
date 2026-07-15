@@ -30,6 +30,7 @@ export function sentenceUnitsOf(units: DiffUnit[]): DiffUnit[] {
 
 /**
  * Hit-test word first (smallest), else sentence if includeSentence.
+ * @param padCols column slack for thin insert/delete ranges
  */
 export function hitTestHoverUnit(
   units: DiffUnit[],
@@ -37,9 +38,17 @@ export function hitTestHoverUnit(
   line: number,
   col0: number,
   sidesSwapped = false,
-  includeSentence = true
+  includeSentence = true,
+  padCols = 0
 ): DiffUnit | null {
-  const word = hitTestWordUnit(units, trueSide, line, col0, sidesSwapped);
+  const word = hitTestWordUnit(
+    units,
+    trueSide,
+    line,
+    col0,
+    sidesSwapped,
+    padCols
+  );
   if (word) return word;
   if (!includeSentence) return null;
   const sentences = sentenceUnitsOf(units);
@@ -47,7 +56,8 @@ export function hitTestHoverUnit(
   let bestSpan = Number.POSITIVE_INFINITY;
   for (const u of sentences) {
     const r = unitRangeForTrueSide(u, trueSide, sidesSwapped);
-    if (!rangeContains(r, line, col0)) continue;
+    const pad = padForRange(r, padCols);
+    if (!rangeContains(r, line, col0, pad)) continue;
     const span = rangeSpanChars(r);
     if (span < bestSpan) {
       bestSpan = span;
@@ -57,33 +67,70 @@ export function hitTestHoverUnit(
   return best;
 }
 
+/** More pad for empty/short ranges (insert/delete UX). */
+export function padForRange(r: LineColRange, basePad: number): number {
+  if (basePad <= 0) return 0;
+  if (isEmptyRange(r)) return Math.max(basePad, 3);
+  if (r.start_line === r.end_line && r.end_col - r.start_col <= 2) {
+    return Math.max(basePad, 2);
+  }
+  return basePad;
+}
+
+/** True when range is a zero-width caret (pure insert/delete edge). */
+export function isEmptyRange(r: LineColRange): boolean {
+  return (
+    r.start_line === r.end_line &&
+    Math.max(0, r.start_col) === Math.max(0, r.end_col)
+  );
+}
+
 /**
  * Whether (line, col0) lies in range [start, end) in document order.
- * Empty ranges (start == end) match a caret hit within 1 char at start
- * (same line, col0 === start_col or col0 === start_col - 0 only).
+ * Empty ranges (start == end) match a caret hit at start_col.
+ * @param padCols expand hit box by this many 0-based columns on the same line
+ *   (and allow ±1 line for empty/short ranges when padCols > 0) — for thin
+ *   insert/delete decorations so a shaky pointer still hits.
  */
 export function rangeContains(
   r: LineColRange,
   line: number,
-  col0: number
+  col0: number,
+  padCols = 0
 ): boolean {
   const sl = r.start_line;
   const el = r.end_line;
   const sc = Math.max(0, r.start_col);
   const ec = Math.max(0, r.end_col);
-  if (line < sl || line > el) return false;
+  const pad = Math.max(0, padCols);
 
-  // Empty range: match point on that line at start_col (insert caret)
+  // Empty range: caret with optional column + line padding
   if (sl === el && sc === ec) {
-    return line === sl && col0 === sc;
+    if (Math.abs(line - sl) > (pad > 0 ? 1 : 0)) return false;
+    return col0 >= sc - pad && col0 <= sc + pad;
   }
 
+  // Short single-line span (e.g. 1–2 char delete underline): pad columns only
   if (sl === el) {
-    return col0 >= sc && col0 < ec;
+    const lo = sc - pad;
+    const hi = ec + pad; // end is exclusive; pad expands hi
+    if (line === sl) return col0 >= lo && col0 < hi;
+    // with pad, allow one adjacent line over the same col band (thin line dexterity)
+    if (pad > 0 && Math.abs(line - sl) === 1) {
+      return col0 >= lo && col0 < hi;
+    }
+    return false;
   }
-  if (line === sl) return col0 >= sc;
-  if (line === el) return col0 < ec;
-  return true; // strictly between start and end lines
+
+  // Multi-line: only pad start/end columns on edge lines
+  if (line < sl - (pad > 0 ? 1 : 0) || line > el + (pad > 0 ? 1 : 0)) {
+    return false;
+  }
+  if (line === sl) return col0 >= sc - pad;
+  if (line === el) return col0 < ec + pad;
+  if (line > sl && line < el) return true;
+  // adjacent padded lines treat as full line hit when pad
+  return pad > 0;
 }
 
 function rangeSpanChars(r: LineColRange): number {
@@ -121,17 +168,22 @@ export function hitTestWordUnit(
   trueSide: TrueSide,
   line: number,
   col0: number,
-  sidesSwapped = false
+  sidesSwapped = false,
+  padCols = 0
 ): DiffUnit | null {
   const words = wordUnitsOf(units);
   let best: DiffUnit | null = null;
   let bestSpan = Number.POSITIVE_INFINITY;
   for (const u of words) {
     const r = unitRangeForTrueSide(u, trueSide, sidesSwapped);
-    if (!rangeContains(r, line, col0)) continue;
+    const pad = padForRange(r, padCols);
+    if (!rangeContains(r, line, col0, pad)) continue;
     const span = rangeSpanChars(r);
-    if (span < bestSpan) {
-      bestSpan = span;
+    // Prefer non-empty smaller spans; empty ranges use large "virtual" span
+    // so a real word under the caret still wins when both match.
+    const rankSpan = isEmptyRange(r) ? span + 50 : span;
+    if (rankSpan < bestSpan) {
+      bestSpan = rankSpan;
       best = u;
     }
   }
