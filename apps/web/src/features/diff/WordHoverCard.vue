@@ -120,27 +120,23 @@ onBeforeUnmount(() => {
             ? t("hoverAccept.badgeDelete")
             : t("hoverAccept.badgeReplace")
       }}</span>
-      {{ titleForKind() }}
+      <!-- insert/delete: badge alone is enough; replace keeps kind title -->
+      <span v-if="mode === 'replace'">{{ titleForKind() }}</span>
     </div>
 
-    <!-- Insert: emphasize what will be added from compare -->
+    <!-- Insert / delete: one-line caption + snippet (no repeated lead/hint) -->
     <template v-if="mode === 'insert'">
-      <p class="lead">{{ t("hoverAccept.insertLead") }}</p>
-      <div class="single-snip compare">
-        <div class="label">{{ t("hoverAccept.compare") }}</div>
-        <code class="snip filled">{{ compareDisplay().text }}</code>
-      </div>
-      <p class="hint muted">{{ t("hoverAccept.insertHint") }}</p>
+      <p class="one-line">
+        {{ t("hoverAccept.insertBrief") }}
+        <code class="inline-snip compare">{{ compareDisplay().text }}</code>
+      </p>
     </template>
 
-    <!-- Delete: emphasize what will be removed from work -->
     <template v-else-if="mode === 'delete'">
-      <p class="lead">{{ t("hoverAccept.deleteLead") }}</p>
-      <div class="single-snip work">
-        <div class="label">{{ t("hoverAccept.work") }}</div>
-        <code class="snip filled">{{ workDisplay().text }}</code>
-      </div>
-      <p class="hint muted">{{ t("hoverAccept.deleteHint") }}</p>
+      <p class="one-line">
+        {{ t("hoverAccept.deleteBrief") }}
+        <code class="inline-snip work">{{ workDisplay().text }}</code>
+      </p>
     </template>
 
     <!-- Replace: side-by-side -->
@@ -245,8 +241,29 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
   align-items: start;
 }
-.single-snip {
-  margin-bottom: 0.15rem;
+.one-line {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--muted);
+  max-width: 36rem;
+}
+.inline-snip {
+  display: inline;
+  font-size: 0.8rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  background: var(--surface-deep, #0b0f14);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.inline-snip.work {
+  border-left: 2px solid var(--danger, #f87171);
+}
+.inline-snip.compare {
+  border-left: 2px solid var(--green, #22c55e);
 }
 .label {
   font-size: 0.68rem;
@@ -271,15 +288,6 @@ onBeforeUnmount(() => {
 .snip.compare {
   border-left: 2px solid var(--green, #22c55e);
 }
-.snip.filled {
-  border-left-width: 2px;
-}
-.single-snip.work .snip.filled {
-  border-left-color: var(--danger, #f87171);
-}
-.single-snip.compare .snip.filled {
-  border-left-color: var(--green, #22c55e);
-}
 /* Empty / missing side: italic muted explanation, not a mysterious symbol */
 .snip.empty {
   border-left: 2px dashed var(--muted);
@@ -293,11 +301,6 @@ onBeforeUnmount(() => {
   color: var(--accent);
   font-size: 1rem;
   padding-top: 0.9rem;
-}
-.hint {
-  margin: 0.35rem 0 0;
-  font-size: 0.72rem;
-  line-height: 1.35;
 }
 .actions {
   display: flex;
