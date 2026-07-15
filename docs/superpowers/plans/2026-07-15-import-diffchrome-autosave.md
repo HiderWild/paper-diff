@@ -1,8 +1,11 @@
 # paper-diff UX 实施计划：统一导入 · Diff 内接受整文件 · 全局自动保存
 
-> **Status:** Draft / ready-to-execute — 2026-07-15  
+> **Status:** **Superseded for execution** by `2026-07-15-ux-gap-closure.md` (2026-07-15). Keep as historical requirements inventory.  
+> Partial progress already in tree: unified Import button + `ImportModal` (zip/folder/files + default name); workbench columns/tabs; settings theme/locale. Remaining I\*/A\*/S\*/C\* → execute via **ux-gap-closure** Steps 1/3/4.  
+> **Original status was:** Draft / ready-to-execute — 2026-07-15  
 > **Scope:** 导入入口重组、对比器 chrome、自动保存（默认开）  
 > **Related:**  
+> - **Active plan:** `2026-07-15-ux-gap-closure.md`  
 > - v2 模型：`2026-07-15-project-core-zones-git-llm.md`  
 > - 补强：`2026-07-15-hardening-followups.md`  
 > - 设计：`docs/superpowers/specs/2026-07-15-paper-diff-design.md`
