@@ -2,6 +2,7 @@
 name = "paper-diff-api"
 version = "0.1.0"
 description = "Backend for LaTeX paper diff + compile"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
