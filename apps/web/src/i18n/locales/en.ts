@@ -340,6 +340,8 @@ export default {
     showToolTips: "Show tooltips",
     compactWorkbench: "Compact workbench (experimental)",
     autoSave: "Auto-save (flush after 3s idle)",
+    wordWrap: "Word wrap",
+    wordWrapHint: "Wrap editor/comparer lines to viewport (toggle Alt/Option+Z)",
     openOutputTab: "Open output tool",
     openPdfTab: "Open PDF tool",
     exportAcceptLog: "Export accept log",

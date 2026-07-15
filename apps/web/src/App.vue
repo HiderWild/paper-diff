@@ -155,6 +155,11 @@ const commandItems = computed(() => {
       run: () => layout.toggleBottom(),
     },
     {
+      id: "toggleWordWrap",
+      label: t("settings.wordWrap") + " (Alt+Z)",
+      run: () => settings.toggleWordWrap(),
+    },
+    {
       id: "toggleFiles",
       label: t("toolbar.toggleFiles"),
       run: () => layout.toggleFiles(),
@@ -203,6 +208,12 @@ function onGlobalKey(e: KeyboardEvent) {
   ) {
     e.preventDefault();
     layout.toggleBottom();
+    return;
+  }
+  // Alt/Option+Z — toggle Monaco word wrap (like VS Code)
+  if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyZ") {
+    e.preventDefault();
+    settings.toggleWordWrap();
     return;
   }
   if (e.key === "Escape") {

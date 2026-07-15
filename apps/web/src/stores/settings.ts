@@ -14,6 +14,8 @@ export type SettingsState = {
   showToolTips: boolean;
   /** Default ON: flush dirty work files after idle */
   autoSave: boolean;
+  /** Monaco word wrap (Alt/Option+Z) */
+  wordWrap: boolean;
 };
 
 const DEFAULTS: SettingsState = {
@@ -22,6 +24,7 @@ const DEFAULTS: SettingsState = {
   compactWorkbench: false,
   showToolTips: true,
   autoSave: true,
+  wordWrap: false,
 };
 
 function load(): SettingsState {
@@ -46,6 +49,7 @@ function load(): SettingsState {
       parsed.locale = "zh-CN";
     }
     if (typeof parsed.autoSave !== "boolean") parsed.autoSave = true;
+    if (typeof parsed.wordWrap !== "boolean") parsed.wordWrap = false;
     return parsed;
   } catch {
     return { ...DEFAULTS };
@@ -76,6 +80,7 @@ export const useSettingsStore = defineStore("settings", () => {
   const compactWorkbench = ref(initial.compactWorkbench);
   const showToolTips = ref(initial.showToolTips);
   const autoSave = ref(initial.autoSave !== false);
+  const wordWrap = ref(!!initial.wordWrap);
 
   const resolvedTheme = computed(() => resolveTheme(theme.value));
   const monacoTheme = computed(() =>
@@ -89,6 +94,7 @@ export const useSettingsStore = defineStore("settings", () => {
       compactWorkbench: compactWorkbench.value,
       showToolTips: showToolTips.value,
       autoSave: autoSave.value,
+      wordWrap: wordWrap.value,
     };
     try {
       localStorage.setItem(KEY, JSON.stringify(s));
@@ -107,6 +113,14 @@ export const useSettingsStore = defineStore("settings", () => {
     setLocale(l);
   }
 
+  function toggleWordWrap() {
+    wordWrap.value = !wordWrap.value;
+  }
+
+  function setWordWrap(v: boolean) {
+    wordWrap.value = v;
+  }
+
   function init() {
     setLocale(locale.value);
     applyThemeToDocument(theme.value);
@@ -119,9 +133,11 @@ export const useSettingsStore = defineStore("settings", () => {
     }
   }
 
-  watch([theme, locale, compactWorkbench, showToolTips, autoSave], persist, {
-    deep: true,
-  });
+  watch(
+    [theme, locale, compactWorkbench, showToolTips, autoSave, wordWrap],
+    persist,
+    { deep: true }
+  );
 
   // apply on store creation
   applyThemeToDocument(theme.value);
@@ -132,10 +148,13 @@ export const useSettingsStore = defineStore("settings", () => {
     compactWorkbench,
     showToolTips,
     autoSave,
+    wordWrap,
     resolvedTheme,
     monacoTheme,
     setTheme,
     setAppLocale,
+    toggleWordWrap,
+    setWordWrap,
     init,
     persist,
   };
