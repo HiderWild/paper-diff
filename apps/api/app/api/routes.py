@@ -4,7 +4,7 @@ import json
 import time
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
 from app.core.config import Settings, get_settings
@@ -13,11 +13,17 @@ from app.schemas.dto import (
     AcceptAllRequest,
     AcceptFileRequest,
     AcceptRequest,
+    ActivateZoneRequest,
     CompareEnqueueRequest,
     CompareFileRequest,
     CompileRequest,
+    CreateZoneRequest,
     GitCommitRequest,
     GitImportRequest,
+    GitRestoreRequest,
+    GitZoneFromCommitRequest,
+    PutWorkFileRequest,
+    RenameZoneRequest,
     SetRootRequest,
     UndoRequest,
 )
@@ -29,6 +35,7 @@ from app.services.compile_service import (
 )
 from app.services.git_service import GitService
 from app.services.project_service import ProjectService
+from app.services.zone_service import ZoneService
 
 router = APIRouter(prefix="/api/v1")
 
@@ -49,6 +56,10 @@ def git(settings: Settings = Depends(get_settings)) -> GitService:
     return GitService(settings)
 
 
+def zones(settings: Settings = Depends(get_settings)) -> ZoneService:
+    return ZoneService(settings)
+
+
 @router.post("/projects")
 def create_project(svc: ProjectService = Depends(projects)):
     return svc.create_project()
@@ -66,6 +77,75 @@ def set_root(
     svc: ProjectService = Depends(projects),
 ):
     return svc.set_root(project_id, body.root_file)
+
+
+@router.post("/projects/{project_id}/work/import/zip")
+async def import_work_zip(
+    project_id: str,
+    work: UploadFile = File(...),
+    svc: ProjectService = Depends(projects),
+):
+    data = await work.read()
+    max_b = svc.settings.max_upload_mb * 1024 * 1024
+    if len(data) > max_b:
+        raise AppError("UPLOAD_TOO_LARGE", "zip too large", status_code=413)
+    return svc.import_work_zip(project_id, data)
+
+
+@router.post("/projects/{project_id}/work/import/files")
+async def import_work_files(
+    project_id: str,
+    files: list[UploadFile] = File(...),
+    paths: str | None = Form(default=None),
+    svc: ProjectService = Depends(projects),
+):
+    """Multipart upload. Optional `paths` JSON array of relative paths (same order as files)."""
+    rels: list[str] | None = None
+    if paths:
+        try:
+            rels = json.loads(paths)
+        except json.JSONDecodeError as e:
+            raise AppError("VALIDATION_ERROR", f"invalid paths json: {e}", status_code=422) from e
+    items = []
+    for i, f in enumerate(files):
+        data = await f.read()
+        rel = None
+        if rels and i < len(rels):
+            rel = rels[i]
+        else:
+            rel = f.filename or f"file_{i}"
+        items.append({"path": rel, "content": data})
+    return svc.import_work_files(project_id, items)
+
+
+@router.get("/projects/{project_id}/work/tree")
+def work_tree(project_id: str, svc: ProjectService = Depends(projects)):
+    return svc.work_tree(project_id)
+
+
+@router.get("/projects/{project_id}/work/file")
+def work_file(project_id: str, path: str, svc: ProjectService = Depends(projects)):
+    return svc.work_file(project_id, path)
+
+
+@router.put("/projects/{project_id}/work/file")
+def put_work_file(
+    project_id: str,
+    path: str,
+    body: PutWorkFileRequest,
+    svc: ProjectService = Depends(projects),
+):
+    return svc.put_work_file(project_id, path, body.content)
+
+
+@router.get("/projects/{project_id}/work/export.zip")
+def export_work(project_id: str, svc: ProjectService = Depends(projects)):
+    data = svc.export_merged_zip(project_id)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{project_id}-work.zip"'},
+    )
 
 
 @router.post("/projects/{project_id}/versions/upload")
@@ -96,7 +176,6 @@ def import_git(
         revised_ref=body.revised_ref,
         subdir=body.subdir,
     )
-
 
 
 @router.get("/projects/{project_id}/tree")
@@ -135,7 +214,6 @@ def compare_file(
     body: CompareFileRequest,
     svc: CompareService = Depends(comparer),
 ):
-    """High-priority compare for a single path (e.g. user opened the file)."""
     return svc.enqueue(
         project_id,
         paths=[body.path],
@@ -144,9 +222,135 @@ def compare_file(
     )
 
 
+# --- Zones ---
+
+
+@router.get("/projects/{project_id}/zones")
+def list_zones(project_id: str, svc: ZoneService = Depends(zones)):
+    return svc.list_zones(project_id)
+
+
+@router.post("/projects/{project_id}/zones")
+def create_zone(
+    project_id: str,
+    body: CreateZoneRequest | None = None,
+    svc: ZoneService = Depends(zones),
+):
+    body = body or CreateZoneRequest()
+    return svc.create_zone(project_id, name=body.name)
+
+
+@router.delete("/projects/{project_id}/zones/{zone_id}")
+def delete_zone(project_id: str, zone_id: str, svc: ZoneService = Depends(zones)):
+    return svc.delete_zone(project_id, zone_id)
+
+
+@router.patch("/projects/{project_id}/zones/{zone_id}")
+def rename_zone(
+    project_id: str,
+    zone_id: str,
+    body: RenameZoneRequest,
+    svc: ZoneService = Depends(zones),
+):
+    return svc.rename_zone(project_id, zone_id, body.name)
+
+
+@router.post("/projects/{project_id}/zones/{zone_id}/activate")
+def activate_zone_path(
+    project_id: str,
+    zone_id: str,
+    svc: ZoneService = Depends(zones),
+):
+    return svc.activate_zone(project_id, zone_id)
+
+
+@router.post("/projects/{project_id}/zones/activate")
+def activate_zone_body(
+    project_id: str,
+    body: ActivateZoneRequest,
+    svc: ZoneService = Depends(zones),
+):
+    return svc.activate_zone(project_id, body.zone_id)
+
+
+@router.post("/projects/{project_id}/zones/{zone_id}/import/zip")
+async def import_zone_zip(
+    project_id: str,
+    zone_id: str,
+    file: UploadFile = File(...),
+    svc: ZoneService = Depends(zones),
+    psvc: ProjectService = Depends(projects),
+):
+    data = await file.read()
+    max_b = psvc.settings.max_upload_mb * 1024 * 1024
+    if len(data) > max_b:
+        raise AppError("UPLOAD_TOO_LARGE", "zip too large", status_code=413)
+    return svc.import_zone_zip(project_id, zone_id, data, label=file.filename or "zone.zip")
+
+
+@router.post("/projects/{project_id}/zones/{zone_id}/import/files")
+async def import_zone_files(
+    project_id: str,
+    zone_id: str,
+    files: list[UploadFile] = File(...),
+    paths: str | None = Form(default=None),
+    svc: ZoneService = Depends(zones),
+):
+    rels: list[str] | None = None
+    if paths:
+        try:
+            rels = json.loads(paths)
+        except json.JSONDecodeError as e:
+            raise AppError("VALIDATION_ERROR", f"invalid paths json: {e}", status_code=422) from e
+    items: list[tuple[str, bytes]] = []
+    for i, f in enumerate(files):
+        data = await f.read()
+        rel = rels[i] if rels and i < len(rels) else (f.filename or f"file_{i}")
+        items.append((rel, data))
+    return svc.import_zone_files(project_id, zone_id, items)
+
+
+@router.get("/projects/{project_id}/zones/{zone_id}/tree")
+def zone_tree(project_id: str, zone_id: str, svc: ZoneService = Depends(zones)):
+    return svc.zone_tree(project_id, zone_id)
+
+
+@router.get("/projects/{project_id}/zones/{zone_id}/file")
+def zone_file(
+    project_id: str,
+    zone_id: str,
+    path: str,
+    svc: ZoneService = Depends(zones),
+):
+    return svc.zone_file(project_id, zone_id, path)
+
+
+@router.post("/projects/{project_id}/zones/from-work")
+def zone_from_work(
+    project_id: str,
+    body: CreateZoneRequest | None = None,
+    svc: ZoneService = Depends(zones),
+):
+    body = body or CreateZoneRequest()
+    return svc.clone_work_as_zone(project_id, name=body.name)
+
+
+# --- Git ---
+
+
 @router.get("/projects/{project_id}/git/status")
 def git_status(project_id: str, svc: GitService = Depends(git)):
     return svc.status(project_id)
+
+
+@router.get("/projects/{project_id}/git/log")
+def git_log(
+    project_id: str,
+    max_count: int = Query(default=50, ge=1, le=200),
+    path: str | None = None,
+    svc: GitService = Depends(git),
+):
+    return svc.log(project_id, max_count=max_count, path=path)
 
 
 @router.post("/projects/{project_id}/git/commit")
@@ -160,7 +364,31 @@ def git_commit(
         message=body.message,
         paths=body.paths,
         sync_from_merged=body.sync_from_merged,
+        sync_from_work=body.sync_from_work,
     )
+
+
+@router.post("/projects/{project_id}/git/restore")
+def git_restore(
+    project_id: str,
+    body: GitRestoreRequest,
+    svc: GitService = Depends(git),
+):
+    return svc.restore(
+        project_id, paths=body.paths, ref=body.ref, mode=body.mode
+    )
+
+
+@router.post("/projects/{project_id}/git/zone-from-commit")
+def git_zone_from_commit(
+    project_id: str,
+    body: GitZoneFromCommitRequest,
+    svc: GitService = Depends(git),
+):
+    return svc.zone_from_commit(project_id, ref=body.ref, name=body.name)
+
+
+# --- Accept / export ---
 
 
 @router.post("/projects/{project_id}/accept")
@@ -202,6 +430,8 @@ def export_merged(project_id: str, svc: ProjectService = Depends(projects)):
 def accept_report(project_id: str, svc: ProjectService = Depends(projects)):
     return svc.accept_report(project_id)
 
+
+# --- Compile ---
 
 
 @router.post("/projects/{project_id}/compile")
@@ -253,14 +483,10 @@ def project_events(
     job_id: str | None = Query(default=None),
     svc: CompileService = Depends(compiler),
 ):
-    """Server-Sent Events for compile progress. Ends after job finishes if job_id set."""
-
     def gen() -> Iterator[str]:
         q = subscribe_events(project_id)
         try:
-            # immediate heartbeat
             yield "event: heartbeat\ndata: {}\n\n"
-            # if job already done, emit and stop
             if job_id:
                 try:
                     job = svc.get_job(project_id, job_id)
@@ -275,7 +501,6 @@ def project_events(
                     msg = q.get(timeout=1.0)
                 except Exception:
                     yield "event: heartbeat\ndata: {}\n\n"
-                    # poll job completion as fallback
                     if job_id:
                         try:
                             job = svc.get_job(project_id, job_id)
@@ -309,3 +534,31 @@ def project_events(
     )
 
 
+# --- Agent stubs (contract first) ---
+
+
+@router.post("/projects/{project_id}/agent/analyze")
+def agent_analyze(project_id: str):
+    return {
+        "status": "not_configured",
+        "message": "Agent provider not configured. Set provider env later.",
+        "project_id": project_id,
+    }
+
+
+@router.post("/projects/{project_id}/agent/propose")
+def agent_propose(project_id: str):
+    return {
+        "status": "not_configured",
+        "message": "Agent provider not configured",
+        "project_id": project_id,
+    }
+
+
+@router.post("/projects/{project_id}/agent/apply")
+def agent_apply(project_id: str):
+    return {
+        "status": "not_configured",
+        "message": "Agent provider not configured",
+        "project_id": project_id,
+    }

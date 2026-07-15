@@ -1,9 +1,11 @@
-"""Git facade: status / commit for local repos bound to a project."""
+"""Git facade: project-local .git and optional external bound repo."""
 
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 from app.core.config import Settings
@@ -18,25 +20,11 @@ class GitService:
     def _ws(self, project_id: str) -> Workspace:
         return Workspace(self.settings.workspace_root, project_id)
 
-    def _repo_from_meta(self, meta: dict) -> tuple[Path, str | None]:
-        versions = meta.get("versions") or {}
-        base = versions.get("base") or {}
-        repo = base.get("repo") or (meta.get("git") or {}).get("repo")
-        subdir = base.get("subdir") or (meta.get("git") or {}).get("subdir")
-        if not repo:
-            raise AppError(
-                "GIT_NOT_BOUND",
-                "project has no local git repo path; import from a local repo first",
-                status_code=400,
-            )
-        path = Path(repo).expanduser()
-        if not path.exists():
-            raise AppError("GIT_ERROR", f"repo path not found: {repo}", status_code=400)
+    def _run(
+        self, repo: Path, args: list[str], check: bool = True
+    ) -> subprocess.CompletedProcess:
         if not shutil.which("git"):
             raise AppError("GIT_UNAVAILABLE", "git not found on PATH", status_code=503)
-        return path, subdir
-
-    def _run(self, repo: Path, args: list[str], check: bool = True) -> subprocess.CompletedProcess:
         proc = subprocess.run(
             ["git", *args],
             cwd=str(repo),
@@ -52,7 +40,76 @@ class GitService:
             )
         return proc
 
-    def name_status(self, repo: Path, base_ref: str, revised_ref: str, subdir: str | None) -> list[dict]:
+    def ensure_repo(self, project_id: str) -> Path:
+        """Init project-local git at project_dir if missing. Returns repo root."""
+        ws = self._ws(project_id)
+        ws.ensure_dirs()
+        repo = ws.project_dir
+        git_dir = repo / ".git"
+        if not git_dir.exists():
+            if not shutil.which("git"):
+                raise AppError("GIT_UNAVAILABLE", "git not found on PATH", status_code=503)
+            self._run(repo, ["init"])
+            # local identity so commits work without global git config
+            self._run(repo, ["config", "user.email", "paper-diff@local"], check=False)
+            self._run(repo, ["config", "user.name", "paper-diff"], check=False)
+            # ignore non-work project dirs
+            ignore = repo / ".gitignore"
+            if not ignore.exists():
+                ignore.write_text(
+                    "\n".join(
+                        [
+                            "base/",
+                            "revised/",
+                            "zones/",
+                            "snapshots/",
+                            "artifacts/",
+                            "jobs/",
+                            "latexdiff_work/",
+                            "meta.json",
+                            ".meta_*.json",
+                            "",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+        return repo
+
+    def _local_repo(self, project_id: str) -> Path | None:
+        ws = self._ws(project_id)
+        if (ws.project_dir / ".git").exists():
+            return ws.project_dir
+        return None
+
+    def _external_repo(self, meta: dict) -> tuple[Path, str | None] | None:
+        versions = meta.get("versions") or {}
+        base = versions.get("base") or {}
+        repo = base.get("repo") or (meta.get("git") or {}).get("repo")
+        subdir = base.get("subdir") or (meta.get("git") or {}).get("subdir")
+        if not repo:
+            return None
+        path = Path(repo).expanduser()
+        if not path.exists():
+            return None
+        return path, subdir
+
+    def _resolve_repo(self, project_id: str) -> tuple[Path, str | None, str]:
+        """Return (repo_path, subdir, mode) where mode is local|external."""
+        ws = self._ws(project_id)
+        meta = ws.load_meta()
+        ext = self._external_repo(meta)
+        if ext:
+            return ext[0], ext[1], "external"
+        local = self._local_repo(project_id)
+        if local:
+            return local, None, "local"
+        # auto ensure local
+        repo = self.ensure_repo(project_id)
+        return repo, None, "local"
+
+    def name_status(
+        self, repo: Path, base_ref: str, revised_ref: str, subdir: str | None
+    ) -> list[dict]:
         args = ["diff", "--name-status", f"{base_ref}...{revised_ref}"]
         if subdir:
             args.append("--")
@@ -79,7 +136,12 @@ class GitService:
     def status(self, project_id: str) -> dict:
         ws = self._ws(project_id)
         meta = ws.load_meta()
-        repo, _ = self._repo_from_meta(meta)
+        try:
+            repo, subdir, mode = self._resolve_repo(project_id)
+        except AppError:
+            raise
+        if not shutil.which("git"):
+            raise AppError("GIT_UNAVAILABLE", "git not found on PATH", status_code=503)
         proc = self._run(repo, ["status", "--porcelain=v1", "-b"], check=False)
         branch = ""
         files: list[dict] = []
@@ -89,15 +151,56 @@ class GitService:
                 continue
             if len(line) < 3:
                 continue
-            files.append({"xy": line[:2], "path": line[3:].strip()})
+            path = line[3:].strip()
+            if mode == "local" and path.startswith("work/"):
+                path = path[5:]
+            files.append({"xy": line[:2], "path": path})
         return {
             "repo": str(repo),
+            "mode": mode,
             "branch": branch,
             "files": files,
             "dirty": bool(files),
             "base_ref": (meta.get("versions") or {}).get("base", {}).get("ref"),
             "revised_ref": (meta.get("versions") or {}).get("revised", {}).get("ref"),
+            "subdir": subdir,
         }
+
+    def log(
+        self, project_id: str, max_count: int = 50, path: str | None = None
+    ) -> dict:
+        repo, subdir, mode = self._resolve_repo(project_id)
+        n = max(1, min(int(max_count or 50), 200))
+        args = [
+            "log",
+            f"-{n}",
+            "--pretty=format:%H%x09%h%x09%an%x09%ae%x09%cI%x09%s",
+        ]
+        if path:
+            rel = path.replace("\\", "/").lstrip("/")
+            if mode == "local" and not rel.startswith("work/"):
+                rel = f"work/{rel}"
+            elif mode == "external" and subdir:
+                rel = f"{subdir.rstrip('/')}/{rel}"
+            args.extend(["--", rel])
+        proc = self._run(repo, args, check=False)
+        commits = []
+        if proc.returncode == 0:
+            for line in (proc.stdout or "").splitlines():
+                parts = line.split("\t")
+                if len(parts) < 6:
+                    continue
+                commits.append(
+                    {
+                        "sha": parts[0],
+                        "short": parts[1],
+                        "author": parts[2],
+                        "email": parts[3],
+                        "date": parts[4],
+                        "subject": parts[5],
+                    }
+                )
+        return {"repo": str(repo), "mode": mode, "commits": commits}
 
     def commit(
         self,
@@ -105,40 +208,234 @@ class GitService:
         message: str,
         paths: list[str] | None = None,
         sync_from_merged: bool = True,
+        sync_from_work: bool | None = None,
     ) -> dict:
-        """Optionally copy merged files into the repo worktree, then commit."""
+        """Stage from work into local or external repo, then commit."""
+        if sync_from_work is not None:
+            sync_from_merged = sync_from_work
         ws = self._ws(project_id)
         meta = ws.load_meta()
-        repo, subdir = self._repo_from_meta(meta)
         if not message or not message.strip():
             raise AppError("VALIDATION_ERROR", "commit message required", status_code=422)
 
-        if sync_from_merged:
-            # Copy selected (or all revised-aligned text/binary under merge) into repo
-            target_root = repo / subdir if subdir else repo
-            targets = paths
-            if not targets:
-                targets = ws.list_files("merged")
-            for rel in targets:
-                src = ws.resolve_under(ws.merged_dir, rel)
-                if not src.is_file():
-                    continue
-                dest = target_root / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(src.read_bytes())
-                stage_path = str(Path(subdir) / rel) if subdir else rel
-                self._run(repo, ["add", "--", stage_path], check=False)
+        repo, subdir, mode = self._resolve_repo(project_id)
 
-        if paths and not sync_from_merged:
-            for rel in paths:
-                stage_path = str(Path(subdir) / rel) if subdir else rel
-                self._run(repo, ["add", "--", stage_path], check=False)
+        if mode == "local":
+            # stage work/ tree (and .gitignore)
+            if sync_from_merged:
+                targets = paths
+                if not targets:
+                    targets = ws.list_files("work")
+                for rel in targets:
+                    src = ws.resolve_under(ws.work_dir, rel)
+                    if not src.is_file():
+                        continue
+                    # path under repo is work/<rel>
+                    self._run(repo, ["add", "--", f"work/{rel}"], check=False)
+                # ensure gitignore tracked
+                if (repo / ".gitignore").exists():
+                    self._run(repo, ["add", "--", ".gitignore"], check=False)
+            elif paths:
+                for rel in paths:
+                    self._run(repo, ["add", "--", f"work/{rel}"], check=False)
+        else:
+            # external: copy work into repo worktree
+            if sync_from_merged:
+                target_root = repo / subdir if subdir else repo
+                targets = paths
+                if not targets:
+                    targets = ws.list_files("work")
+                for rel in targets:
+                    src = ws.resolve_under(ws.work_dir, rel)
+                    if not src.is_file():
+                        continue
+                    dest = target_root / rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(src.read_bytes())
+                    stage_path = str(Path(subdir) / rel) if subdir else rel
+                    self._run(repo, ["add", "--", stage_path], check=False)
+            elif paths:
+                for rel in paths:
+                    stage_path = str(Path(subdir) / rel) if subdir else rel
+                    self._run(repo, ["add", "--", stage_path], check=False)
 
-        # Nothing to commit?
         dry = self._run(repo, ["status", "--porcelain"], check=False)
         if not (dry.stdout or "").strip():
-            return {"committed": False, "message": "nothing to commit", "sha": None}
+            return {"committed": False, "message": "nothing to commit", "sha": None, "mode": mode}
 
+        # allow empty identity edge case: ensure config
+        self._run(repo, ["config", "user.email", "paper-diff@local"], check=False)
+        self._run(repo, ["config", "user.name", "paper-diff"], check=False)
         self._run(repo, ["commit", "-m", message.strip()])
         sha = self._run(repo, ["rev-parse", "HEAD"]).stdout.strip()
-        return {"committed": True, "message": message.strip(), "sha": sha, "repo": str(repo)}
+        return {
+            "committed": True,
+            "message": message.strip(),
+            "sha": sha,
+            "repo": str(repo),
+            "mode": mode,
+        }
+
+    def restore(
+        self,
+        project_id: str,
+        paths: list[str] | None = None,
+        ref: str | None = None,
+        mode: str = "discard",
+    ) -> dict:
+        """Restore work files from git.
+
+        mode=discard: restore worktree from HEAD (or ref) for given paths.
+        mode=checkout: same as discard for now.
+        """
+        ws = self._ws(project_id)
+        repo, subdir, repo_mode = self._resolve_repo(project_id)
+        ref = ref or "HEAD"
+        mode = (mode or "discard").lower()
+        if mode not in ("discard", "checkout"):
+            raise AppError("VALIDATION_ERROR", f"unknown mode: {mode}", status_code=422)
+
+        restored: list[str] = []
+        if repo_mode == "local":
+            if paths:
+                for rel in paths:
+                    rel = rel.replace("\\", "/").lstrip("/")
+                    git_path = f"work/{rel}"
+                    proc = self._run(
+                        repo, ["checkout", ref, "--", git_path], check=False
+                    )
+                    if proc.returncode == 0:
+                        restored.append(rel)
+            else:
+                # restore entire work/
+                proc = self._run(repo, ["checkout", ref, "--", "work"], check=False)
+                if proc.returncode == 0:
+                    restored = ws.list_files("work")
+        else:
+            # external: checkout into temp path then copy
+            target_root = repo / subdir if subdir else repo
+            if paths:
+                for rel in paths:
+                    rel = rel.replace("\\", "/").lstrip("/")
+                    stage = str(Path(subdir) / rel) if subdir else rel
+                    proc = self._run(repo, ["show", f"{ref}:{stage}"], check=False)
+                    if proc.returncode != 0:
+                        continue
+                    # write to work
+                    dest = ws.resolve_under(ws.work_dir, rel)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    # proc.stdout is text — re-run for binary
+                    raw = subprocess.run(
+                        ["git", "show", f"{ref}:{stage}"],
+                        cwd=str(repo),
+                        capture_output=True,
+                        check=False,
+                    )
+                    if raw.returncode == 0:
+                        dest.write_bytes(raw.stdout)
+                        restored.append(rel)
+            else:
+                # archive whole tree at ref
+                cmd = ["git", "archive", "--format=tar", ref]
+                if subdir:
+                    cmd.append(f"{subdir}/")
+                proc = subprocess.run(cmd, cwd=str(repo), capture_output=True, check=False)
+                if proc.returncode != 0:
+                    raise AppError(
+                        "GIT_ERROR",
+                        (proc.stderr or b"").decode("utf-8", errors="replace"),
+                        status_code=400,
+                    )
+                with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tar:
+                    for member in tar.getmembers():
+                        if not member.isfile():
+                            continue
+                        name = member.name.replace("\\", "/")
+                        if subdir and name.startswith(subdir.rstrip("/") + "/"):
+                            name = name[len(subdir.rstrip("/")) + 1 :]
+                        parts = [p for p in name.split("/") if p and p != "."]
+                        if not parts or any(p == ".." for p in parts):
+                            continue
+                        rel = "/".join(parts)
+                        f = tar.extractfile(member)
+                        if not f:
+                            continue
+                        dest = ws.resolve_under(ws.work_dir, rel)
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(f.read())
+                        restored.append(rel)
+
+        return {"restored": restored, "ref": ref, "mode": mode, "repo_mode": repo_mode}
+
+    def zone_from_commit(
+        self,
+        project_id: str,
+        ref: str,
+        name: str | None = None,
+    ) -> dict:
+        """Archive commit into a new compare zone."""
+        from app.services.zone_service import ZoneService
+
+        ws = self._ws(project_id)
+        if not ws.meta_path.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        repo, subdir, _mode = self._resolve_repo(project_id)
+        if not ref:
+            raise AppError("VALIDATION_ERROR", "ref required", status_code=422)
+
+        cmd = ["git", "archive", "--format=tar", ref]
+        if subdir:
+            cmd.append(f"{subdir}/")
+        proc = subprocess.run(cmd, cwd=str(repo), capture_output=True, check=False)
+        if proc.returncode != 0:
+            raise AppError(
+                "GIT_ERROR",
+                (proc.stderr or b"").decode("utf-8", errors="replace"),
+                status_code=400,
+            )
+
+        zs = ZoneService(self.settings)
+        zmeta = zs.create_zone(
+            project_id,
+            name=name or f"git {ref[:12]}",
+            source="git",
+        )
+        zid = zmeta["id"]
+        dest = ws.zone_dir(zid)
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tar:
+            for member in tar.getmembers():
+                if not member.isfile():
+                    continue
+                n = member.name.replace("\\", "/")
+                if subdir and n.startswith(subdir.rstrip("/") + "/"):
+                    n = n[len(subdir.rstrip("/")) + 1 :]
+                parts = [p for p in n.split("/") if p and p != "."]
+                if not parts or any(p == ".." for p in parts):
+                    continue
+                target = dest.joinpath(*parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                f = tar.extractfile(member)
+                if f:
+                    target.write_bytes(f.read())
+        # hoist single top-level
+        children = list(dest.iterdir())
+        if len(children) == 1 and children[0].is_dir():
+            only = children[0]
+            tmp = dest.parent / f".hoist_{dest.name}"
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            only.rename(tmp)
+            shutil.rmtree(dest)
+            tmp.rename(dest)
+
+        files = ws.list_files_in(dest)
+        return {
+            "zone_id": zid,
+            "ref": ref,
+            "name": zmeta["name"],
+            "file_count": len(files),
+            "meta": zmeta,
+        }

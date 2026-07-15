@@ -35,7 +35,7 @@ class UndoRequest(BaseModel):
 
 
 class CompileRequest(BaseModel):
-    side: Literal["merged", "base", "revised"] = "merged"
+    side: Literal["merged", "base", "revised", "work"] = "work"
     recipe: str = "latexmk"
     engine: str = "pdflatex"
     root_file: str | None = None
@@ -73,5 +73,31 @@ class GitCommitRequest(BaseModel):
     message: str
     paths: list[str] | None = None
     sync_from_merged: bool = True
+    sync_from_work: bool | None = None
 
 
+class GitRestoreRequest(BaseModel):
+    paths: list[str] | None = None
+    ref: str | None = None
+    mode: Literal["discard", "checkout"] = "discard"
+
+
+class GitZoneFromCommitRequest(BaseModel):
+    ref: str
+    name: str | None = None
+
+
+class CreateZoneRequest(BaseModel):
+    name: str | None = None
+
+
+class RenameZoneRequest(BaseModel):
+    name: str
+
+
+class PutWorkFileRequest(BaseModel):
+    content: str
+
+
+class ActivateZoneRequest(BaseModel):
+    zone_id: str | None = None

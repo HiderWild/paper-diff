@@ -1,4 +1,4 @@
-"""Safe path resolution and workspace file helpers."""
+"""Safe path resolution and workspace file helpers (v2: work + zones)."""
 
 from __future__ import annotations
 
@@ -24,30 +24,61 @@ def _meta_lock(project_id: str) -> threading.RLock:
 
 
 class Workspace:
+    """Project layout: work/ (truth) + zones/{id}/tree + optional base/revised legacy dirs."""
+
     def __init__(self, root: Path, project_id: str):
         self.root = root.resolve()
         self.project_id = project_id
         self.project_dir = self.root / project_id
+        self.work_dir = self.project_dir / "work"
+        self.zones_dir = self.project_dir / "zones"
+        # Legacy dual-zip materialization (kept for compat; dual-upload still fills them)
         self.base_dir = self.project_dir / "base"
         self.revised_dir = self.project_dir / "revised"
-        self.merged_dir = self.project_dir / "merged"
         self.meta_path = self.project_dir / "meta.json"
         self.snapshots_dir = self.project_dir / "snapshots"
+
+    @property
+    def merged_dir(self) -> Path:
+        """Accept/compile target is the work tree (merged is an alias for v1 API)."""
+        return self.work_dir
 
     def ensure_dirs(self) -> None:
         for d in (
             self.project_dir,
+            self.work_dir,
+            self.zones_dir,
             self.base_dir,
             self.revised_dir,
-            self.merged_dir,
             self.snapshots_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
+    def zone_root(self, zone_id: str) -> Path:
+        return self.zones_dir / zone_id
+
+    def zone_tree_dir(self, zone_id: str) -> Path:
+        return self.zone_root(zone_id) / "tree"
+
+    def zone_dir(self, zone_id: str) -> Path:
+        """Alias: zone file tree root (zones/{id}/tree)."""
+        return self.zone_tree_dir(zone_id)
+
+    def zone_meta_path(self, zone_id: str) -> Path:
+        return self.zone_root(zone_id) / "meta.json"
+
+    def list_zone_ids(self) -> list[str]:
+        if not self.zones_dir.exists():
+            return []
+        ids = []
+        for p in sorted(self.zones_dir.iterdir()):
+            if p.is_dir() and (p / "meta.json").exists():
+                ids.append(p.name)
+        return ids
+
     def resolve_under(self, side_dir: Path, rel_path: str) -> Path:
         if not rel_path or rel_path.startswith("/") or rel_path.startswith("\\"):
             raise AppError("PATH_TRAVERSAL", "invalid path", status_code=400)
-        # Normalize separators
         clean = rel_path.replace("\\", "/").lstrip("/")
         parts = [p for p in clean.split("/") if p and p != "."]
         if any(p == ".." for p in parts):
@@ -59,6 +90,20 @@ class Workspace:
         except ValueError as e:
             raise AppError("PATH_TRAVERSAL", "path escapes workspace", status_code=400) from e
         return target
+
+    def _side_dir(self, side: str) -> Path:
+        if side in ("work", "merged"):
+            return self.work_dir
+        if side == "base":
+            return self.base_dir
+        if side == "revised":
+            return self.revised_dir
+        if side.startswith("zone:"):
+            zid = side[5:]
+            if not zid or "/" in zid or "\\" in zid or ".." in zid:
+                raise AppError("VALIDATION_ERROR", f"invalid zone id: {zid}", status_code=422)
+            return self.zone_tree_dir(zid)
+        raise AppError("VALIDATION_ERROR", f"unknown side: {side}", status_code=422)
 
     def read_text(self, side: str, rel_path: str) -> str:
         side_dir = self._side_dir(side)
@@ -79,18 +124,11 @@ class Workspace:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
-    def _side_dir(self, side: str) -> Path:
-        mapping = {
-            "base": self.base_dir,
-            "revised": self.revised_dir,
-            "merged": self.merged_dir,
-        }
-        if side not in mapping:
-            raise AppError("VALIDATION_ERROR", f"unknown side: {side}", status_code=422)
-        return mapping[side]
-
     def list_files(self, side: str) -> list[str]:
         side_dir = self._side_dir(side)
+        return self.list_files_in(side_dir)
+
+    def list_files_in(self, side_dir: Path) -> list[str]:
         if not side_dir.exists():
             return []
         files: list[str] = []
@@ -109,7 +147,6 @@ class Workspace:
             self._write_meta_unlocked(meta)
 
     def mutate_meta(self, mutator) -> dict:
-        """Atomically load → mutator(meta) → save. mutator may return new meta or mutate in place."""
         with _meta_lock(self.project_id):
             meta = self._load_meta_unlocked()
             result = mutator(meta)
@@ -126,6 +163,8 @@ class Workspace:
                 "root_file": None,
                 "revisions": {},
                 "accept_log": [],
+                "model": "v2",
+                "active_zone_id": None,
             }
         text = self.meta_path.read_text(encoding="utf-8")
         if not text.strip():
@@ -135,6 +174,8 @@ class Workspace:
                 "root_file": None,
                 "revisions": {},
                 "accept_log": [],
+                "model": "v2",
+                "active_zone_id": None,
             }
         return json.loads(text)
 
