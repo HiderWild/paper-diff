@@ -2,22 +2,65 @@
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import * as pdfjs from "pdfjs-dist";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const { t } = useI18n();
 const props = defineProps<{ url: string | null }>();
+const host = ref<HTMLDivElement | null>(null);
 const container = ref<HTMLDivElement | null>(null);
 const error = ref("");
 const loading = ref(false);
-let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
-let renderGen = 0;
+/** User zoom multiplier (1 = fit-width baseline * 1) */
+const zoom = ref(1);
+const zoomPct = ref(100);
 
-async function render(url: string) {
+let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
+let pdfDoc: PDFDocumentProxy | null = null;
+let renderGen = 0;
+let pagesData: ArrayBuffer | null = null;
+
+function fitScaleForPage(
+  page: Awaited<ReturnType<PDFDocumentProxy["getPage"]>>
+) {
+  const base = page.getViewport({ scale: 1 });
+  const hostW = container.value?.clientWidth || host.value?.clientWidth || 720;
+  return Math.min(1.6, Math.max(0.5, (hostW - 24) / base.width));
+}
+
+async function paintPages() {
+  if (!pdfDoc || !container.value) return;
+  const gen = renderGen;
+  container.value.innerHTML = "";
+  const maxPages = Math.min(pdfDoc.numPages, 40);
+  for (let i = 1; i <= maxPages; i++) {
+    if (gen !== renderGen || !container.value || !pdfDoc) return;
+    const page = await pdfDoc.getPage(i);
+    const fit = fitScaleForPage(page);
+    const scale = fit * zoom.value;
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) continue;
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
+    container.value.appendChild(canvas);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+  }
+  zoomPct.value = Math.round(zoom.value * 100);
+}
+
+async function loadUrl(url: string) {
   const gen = ++renderGen;
   error.value = "";
   loading.value = true;
+  zoom.value = 1;
+  pdfDoc = null;
+  pagesData = null;
   await nextTick();
   if (!container.value) {
     loading.value = false;
@@ -33,37 +76,21 @@ async function render(url: string) {
     }
     loadingTask = null;
 
-    // Fetch into memory so pdf.js always gets ArrayBuffer (works with relative /api URLs)
     const res = await fetch(url, { credentials: "same-origin" });
     if (gen !== renderGen) return;
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => res.statusText)}`);
+      throw new Error(
+        `HTTP ${res.status}: ${await res.text().catch(() => res.statusText)}`
+      );
     }
     const data = await res.arrayBuffer();
     if (gen !== renderGen) return;
+    pagesData = data;
 
-    loadingTask = pdfjs.getDocument({ data });
-    const pdf = await loadingTask.promise;
+    loadingTask = pdfjs.getDocument({ data: data.slice(0) });
+    pdfDoc = await loadingTask.promise;
     if (gen !== renderGen) return;
-
-    const maxPages = Math.min(pdf.numPages, 40);
-    for (let i = 1; i <= maxPages; i++) {
-      if (gen !== renderGen || !container.value) return;
-      const page = await pdf.getPage(i);
-      const base = page.getViewport({ scale: 1 });
-      const hostW = container.value.clientWidth || 720;
-      const scale = Math.min(1.5, Math.max(0.8, (hostW - 16) / base.width));
-      const viewport = page.getViewport({ scale });
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) continue;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      canvas.style.maxWidth = "100%";
-      canvas.style.height = "auto";
-      container.value.appendChild(canvas);
-      await page.render({ canvasContext: ctx, viewport }).promise;
-    }
+    await paintPages();
   } catch (e) {
     if (gen === renderGen) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -73,15 +100,55 @@ async function render(url: string) {
   }
 }
 
+async function rezoom() {
+  if (!pdfDoc || !pagesData) return;
+  const gen = ++renderGen;
+  // keep pdfDoc; only repaint
+  loading.value = true;
+  try {
+    // renderGen already bumped — paintPages checks gen at start of each page
+    // Restore gen affinity: paintPages uses current renderGen
+    await paintPages();
+  } finally {
+    if (gen === renderGen) loading.value = false;
+  }
+}
+
+function onWheel(e: WheelEvent) {
+  // Ctrl/Cmd + wheel (trackpad pinch often sets ctrlKey on browsers)
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  const next = Math.min(4, Math.max(0.25, zoom.value * factor));
+  if (Math.abs(next - zoom.value) < 0.001) return;
+  zoom.value = next;
+  void rezoom();
+}
+
+function zoomBy(factor: number) {
+  zoom.value = Math.min(4, Math.max(0.25, zoom.value * factor));
+  void rezoom();
+}
+
+function zoomReset() {
+  zoom.value = 1;
+  void rezoom();
+}
+
 watch(
   () => props.url,
   (u) => {
-    if (u) void render(u);
+    if (u) void loadUrl(u);
     else {
       renderGen++;
+      pdfDoc = null;
+      pagesData = null;
       if (container.value) container.value.innerHTML = "";
       error.value = "";
       loading.value = false;
+      zoom.value = 1;
+      zoomPct.value = 100;
     }
   },
   { immediate: true }
@@ -89,6 +156,7 @@ watch(
 
 onBeforeUnmount(() => {
   renderGen++;
+  pdfDoc = null;
   try {
     loadingTask?.destroy();
   } catch {
@@ -98,7 +166,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="pdf-host">
+  <div ref="host" class="pdf-host" @wheel="onWheel">
+    <div class="pdf-toolbar">
+      <button type="button" class="mini secondary" @click="zoomBy(0.9)">−</button>
+      <span class="zoom-label">{{ zoomPct }}%</span>
+      <button type="button" class="mini secondary" @click="zoomBy(1.1)">+</button>
+      <button type="button" class="mini secondary" @click="zoomReset">
+        {{ t("pdf.zoomReset") }}
+      </button>
+      <span class="hint muted">{{ t("pdf.zoomHint") }}</span>
+    </div>
     <div v-if="!url" class="status-empty">{{ t("pdf.empty") }}</div>
     <div v-if="loading" class="status-empty">{{ t("preview.loading") }}</div>
     <div v-if="error" class="error">{{ error }}</div>
@@ -115,8 +192,30 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: var(--surface-deep, #0b0f14);
-  padding: 0.5rem;
-  gap: 0.5rem;
+  padding: 0.35rem 0.5rem 0.5rem;
+  gap: 0.35rem;
+}
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--panel-header) 92%, transparent);
+  padding: 0.25rem 0;
+  backdrop-filter: blur(4px);
+}
+.zoom-label {
+  min-width: 3rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+.hint {
+  font-size: 0.7rem;
+  margin-left: 0.35rem;
 }
 .pdf-pages {
   display: flex;
@@ -139,5 +238,8 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
   padding: 0.35rem;
   white-space: pre-wrap;
+}
+.muted {
+  color: var(--muted);
 }
 </style>

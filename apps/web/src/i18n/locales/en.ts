@@ -64,6 +64,7 @@ export default {
     agent: "Agent",
     settings: "Settings",
     bottomLog: "Output",
+    bottomLocked: "Pinned · Ctrl+`",
     sideProject: "project",
     sideZone: "zone",
     dragToRearrange: "Drag title bar to rearrange panes",
@@ -225,6 +226,8 @@ export default {
   pdf: {
     empty: "No PDF — open or drop a .pdf from the tree",
     noContainer: "Preview host not ready",
+    zoomReset: "Reset",
+    zoomHint: "Ctrl+scroll to zoom",
   },
   tree: {
     showDot: "Show dotfiles / folders",
