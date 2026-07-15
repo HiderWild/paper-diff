@@ -4,29 +4,42 @@ import {
   acceptAll,
   acceptFile,
   acceptOps,
+  activateZone,
   compareFile,
   compileLatexdiff,
   compileProject,
   createProject,
+  createZone,
+  deleteZone,
   enqueueCompare,
-  exportMergedUrl,
+  exportWorkUrl,
   getCompileJob,
   getCompileLog,
   getDiffIndex,
   getFilePair,
   getProject,
   gitCommit,
+  gitLog,
+  gitRestore,
   gitStatus,
   importGit,
+  importWorkZip,
+  importZoneFiles,
+  importZoneZip,
+  listZones,
   pdfUrl,
+  renameZone,
   setRoot,
   undo,
   uploadVersions,
+  zoneFromWork,
   type DiffIndexFile,
   type FilePair,
+  type GitCommit,
   type LineColRange,
   type ProjectDetail,
   type RootCandidate,
+  type Zone,
 } from "../shared/api";
 import type { DiffUnit } from "../features/diff/sentenceMapper";
 import { i18n } from "../i18n";
@@ -63,6 +76,9 @@ export const useProjectStore = defineStore("project", () => {
   } | null>(null);
   const gitInfo = ref<ProjectDetail["git"]>(null);
   const gitStatusText = ref("");
+  const zones = ref<Zone[]>([]);
+  const activeZoneId = ref<string | null>(null);
+  const gitCommits = ref<GitCommit[]>([]);
   let compileDebounce: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -97,15 +113,25 @@ export const useProjectStore = defineStore("project", () => {
     rootRecommended.value = detail.root_recommended ?? null;
     rootCandidates.value = detail.root_candidates || [];
     gitInfo.value = detail.git ?? null;
-    if (!rootFile.value && rootRecommended.value) {
-      // Soft default for UI select only — compile still requires setRoot
-    }
+    activeZoneId.value = detail.active_zone_id ?? null;
+    if (detail.zones) zones.value = detail.zones;
   }
 
   async function refreshProjectMeta() {
     if (!projectId.value) return;
     const detail = await getProject(projectId.value);
     await applyProjectDetail(detail);
+  }
+
+  async function refreshZones() {
+    if (!projectId.value) return;
+    try {
+      const res = await listZones(projectId.value);
+      zones.value = res.zones || [];
+      activeZoneId.value = res.active_zone_id ?? null;
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
   }
 
   async function refreshIndex(opts?: { quiet?: boolean }) {
@@ -132,7 +158,6 @@ export const useProjectStore = defineStore("project", () => {
     currentPath.value = path;
     units.value = [];
     try {
-      // Kick high-priority compare for this file (data refresh via poll)
       void compareFile(projectId.value, path).catch(() => undefined);
       pair.value = await getFilePair(projectId.value, path);
       status.value = path;
@@ -144,6 +169,7 @@ export const useProjectStore = defineStore("project", () => {
 
   async function afterImport(detail: ProjectDetail) {
     await applyProjectDetail(detail);
+    await refreshZones();
     await refreshIndex();
     startPolling();
     const first =
@@ -151,6 +177,22 @@ export const useProjectStore = defineStore("project", () => {
       files.value.find((f) => f.kind === "text") ||
       files.value[0];
     if (first) await openFile(first.path);
+  }
+
+  async function doImportWork(file: File) {
+    error.value = "";
+    busy.value = true;
+    try {
+      const id = await ensureProject();
+      status.value = t("store.uploading");
+      const detail = await importWorkZip(id, file);
+      status.value = t("store.project", { id });
+      await afterImport(detail);
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
   }
 
   async function doUpload(base: File, revised: File) {
@@ -190,6 +232,113 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
+  async function doAddZoneZip(file: File, name?: string) {
+    if (!projectId.value) await ensureProject();
+    const id = projectId.value!;
+    error.value = "";
+    busy.value = true;
+    try {
+      const z = await createZone(id, name);
+      await importZoneZip(id, z.id, file);
+      await activateZone(id, z.id);
+      await refreshZones();
+      await refreshIndex();
+      if (currentPath.value) await openFile(currentPath.value);
+      status.value = t("zones.activated", { name: z.name });
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doAddZoneFiles(fileList: File[] | FileList, name?: string) {
+    if (!projectId.value) await ensureProject();
+    const id = projectId.value!;
+    const filesArr = Array.from(fileList as File[]);
+    if (!filesArr.length) return;
+    error.value = "";
+    busy.value = true;
+    try {
+      const z = await createZone(id, name);
+      const rels = filesArr.map(
+        (f) =>
+          (f as File & { webkitRelativePath?: string }).webkitRelativePath ||
+          f.name
+      );
+      await importZoneFiles(id, z.id, filesArr, rels);
+      await activateZone(id, z.id);
+      await refreshZones();
+      await refreshIndex();
+      if (currentPath.value) await openFile(currentPath.value);
+      status.value = t("zones.activated", { name: z.name });
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doZoneFromWork(name?: string) {
+    if (!projectId.value) return;
+    busy.value = true;
+    try {
+      const z = await zoneFromWork(projectId.value, name);
+      await refreshZones();
+      status.value = t("zones.snapshotOk", { name: z.name });
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doActivateZone(zoneId: string | null) {
+    if (!projectId.value) return;
+    busy.value = true;
+    try {
+      const res = await activateZone(projectId.value, zoneId);
+      zones.value = res.zones || [];
+      activeZoneId.value = res.active_zone_id ?? null;
+      await refreshIndex();
+      if (currentPath.value) await openFile(currentPath.value);
+      status.value = zoneId
+        ? t("zones.activated", {
+            name: zones.value.find((z) => z.id === zoneId)?.name || zoneId,
+          })
+        : t("zones.deactivated");
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doDeleteZone(zoneId: string) {
+    if (!projectId.value) return;
+    busy.value = true;
+    try {
+      await deleteZone(projectId.value, zoneId);
+      await refreshZones();
+      await refreshIndex();
+      if (currentPath.value) await openFile(currentPath.value);
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doRenameZone(zoneId: string, name: string) {
+    if (!projectId.value || !name.trim()) return;
+    try {
+      await renameZone(projectId.value, zoneId, name.trim());
+      await refreshZones();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function doSetRoot(path: string) {
     if (!projectId.value || !path) return;
     try {
@@ -206,7 +355,8 @@ export const useProjectStore = defineStore("project", () => {
     try {
       await enqueueCompare(projectId.value, {
         prefixes: [prefix],
-        include_dot_paths: includeDot || prefix.split("/").some((s) => s.startsWith(".")),
+        include_dot_paths:
+          includeDot || prefix.split("/").some((s) => s.startsWith(".")),
         priority: false,
       });
       await refreshIndex({ quiet: true });
@@ -408,7 +558,7 @@ export const useProjectStore = defineStore("project", () => {
   }
 
   function exportUrl() {
-    return projectId.value ? exportMergedUrl(projectId.value) : null;
+    return projectId.value ? exportWorkUrl(projectId.value) : null;
   }
 
   function reportUrl() {
@@ -417,11 +567,11 @@ export const useProjectStore = defineStore("project", () => {
       : null;
   }
 
-  /** For embed: inject existing project id without creating. */
   function setProjectId(id: string) {
     projectId.value = id;
     startPolling();
     void refreshProjectMeta();
+    void refreshZones();
     void refreshIndex();
   }
 
@@ -430,12 +580,25 @@ export const useProjectStore = defineStore("project", () => {
     try {
       const s = await gitStatus(projectId.value);
       gitStatusText.value = [
+        s.mode || "",
         s.branch,
         s.dirty ? `dirty ${s.files.length}` : "clean",
-        s.repo,
-      ].join(" · ");
+        s.repo || "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
     } catch (e) {
       gitStatusText.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function refreshGitLog() {
+    if (!projectId.value) return;
+    try {
+      const res = await gitLog(projectId.value, 40);
+      gitCommits.value = res.commits || [];
+    } catch {
+      gitCommits.value = [];
     }
   }
 
@@ -448,6 +611,23 @@ export const useProjectStore = defineStore("project", () => {
         ? t("store.committed", { sha: res.sha || "" })
         : res.message;
       await refreshGitStatus();
+      await refreshGitLog();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doGitDiscard() {
+    if (!projectId.value) return;
+    busy.value = true;
+    try {
+      await gitRestore(projectId.value, { mode: "discard" });
+      await refreshGitStatus();
+      await refreshIndex();
+      if (currentPath.value) await openFile(currentPath.value);
+      status.value = t("git.discarded");
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -474,13 +654,24 @@ export const useProjectStore = defineStore("project", () => {
     compareSummary,
     gitInfo,
     gitStatusText,
+    zones,
+    activeZoneId,
+    gitCommits,
     modifiedCount,
     ensureProject,
     refreshIndex,
     refreshProjectMeta,
+    refreshZones,
     openFile,
+    doImportWork,
     doUpload,
     doGitImport,
+    doAddZoneZip,
+    doAddZoneFiles,
+    doZoneFromWork,
+    doActivateZone,
+    doDeleteZone,
+    doRenameZone,
     doSetRoot,
     doEnqueueDir,
     doAccept,
@@ -493,7 +684,9 @@ export const useProjectStore = defineStore("project", () => {
     reportUrl,
     setProjectId,
     refreshGitStatus,
+    refreshGitLog,
     doGitCommit,
+    doGitDiscard,
     startPolling,
     stopPolling,
   };

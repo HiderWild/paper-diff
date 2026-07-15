@@ -31,6 +31,9 @@ const {
   compareSummary,
   gitInfo,
   gitStatusText,
+  zones,
+  activeZoneId,
+  gitCommits,
 } = storeToRefs(store);
 
 const {
@@ -50,8 +53,12 @@ const visibleUnits = computed(() => {
   return units.value.filter((u) => u.granularity === unitFilter.value);
 });
 
+const workInput = ref<HTMLInputElement | null>(null);
 const baseInput = ref<HTMLInputElement | null>(null);
 const revisedInput = ref<HTMLInputElement | null>(null);
+const zoneZipInput = ref<HTMLInputElement | null>(null);
+const zoneFolderInput = ref<HTMLInputElement | null>(null);
+const showAdvanced = ref(false);
 const gitRepo = ref("");
 const gitBaseRef = ref("");
 const gitRevisedRef = ref("");
@@ -81,6 +88,15 @@ onBeforeUnmount(() => {
   store.stopPolling();
 });
 
+async function onImportWork() {
+  const f = workInput.value?.files?.[0];
+  if (!f) {
+    store.error = t("errors.selectWorkZip");
+    return;
+  }
+  await store.doImportWork(f);
+}
+
 async function onUpload() {
   const baseFile = baseInput.value?.files?.[0];
   const revFile = revisedInput.value?.files?.[0];
@@ -89,6 +105,24 @@ async function onUpload() {
     return;
   }
   await store.doUpload(baseFile, revFile);
+}
+
+async function onZoneZipChange(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  if (f) await store.doAddZoneZip(f);
+  input.value = "";
+}
+
+async function onZoneFolderChange(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (input.files?.length) await store.doAddZoneFiles(input.files);
+  input.value = "";
+}
+
+function onRenameZone(z: { id: string; name: string }) {
+  const name = window.prompt(t("zones.renamePrompt"), z.name);
+  if (name != null && name.trim()) void store.doRenameZone(z.id, name);
 }
 
 async function onGitImport() {
@@ -206,10 +240,14 @@ async function onGitCommit() {
   await store.doGitCommit(msg);
 }
 
-function openActivity(a: "explorer" | "git" | "compile") {
+function openActivity(a: "explorer" | "zones" | "git" | "compile") {
   activity.value = a;
   showFiles.value = true;
-  if (a === "git") void store.refreshGitStatus();
+  if (a === "git") {
+    void store.refreshGitStatus();
+    void store.refreshGitLog();
+  }
+  if (a === "zones") void store.refreshZones();
 }
 </script>
 
@@ -218,39 +256,51 @@ function openActivity(a: "explorer" | "git" | "compile") {
     <header class="toolbar">
       <span class="title">{{ t("app.title") }}</span>
       <label>
-        {{ t("toolbar.base") }}
-        <input ref="baseInput" type="file" accept=".zip" />
+        {{ t("toolbar.importProject") }}
+        <input ref="workInput" type="file" accept=".zip" />
       </label>
-      <label>
-        {{ t("toolbar.revised") }}
-        <input ref="revisedInput" type="file" accept=".zip" />
-      </label>
-      <button :disabled="busy" @click="onUpload">
-        {{ t("toolbar.importZips") }}
+      <button :disabled="busy" @click="onImportWork">
+        {{ t("toolbar.importProject") }}
       </button>
-      <input
-        v-model="gitRepo"
-        :placeholder="t('toolbar.gitRepoPlaceholder')"
-        style="min-width: 8rem"
-      />
-      <input
-        v-model="gitBaseRef"
-        :placeholder="t('toolbar.baseRefPlaceholder')"
-        style="width: 5rem"
-      />
-      <input
-        v-model="gitRevisedRef"
-        :placeholder="t('toolbar.revisedRefPlaceholder')"
-        style="width: 5rem"
-      />
-      <input
-        v-model="gitSubdir"
-        :placeholder="t('toolbar.subdirPlaceholder')"
-        style="width: 4rem"
-      />
-      <button class="secondary" :disabled="busy" @click="onGitImport">
-        {{ t("toolbar.importGit") }}
+      <button class="secondary" type="button" @click="showAdvanced = !showAdvanced">
+        …
       </button>
+      <template v-if="showAdvanced">
+        <label>
+          {{ t("toolbar.base") }}
+          <input ref="baseInput" type="file" accept=".zip" />
+        </label>
+        <label>
+          {{ t("toolbar.revised") }}
+          <input ref="revisedInput" type="file" accept=".zip" />
+        </label>
+        <button class="secondary" :disabled="busy" @click="onUpload">
+          {{ t("toolbar.importZips") }}
+        </button>
+        <input
+          v-model="gitRepo"
+          :placeholder="t('toolbar.gitRepoPlaceholder')"
+          style="min-width: 8rem"
+        />
+        <input
+          v-model="gitBaseRef"
+          :placeholder="t('toolbar.baseRefPlaceholder')"
+          style="width: 5rem"
+        />
+        <input
+          v-model="gitRevisedRef"
+          :placeholder="t('toolbar.revisedRefPlaceholder')"
+          style="width: 5rem"
+        />
+        <input
+          v-model="gitSubdir"
+          :placeholder="t('toolbar.subdirPlaceholder')"
+          style="width: 4rem"
+        />
+        <button class="secondary" :disabled="busy" @click="onGitImport">
+          {{ t("toolbar.importGit") }}
+        </button>
+      </template>
       <label class="root-select" :title="t('toolbar.rootSelect')">
         <select
           :value="rootFile || ''"
@@ -290,7 +340,7 @@ function openActivity(a: "explorer" | "git" | "compile") {
         {{ t("toolbar.latexdiffPdf") }}
       </button>
       <button class="secondary" :disabled="!projectId" @click="onExport">
-        {{ t("toolbar.exportMerged") }}
+        {{ t("toolbar.exportWork") }}
       </button>
       <button class="secondary" :disabled="!projectId" @click="onReport">
         {{ t("toolbar.acceptReport") }}
@@ -361,6 +411,14 @@ function openActivity(a: "explorer" | "git" | "compile") {
         </button>
         <button
           type="button"
+          :class="{ active: activity === 'zones' && showFiles }"
+          :title="t('panels.zones')"
+          @click="openActivity('zones')"
+        >
+          ⧉
+        </button>
+        <button
+          type="button"
           :class="{ active: activity === 'git' && showFiles }"
           :title="t('panels.git')"
           @click="openActivity('git')"
@@ -407,6 +465,107 @@ function openActivity(a: "explorer" | "git" | "compile") {
             </button>
           </div>
         </template>
+        <template v-else-if="activity === 'zones'">
+          <div class="panel-header side-header">
+            <span>{{ t("panels.zones") }}</span>
+            <button
+              type="button"
+              class="header-hide"
+              :title="t('toolbar.toggleFiles')"
+              @click="layout.toggleFiles()"
+            >
+              ◀
+            </button>
+          </div>
+          <div class="side-body">
+            <input
+              ref="zoneZipInput"
+              type="file"
+              accept=".zip"
+              hidden
+              @change="onZoneZipChange"
+            />
+            <input
+              ref="zoneFolderInput"
+              type="file"
+              multiple
+              hidden
+              webkitdirectory
+              directory
+              @change="onZoneFolderChange"
+            />
+            <button
+              type="button"
+              class="secondary"
+              :disabled="busy || !projectId"
+              @click="zoneZipInput?.click()"
+            >
+              {{ t("zones.addZip") }}
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              :disabled="busy || !projectId"
+              @click="zoneFolderInput?.click()"
+            >
+              {{ t("zones.addFolder") }}
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              :disabled="busy || !projectId"
+              @click="store.doZoneFromWork()"
+            >
+              {{ t("zones.fromWork") }}
+            </button>
+            <button
+              v-if="activeZoneId"
+              type="button"
+              class="secondary"
+              :disabled="busy"
+              @click="store.doActivateZone(null)"
+            >
+              {{ t("zones.deactivate") }}
+            </button>
+            <p v-if="!zones.length" class="muted">{{ t("zones.empty") }}</p>
+            <ul class="zone-list">
+              <li
+                v-for="z in zones"
+                :key="z.id"
+                :class="{ active: z.id === activeZoneId }"
+              >
+                <button
+                  type="button"
+                  class="zone-name"
+                  :disabled="busy"
+                  @click="store.doActivateZone(z.id)"
+                >
+                  {{ z.name }}
+                  <span v-if="z.id === activeZoneId" class="badge">
+                    {{ t("zones.active") }}
+                  </span>
+                </button>
+                <div class="zone-actions">
+                  <button
+                    type="button"
+                    class="secondary tiny"
+                    @click="onRenameZone(z)"
+                  >
+                    {{ t("zones.rename") }}
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary tiny"
+                    :disabled="busy"
+                    @click="store.doDeleteZone(z.id)"
+                  >
+                    {{ t("zones.delete") }}
+                  </button>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </template>
         <template v-else-if="activity === 'git'">
           <div class="panel-header side-header">
             <span>{{ t("panels.git") }}</span>
@@ -431,10 +590,13 @@ function openActivity(a: "explorer" | "git" | "compile") {
             <button
               class="secondary"
               type="button"
-              :disabled="!projectId || !gitInfo"
-              @click="store.refreshGitStatus()"
+              :disabled="!projectId"
+              @click="
+                store.refreshGitStatus();
+                store.refreshGitLog();
+              "
             >
-              {{ t("toolbar.gitStatus") }}
+              {{ t("git.refresh") }}
             </button>
             <label class="block-label">
               {{ t("git.commitMsg") }}
@@ -445,11 +607,26 @@ function openActivity(a: "explorer" | "git" | "compile") {
             </label>
             <button
               type="button"
-              :disabled="busy || !projectId || !gitInfo"
+              :disabled="busy || !projectId"
               @click="onGitCommit"
             >
               {{ t("git.commitBtn") }}
             </button>
+            <button
+              type="button"
+              class="secondary"
+              :disabled="busy || !projectId"
+              @click="store.doGitDiscard()"
+            >
+              {{ t("git.discard") }}
+            </button>
+            <div class="panel-header">{{ t("git.history") }}</div>
+            <ul class="commit-list">
+              <li v-for="c in gitCommits" :key="c.sha" class="muted">
+                <code>{{ c.short }}</code>
+                {{ c.subject }}
+              </li>
+            </ul>
           </div>
         </template>
         <template v-else>
@@ -637,6 +814,56 @@ function openActivity(a: "explorer" | "git" | "compile") {
   font-size: 1rem;
   border-radius: 6px;
 }
+.zone-list,
+.commit-list {
+  list-style: none;
+  margin: 0.4rem 0;
+  padding: 0;
+  max-height: 40vh;
+  overflow: auto;
+}
+.zone-list li {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+.zone-list li.active {
+  border-color: #3b82f6;
+  background: #132033;
+}
+.zone-name {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  padding: 0.2rem 0;
+}
+.zone-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+.badge {
+  font-size: 0.7rem;
+  color: #93c5fd;
+  margin-left: 0.35rem;
+}
+button.tiny {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.35rem;
+}
+.commit-list li {
+  font-size: 0.75rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.commit-list code {
+  color: #93c5fd;
+  margin-right: 0.3rem;
+}
+
 .activity-bar button.active,
 .activity-bar button:hover {
   background: #1e3a5f;

@@ -23,20 +23,41 @@ export type DiffIndexFile = {
   error?: string | null;
 };
 
+export type Zone = {
+  id: string;
+  name: string;
+  created_at?: string;
+  source?: string;
+  active?: boolean;
+  file_count?: number;
+};
+
 export type ProjectDetail = {
   id: string;
   status: string;
+  model?: string;
   root_file?: string | null;
   root_recommended?: string | null;
   root_candidates?: Array<{ path: string; score?: number; reasons?: string[] }>;
   root_detection?: string;
   include_dot_paths?: boolean;
+  active_zone_id?: string | null;
+  zones?: Zone[];
   git?: {
     repo?: string;
     subdir?: string;
     base_ref?: string;
     revised_ref?: string;
   } | null;
+};
+
+export type GitCommit = {
+  sha: string;
+  short: string;
+  author?: string;
+  email?: string;
+  date?: string;
+  subject: string;
 };
 
 export type RootCandidate = {
@@ -104,6 +125,135 @@ export async function uploadVersions(
     await fetch(`${BASE()}/api/v1/projects/${projectId}/versions/upload`, {
       method: "POST",
       body: fd,
+    })
+  );
+}
+
+/** v2: import a single work zip as the project tree. */
+export async function importWorkZip(
+  projectId: string,
+  work: File
+): Promise<ProjectDetail> {
+  const fd = new FormData();
+  fd.append("work", work);
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/import/zip`, {
+      method: "POST",
+      body: fd,
+    })
+  );
+}
+
+export async function listZones(
+  projectId: string
+): Promise<{ zones: Zone[]; active_zone_id?: string | null }> {
+  return parse(await fetch(`${BASE()}/api/v1/projects/${projectId}/zones`));
+}
+
+export async function createZone(
+  projectId: string,
+  name?: string
+): Promise<Zone> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/zones`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name || undefined }),
+    })
+  );
+}
+
+export async function deleteZone(
+  projectId: string,
+  zoneId: string
+): Promise<{ deleted: string }> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}`, {
+      method: "DELETE",
+    })
+  );
+}
+
+export async function renameZone(
+  projectId: string,
+  zoneId: string,
+  name: string
+): Promise<Zone> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    })
+  );
+}
+
+export async function activateZone(
+  projectId: string,
+  zoneId: string | null
+): Promise<{ zones: Zone[]; active_zone_id?: string | null }> {
+  if (zoneId) {
+    return parse(
+      await fetch(
+        `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/activate`,
+        { method: "POST" }
+      )
+    );
+  }
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/zones/activate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ zone_id: null }),
+    })
+  );
+}
+
+export async function importZoneZip(
+  projectId: string,
+  zoneId: string,
+  file: File
+): Promise<Zone> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return parse(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/import/zip`,
+      { method: "POST", body: fd }
+    )
+  );
+}
+
+export async function importZoneFiles(
+  projectId: string,
+  zoneId: string,
+  files: File[],
+  relativePaths?: string[]
+): Promise<Zone> {
+  const fd = new FormData();
+  for (const f of files) {
+    fd.append("files", f);
+  }
+  if (relativePaths?.length) {
+    fd.append("paths", JSON.stringify(relativePaths));
+  }
+  return parse(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/import/files`,
+      { method: "POST", body: fd }
+    )
+  );
+}
+
+export async function zoneFromWork(
+  projectId: string,
+  name?: string
+): Promise<Zone> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/zones/from-work`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name || undefined }),
     })
   );
 }
@@ -267,7 +417,7 @@ export async function compileProject(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        side: "merged",
+        side: "work",
         root_file: rootFile || undefined,
       }),
     })
@@ -312,16 +462,49 @@ export function exportMergedUrl(projectId: string): string {
   return `${BASE()}/api/v1/projects/${projectId}/export/merged.zip`;
 }
 
+/** v2 preferred export of the work tree. */
+export function exportWorkUrl(projectId: string): string {
+  return `${BASE()}/api/v1/projects/${projectId}/work/export.zip`;
+}
+
 export async function gitStatus(projectId: string): Promise<{
   repo: string;
   branch: string;
   files: Array<{ xy: string; path: string }>;
   dirty: boolean;
+  mode?: string;
   base_ref?: string;
   revised_ref?: string;
 }> {
   return parse(
     await fetch(`${BASE()}/api/v1/projects/${projectId}/git/status`)
+  );
+}
+
+export async function gitLog(
+  projectId: string,
+  maxCount = 50
+): Promise<{ repo?: string; mode?: string; commits: GitCommit[] }> {
+  const q = new URLSearchParams({ max_count: String(maxCount) });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/log?${q}`)
+  );
+}
+
+export async function gitRestore(
+  projectId: string,
+  opts?: { mode?: "discard" | "checkout"; paths?: string[]; ref?: string }
+): Promise<{ restored?: string[]; ref?: string; mode?: string }> {
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/git/restore`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: opts?.mode ?? "discard",
+        paths: opts?.paths,
+        ref: opts?.ref,
+      }),
+    })
   );
 }
 

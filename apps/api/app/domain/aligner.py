@@ -5,7 +5,31 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-TEXT_EXTS = {".tex", ".bib", ".cls", ".sty", ".txt", ".md", ".bbl"}
+TEXT_EXTS = {
+    ".tex",
+    ".bib",
+    ".cls",
+    ".sty",
+    ".txt",
+    ".md",
+    ".bbl",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".yml",
+    ".yaml",
+    ".xml",
+    ".py",
+    ".r",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".html",
+    ".css",
+    ".js",
+    ".ts",
+    ".sh",
+}
 
 
 def is_text_path(path: str) -> bool:

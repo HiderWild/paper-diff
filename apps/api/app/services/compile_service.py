@@ -71,11 +71,13 @@ class CompileService:
     def start_compile(
         self,
         project_id: str,
-        side: str = "merged",
+        side: str = "work",
         root_file: str | None = None,
         force: bool = False,
         kind: str = "latexmk",
     ) -> dict:
+        if side == "merged":
+            side = "work"
         ws = self._ws(project_id)
         if not ws.meta_path.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
@@ -133,7 +135,7 @@ class CompileService:
 
     def start_latexdiff(self, project_id: str, root_file: str | None = None) -> dict:
         return self.start_compile(
-            project_id, side="merged", root_file=root_file, kind="latexdiff"
+            project_id, side="work", root_file=root_file, kind="latexdiff"
         )
 
     def _run_job(self, ws: Workspace, job: dict) -> None:
@@ -194,11 +196,15 @@ class CompileService:
 
     def _run_latexmk(self, ws: Workspace, job: dict, image: str) -> None:
         side = job["side"]
-        side_dir = {
+        side_map = {
+            "work": ws.work_dir,
             "merged": ws.merged_dir,
-            "base": ws.base_dir,
+            "base": ws.base_dir if ws.base_dir.exists() and any(ws.base_dir.iterdir()) else ws.work_dir,
             "revised": ws.revised_dir,
-        }[side]
+        }
+        if side not in side_map:
+            side = "work"
+        side_dir = side_map[side]
         root = job["root_file"]
         root_arg = root if root.endswith(".tex") else f"{root}.tex"
         work = side_dir.resolve()
@@ -277,11 +283,20 @@ class CompileService:
             shutil.rmtree(diff_dir)
         diff_dir.mkdir(parents=True)
 
-        # Copy both trees so flatten can resolve inputs
+        # Left = work, right = active zone (or legacy base/revised)
         base_c = diff_dir / "base"
         rev_c = diff_dir / "revised"
-        shutil.copytree(ws.base_dir, base_c)
-        shutil.copytree(ws.revised_dir, rev_c)
+        meta = ws.load_meta()
+        zid = meta.get("active_zone_id")
+        left_src = ws.work_dir if ws.work_dir.exists() else ws.base_dir
+        if zid and ws.zone_root(zid).exists():
+            right_src = ws.zone_dir(zid)
+        elif ws.revised_dir.exists():
+            right_src = ws.revised_dir
+        else:
+            right_src = left_src
+        shutil.copytree(left_src, base_c)
+        shutil.copytree(right_src, rev_c)
 
         vol = docker_volume_spec(diff_dir, "/work")
         # Use shell script inside container for latexdiff + latexmk

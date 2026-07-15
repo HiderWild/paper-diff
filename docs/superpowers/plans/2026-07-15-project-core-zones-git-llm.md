@@ -1,6 +1,7 @@
 # paper-diff 产品重构计划：项目本体 · 比较区 · 内置 Git · Agent 接口
 
-> **Status:** Draft / approved-for-planning — 2026-07-15  
+> **Status:** Phase 0–3 backend + frontend MVP implemented — 2026-07-15  
+
 > **Supersedes (model):** 旧「base + revised + merged」双 zip 对照主路径  
 > **Preserves:** 工作台布局、树、编译、Monaco 词/句级可视化、i18n、Docker TeX 等能力底座  
 > **Related:**  
@@ -302,10 +303,10 @@ GET    /projects/{id}/agent/sessions/{sid}
 
 **目标：** 文档、契约、不写大迁移。
 
-- [ ] 本文件评审定稿；更新 design spec 核心模型章节  
-- [ ] OpenAPI/DTO 草图 review  
-- [ ] 列出破坏性 API 清单与兼容策略  
-- [ ] 验收清单与 fixture 设计（单 zip 论文 + 局部 chapter zone）
+- [x] 本文件评审定稿；更新 design spec 核心模型章节  
+- [x] OpenAPI/DTO 草图 review  
+- [x] 列出破坏性 API 清单与兼容策略  
+- [x] 验收清单与 fixture 设计（单 zip 论文 + 局部 chapter zone）
 
 **产出：** 团队对齐「无 base/revised 产品语义」。
 
@@ -315,11 +316,11 @@ GET    /projects/{id}/agent/sessions/{sid}
 
 **目标：** 用户 **只导一个 zip** 就能用。
 
-- [ ] 后端：`work/` 目录、import zip、tree、file get  
-- [ ] 编译/export 指向 work  
-- [ ] 前端：导入入口改为单文件；树绑 work  
-- [ ] 兼容：旧双 zip API → work + 自动 zone  
-- [ ] 测试：单 zip 全流程  
+- [x] 后端：`work/` 目录、import zip、tree、file get  
+- [x] 编译/export 指向 work  
+- [x] 前端：导入入口改为单文件；树绑 work  
+- [x] 兼容：旧双 zip API → work + 自动 zone  
+- [x] 测试：单 zip 全流程  
 
 **价值：** 冷启动体验立刻正确。
 
@@ -329,12 +330,12 @@ GET    /projects/{id}/agent/sessions/{sid}
 
 **目标：** 多 zone、隔离、对照、删除。
 
-- [ ] zone CRUD + zip/files 导入  
-- [ ] 目录上传（webkitdirectory）保结构  
-- [ ] 多文件敏捷上传 + 文本 sniff + 跳过报告  
-- [ ] Diff 左 work 右 zone；Accept 写 work  
-- [ ] 活动栏「比较区」列表；默认时间名/可改名  
-- [ ] 删除 zone  
+- [x] zone CRUD + zip/files 导入  
+- [x] 目录上传（webkitdirectory）保结构  
+- [x] 多文件敏捷上传 + 文本 sniff + 跳过报告  
+- [x] Diff 左 work 右 zone；Accept 写 work  
+- [x] 活动栏「比较区」列表；默认时间名/可改名  
+- [x] 删除 zone  
 
 **价值：** 「修订参照」模型落地。
 
@@ -344,9 +345,10 @@ GET    /projects/{id}/agent/sessions/{sid}
 
 **目标：** 本体可提交、可看历史、可两提交对比。
 
-- [ ] import 后 init + initial commit  
-- [ ] status / commit UI  
-- [ ] log 可视化（列表→简易树）  
+- [x] import 后 init + initial commit  
+- [x] status / commit UI  
+- [x] log 可视化（列表→简易树）  
+
 - [ ] 两提交 name-status + 打开 diff  
 - [ ] restore path / discard dirty  
 - [ ] 「从提交创建比较区」  

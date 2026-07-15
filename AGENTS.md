@@ -26,14 +26,31 @@
 - Workbench track: `docs/superpowers/plans/2026-07-15-workbench-git-async-diff.md`
 - **Product v2 (project core + zones + git + agent):** `docs/superpowers/plans/2026-07-15-project-core-zones-git-llm.md`
 - Merge line/col: `apps/api/app/domain/merge_engine.py`
-- Accept/import: `apps/api/app/services/project_service.py`
-- Compare queue (lazy): `apps/api/app/services/compare_service.py`
+- Accept/import (work + dual-zip compat): `apps/api/app/services/project_service.py`
+- Zones: `apps/api/app/services/zone_service.py` — `work/` truth + `zones/{id}/tree`
+- Compare queue (work↔active zone): `apps/api/app/services/compare_service.py`
 - Root candidates: `apps/api/app/domain/root_detect.py` + `POST /projects/{id}/root`
-- Git facade status/commit: `apps/api/app/services/git_service.py`
-- Compile async/SSE/latexdiff: `apps/api/app/services/compile_service.py` (requires user-selected root)
+- Git facade (project-local + external): `apps/api/app/services/git_service.py` — status/log/commit/restore/zone-from-commit
+- Compile async/SSE/latexdiff: `apps/api/app/services/compile_service.py` (target **work**, requires user-selected root)
+- Agent stubs: `POST /projects/{id}/agent/{analyze,propose,apply}` → not_configured
+- Single work import: `POST /projects/{id}/work/import/zip`
+- Zones API: `/projects/{id}/zones` CRUD + activate + import
 - Sentence mapper: `apps/web/src/features/diff/sentenceMapper.ts`
 - File tree: `apps/web/src/features/tree/`
 - Layout store (resizable panes): `apps/web/src/stores/layout.ts`
 - Pinia project store: `apps/web/src/stores/project.ts`
 - Embed: `apps/web/src/embed.ts` → `mountPaperDiff`
 - i18n (zh-CN default / en): `apps/web/src/i18n/`
+
+## Disk layout (v2)
+
+```
+{workspace_root}/{project_id}/
+  work/                 # editable project body (compile/accept/export)
+  zones/{zone_id}/tree  # compare zone snapshot
+  zones/{zone_id}/meta.json
+  .git/                 # project-local timeline
+  base/, revised/       # legacy materialization (compat dual-zip / latexdiff)
+  snapshots/, jobs/, artifacts/
+  meta.json
+```

@@ -1,4 +1,4 @@
-"""Async per-file compare queue. Updates project meta compare_state."""
+"""Async per-file compare queue. Compares work vs active zone (with legacy fallback)."""
 
 from __future__ import annotations
 
@@ -37,6 +37,22 @@ class CompareService:
     def _ws(self, project_id: str) -> Workspace:
         return Workspace(self.settings.workspace_root, project_id)
 
+    def _sides(self, ws: Workspace, meta: dict | None = None) -> tuple[set[str], set[str], set[str], str | None]:
+        """Return (work, right, merged, zone_id)."""
+        if meta is None:
+            meta = ws.load_meta()
+        work = set(ws.list_files("work"))
+        if not work and ws.base_dir.exists():
+            work = set(ws.list_files("base"))
+        if not work:
+            work = set(ws.list_files("merged"))
+        zid = meta.get("active_zone_id")
+        if zid and ws.zone_root(zid).exists():
+            right = set(ws.list_files_in(ws.zone_dir(zid)))
+        else:
+            right = set(ws.list_files("revised")) if ws.revised_dir.exists() else set()
+        return work, right, work, zid
+
     def get_states(self, project_id: str) -> dict[str, dict]:
         ws = self._ws(project_id)
         meta = ws.load_meta()
@@ -57,10 +73,8 @@ class CompareService:
         if meta.get("status") != "ready":
             raise AppError("VALIDATION_ERROR", "project not ready", status_code=400)
 
-        base = set(ws.list_files("base"))
-        rev = set(ws.list_files("revised"))
-        merged = set(ws.list_files("merged"))
-        all_paths = sorted(base | rev | merged)
+        work, right, merged, _zid = self._sides(ws, meta)
+        all_paths = sorted(work | right | merged)
 
         selected: list[str]
         if paths:
@@ -145,7 +159,6 @@ class CompareService:
         ws.mutate_meta(mut)
 
     def _run_one(self, project_id: str, path: str) -> None:
-        # Serialize per-project compare work so heavy IO doesn't thrash
         lock = _lock(project_id)
         with lock:
             self._patch_compare_entry(
@@ -187,30 +200,66 @@ class CompareService:
 
     def _compare_path(self, ws: Workspace, path: str) -> dict:
         kind = "text" if is_text_path(path) else "binary"
-        base_p = ws.resolve_under(ws.base_dir, path)
-        rev_p = ws.resolve_under(ws.revised_dir, path)
-        merged_p = ws.resolve_under(ws.merged_dir, path)
-        in_b, in_r, in_m = base_p.is_file(), rev_p.is_file(), merged_p.is_file()
+        meta = ws.load_meta()
+        zid = meta.get("active_zone_id")
 
-        b_sha = r_sha = m_sha = None
+        work_p = ws.resolve_under(ws.work_dir, path)
+        in_w = work_p.is_file()
+        if not in_w and ws.base_dir.exists():
+            # legacy
+            base_p = ws.resolve_under(ws.base_dir, path)
+            in_w = base_p.is_file()
+            work_side = "base" if in_w else "work"
+            work_p = base_p if in_w else work_p
+        else:
+            work_side = "work"
+
+        if zid and ws.zone_root(zid).exists():
+            rev_p = ws.resolve_under(ws.zone_dir(zid), path)
+            rev_side = f"zone:{zid}"
+        else:
+            rev_p = ws.resolve_under(ws.revised_dir, path)
+            rev_side = "revised"
+        in_r = rev_p.is_file()
+
+        merged_p = ws.resolve_under(ws.merged_dir, path)
+        in_m = merged_p.is_file()
+
+        w_sha = z_sha = m_sha = None
         status: str
-        if in_b and in_r:
+        if not zid and not in_r and in_w:
+            # no active zone — work only
             if kind == "text":
-                bc = ws.read_text("base", path)
-                rc = ws.read_text("revised", path)
-                b_sha = ws.file_sha256(bc)
-                r_sha = ws.file_sha256(rc)
-                status = "same" if bc == rc else "modified"
+                wc = ws.read_text(work_side, path)
+                w_sha = ws.file_sha256(wc)
             else:
-                bb = base_p.read_bytes()
+                w_sha = _sha_bytes(work_p.read_bytes())
+            status = "work"
+        elif in_w and in_r:
+            if kind == "text":
+                wc = ws.read_text(work_side, path)
+                rc = ws.read_text(rev_side, path)
+                w_sha = ws.file_sha256(wc)
+                z_sha = ws.file_sha256(rc)
+                status = "same" if wc == rc else "modified"
+            else:
+                wb = work_p.read_bytes()
                 rb = rev_p.read_bytes()
-                b_sha = _sha_bytes(bb)
-                r_sha = _sha_bytes(rb)
-                status = "same" if bb == rb else "modified"
-        elif in_r and not in_b:
+                w_sha = _sha_bytes(wb)
+                z_sha = _sha_bytes(rb)
+                status = "same" if wb == rb else "modified"
+        elif in_r and not in_w:
             status = "added"
-        elif in_b and not in_r:
+            if kind == "text":
+                z_sha = ws.file_sha256(ws.read_text(rev_side, path))
+            else:
+                z_sha = _sha_bytes(rev_p.read_bytes())
+        elif in_w and not in_r:
             status = "removed"
+            if kind == "text":
+                w_sha = ws.file_sha256(ws.read_text(work_side, path))
+            else:
+                w_sha = _sha_bytes(work_p.read_bytes())
         else:
             status = "merged_only"
 
@@ -218,38 +267,42 @@ class CompareService:
         if in_m and kind == "text":
             mc = ws.read_text("merged", path)
             m_sha = ws.file_sha256(mc)
-            if in_b:
-                merged_equals_base = mc == ws.read_text("base", path)
+            if in_w:
+                merged_equals_base = mc == ws.read_text(work_side, path)
         elif in_m and kind == "binary":
             m_sha = _sha_bytes(merged_p.read_bytes())
 
         return {
             "status": status,
             "kind": kind,
-            "base_sha256": b_sha,
-            "revised_sha256": r_sha,
+            "work_sha256": w_sha,
+            "zone_sha256": z_sha,
+            "base_sha256": w_sha,
+            "revised_sha256": z_sha,
             "merged_sha256": m_sha,
             "merged_equals_base": merged_equals_base,
         }
 
     def ensure_init_states(self, ws: Workspace, meta: dict) -> dict:
         """After import: mark all pending/skipped without comparing."""
-        base = set(ws.list_files("base"))
-        rev = set(ws.list_files("revised"))
-        merged = set(ws.list_files("merged"))
+        work, right, merged, zid = self._sides(ws, meta)
         include_dot = bool(meta.get("include_dot_paths"))
         compare: dict = {}
-        for p in sorted(base | rev | merged):
+        for p in sorted(work | right | merged):
             if is_dot_path(p) and not include_dot:
                 state = "skipped"
+            elif not zid and not right:
+                # work-only project: mark ready with status work (no async needed)
+                state = "ready"
             else:
                 state = "pending"
-            compare[p] = {
+            entry = {
                 "state": state,
-                "status": None,
+                "status": "work" if state == "ready" else None,
                 "kind": "text" if is_text_path(p) else "binary",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "error": None,
             }
+            compare[p] = entry
         meta["compare"] = compare
         return meta
