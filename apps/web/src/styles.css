@@ -175,8 +175,11 @@ button.mini {
   padding: 0.5rem;
 }
 
+/* Do NOT max-width:100% — that breaks aspect when zoom > fit-width */
 .pdf-host canvas {
-  max-width: 100%;
+  max-width: none;
+  width: auto;
+  height: auto;
   margin: 0 auto;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 }

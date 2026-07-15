@@ -37,6 +37,17 @@ async function paintPages() {
   const gen = renderGen;
   // Build off-DOM then swap to avoid flicker / "loading" jump
   const frag = document.createDocumentFragment();
+  const wrap = document.createElement("div");
+  wrap.className = "pdf-pages-inner";
+  // Intrinsic size container: allow content wider than the tab (scroll, don't squash)
+  wrap.style.display = "flex";
+  wrap.style.flexDirection = "column";
+  wrap.style.alignItems = "flex-start";
+  wrap.style.gap = "0.5rem";
+  wrap.style.width = "max-content";
+  wrap.style.minWidth = "100%";
+  wrap.style.margin = "0 auto";
+
   const maxPages = Math.min(pdfDoc.numPages, 40);
   for (let i = 1; i <= maxPages; i++) {
     if (gen !== renderGen || !pdfDoc) return;
@@ -44,17 +55,29 @@ async function paintPages() {
     const fit = fitScaleForPage(page);
     const scale = fit * zoom.value;
     const viewport = page.getViewport({ scale });
+    // Cap render resolution for memory (display still uses CSS size 1:1)
+    const maxEdge = 4096;
+    const renderScale =
+      Math.max(viewport.width, viewport.height) > maxEdge
+        ? scale * (maxEdge / Math.max(viewport.width, viewport.height))
+        : scale;
+    const renderVp = page.getViewport({ scale: renderScale });
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     if (!ctx) continue;
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    frag.appendChild(canvas);
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    canvas.width = Math.floor(renderVp.width);
+    canvas.height = Math.floor(renderVp.height);
+    // Layout size must match aspect of viewport (not constrained by parent)
+    canvas.style.width = `${Math.floor(viewport.width)}px`;
+    canvas.style.height = `${Math.floor(viewport.height)}px`;
+    canvas.style.maxWidth = "none";
+    canvas.style.flex = "0 0 auto";
+    canvas.style.display = "block";
+    wrap.appendChild(canvas);
+    await page.render({ canvasContext: ctx, viewport: renderVp }).promise;
   }
   if (gen !== renderGen || !container.value) return;
+  frag.appendChild(wrap);
   container.value.innerHTML = "";
   container.value.appendChild(frag);
   zoomPct.value = Math.round(zoom.value * 100);
@@ -196,6 +219,7 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
+  /* both axes: zoom may exceed tab width/height */
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -210,10 +234,15 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   position: sticky;
   top: 0;
+  left: 0;
   z-index: 2;
   background: color-mix(in srgb, var(--panel-header) 92%, transparent);
   padding: 0.25rem 0;
   backdrop-filter: blur(4px);
+  /* toolbar stays tab-width while content scrolls horizontally */
+  width: 100%;
+  min-width: min(100%, 100%);
+  box-sizing: border-box;
 }
 .zoom-label {
   min-width: 3rem;
@@ -226,15 +255,18 @@ onBeforeUnmount(() => {
   margin-left: 0.35rem;
 }
 .pdf-pages {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  flex: 1 1 auto;
+  /* outer scrollport child: grow with content, do not shrink to tab */
+  flex: 0 0 auto;
+  align-self: flex-start;
+  min-width: 100%;
+  width: max-content;
 }
 .pdf-pages :deep(canvas) {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
   background: #fff;
+  max-width: none !important;
+  width: auto !important;
+  height: auto !important;
 }
 .status-empty {
   color: var(--muted);
