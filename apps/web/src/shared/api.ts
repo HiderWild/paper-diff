@@ -410,6 +410,29 @@ export async function getFilePair(
   );
 }
 
+export async function getZoneFileText(
+  projectId: string,
+  zoneId: string,
+  path: string
+): Promise<{ path: string; content: string }> {
+  const q = new URLSearchParams({ path });
+  return parse(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/zones/${zoneId}/file?${q}`
+    )
+  );
+}
+
+export async function getWorkFileText(
+  projectId: string,
+  path: string
+): Promise<{ path: string; content: string }> {
+  const q = new URLSearchParams({ path });
+  return parse(
+    await fetch(`${BASE()}/api/v1/projects/${projectId}/work/file?${q}`)
+  );
+}
+
 export async function putWorkFile(
   projectId: string,
   path: string,

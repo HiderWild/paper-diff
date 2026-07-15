@@ -13,6 +13,7 @@ const props = defineProps<{
 const host = ref<HTMLDivElement | null>(null);
 const error = ref("");
 const loading = ref(false);
+const hasContent = ref(false);
 let abort: AbortController | null = null;
 
 async function render(url: string) {
@@ -22,13 +23,14 @@ async function render(url: string) {
     loading.value = false;
     return;
   }
-  host.value.innerHTML = "";
   abort?.abort();
   abort = new AbortController();
   try {
     const res = await fetch(url, { signal: abort.signal });
     if (!res.ok) throw new Error(await res.text());
     const buf = await res.arrayBuffer();
+    // Clear only after bytes ready to reduce flash
+    host.value.innerHTML = "";
     await renderAsync(buf, host.value, undefined, {
       className: "docx-preview-body",
       inWrapper: true,
@@ -40,6 +42,7 @@ async function render(url: string) {
       renderFootnotes: true,
       renderEndnotes: true,
     });
+    hasContent.value = true;
   } catch (e) {
     if ((e as Error)?.name === "AbortError") return;
     error.value = e instanceof Error ? e.message : String(e);
@@ -72,7 +75,12 @@ onBeforeUnmount(() => {
     <div v-if="legacyDoc" class="status-empty">
       {{ t("preview.docLegacyUnsupported") }}
     </div>
-    <div v-else-if="loading" class="status-empty">{{ t("preview.loading") }}</div>
+    <div
+      v-else-if="loading && !hasContent"
+      class="status-empty"
+    >
+      {{ t("preview.loading") }}
+    </div>
     <div v-if="error && !legacyDoc" class="error">{{ error }}</div>
     <div ref="host" class="docx-scroll" />
   </div>
