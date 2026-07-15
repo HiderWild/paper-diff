@@ -121,8 +121,9 @@ async function loadBoundPath(path: string | null) {
     }
     left.value = project.localBuffers[path] ?? workContent;
 
+    // Per-workPath override, else project default (path synced to work), else active zone
     const mem =
-      compareTarget.getForProject(project.projectId) ||
+      compareTarget.resolveForWork(project.projectId, path) ||
       (project.activeZoneId
         ? {
             kind: "zone" as const,
@@ -184,7 +185,15 @@ function onTargetChanged(_t: CompareTarget) {
 }
 
 async function onPullUnit(u: DiffUnit) {
-  const content = await project.doAccept(u);
+  // Always pass visible buffers so git / non-active zone pulls use true source.
+  // left = work, right = compare target (even when display sides are swapped).
+  const path = props.tab.path;
+  if (!path) return;
+  const content = await project.doAccept(u, {
+    workPath: path,
+    leftTextFull: left.value,
+    rightTextFull: right.value,
+  });
   onAfterMutation(content ?? null);
 }
 
@@ -218,7 +227,8 @@ function onAfterMutation(content: string | null) {
   if (content != null && props.tab.path) {
     left.value = content;
     project.clearDirty(props.tab.path);
-    diffRef.value?.setLeftContent(content);
+    // Remount diff for reliable buffer sync after pull (swap-safe).
+    targetTick.value++;
   }
 }
 </script>
@@ -233,6 +243,8 @@ function onAfterMutation(content: string | null) {
         v-if="tab.kind === 'comparer' && active && tab.path"
         :path="tab.path"
         :units="units"
+        :left-text="left"
+        :right-text="right"
         @after-mutation="onAfterMutation"
         @target-changed="onTargetChanged"
       />

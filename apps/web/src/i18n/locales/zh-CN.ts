@@ -237,7 +237,10 @@ export default {
     gitPath: "仓库内路径",
     pickCommit: "选择提交…",
     applyTarget: "应用对照",
-    memoryHint: "将记住本项目最后一次对照源，下次打开默认使用。",
+    memoryHint:
+      "将记为项目默认，并为本文件单独记忆。打开其他文件时使用项目默认源、路径随当前文件。",
+    rememberedFile: "已记住 · 本文件",
+    rememberedProject: "已记住 · 项目默认",
   },
   gutter: {
     pullLine: "拉取此行（对照 → 项目）",
@@ -260,6 +263,8 @@ export default {
     importingGit: "正在从 Git 导入…",
     accepted: "已接受 {granularity} → 版本 {revision}",
     acceptedAll: "已全部接受 → 版本 {revision}",
+    appliedCompare: "已从对照拉取 → 工作文件（{path}）",
+    appliedCompareAll: "已从对照整文件写入 → 工作文件（{path}）",
     actionPath: "{action} {path}",
     undoOk: "撤销成功",
     saved: "已保存 {path}",

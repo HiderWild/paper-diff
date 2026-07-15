@@ -45,8 +45,9 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const host = ref<HTMLDivElement | null>(null);
 const arrowLayer = ref<HTMLDivElement | null>(null);
+/** Arrows always mean "pull compare → work"; sidesSwapped only flips display panes. */
 const arrows = ref<
-  Array<GutterAction & { top: number; title: string; glyph: string }>
+  Array<GutterAction & { top: number; left: number; title: string; glyph: string }>
 >([]);
 
 let editor: monaco.editor.IStandaloneDiffEditor | null = null;
@@ -54,10 +55,13 @@ let original: monaco.editor.ITextModel | null = null;
 let modified: monaco.editor.ITextModel | null = null;
 let sub: monaco.IDisposable | null = null;
 let contentSub: monaco.IDisposable | null = null;
-let scrollSub: monaco.IDisposable | null = null;
-let layoutSub: monaco.IDisposable | null = null;
+const viewSubs: monaco.IDisposable[] = [];
 let suppressEmit = false;
 let lastUnits: DiffUnit[] = [];
+
+const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
+/** Max vertical offset (px) for one secondary arrow when primary is already on the line. */
+const SECONDARY_OFFSET_PX = 16;
 
 function recomputeUnits() {
   if (!editor) return;
@@ -72,56 +76,111 @@ function recomputeUnits() {
   void nextTick(() => placeArrows());
 }
 
+/**
+ * Monaco Diff split rail x (relative to host/arrow-layer).
+ * Midpoint between original editor's right edge and modified editor's left edge.
+ */
+function splitRailLeftPx(): number | null {
+  if (!editor || !host.value) return null;
+  const hostRect = host.value.getBoundingClientRect();
+  if (hostRect.width <= 0) return null;
+  const leftNode = editor.getOriginalEditor().getDomNode();
+  const rightNode = editor.getModifiedEditor().getDomNode();
+  if (!leftNode || !rightNode) return null;
+  const leftRect = leftNode.getBoundingClientRect();
+  const rightRect = rightNode.getBoundingClientRect();
+  // Midpoint of the gap between panes (= Monaco's sash rail)
+  const mid = (leftRect.right + rightRect.left) / 2 - hostRect.left;
+  if (!Number.isFinite(mid) || mid <= 0) {
+    // Fallback: original editor width relative to host
+    return Math.max(0, leftRect.right - hostRect.left);
+  }
+  return mid;
+}
+
 function placeArrows() {
   if (!props.showGutterActions || props.singlePane || !editor || !host.value) {
     arrows.value = [];
     return;
   }
+  const railLeft = splitRailLeftPx();
+  if (railLeft == null) {
+    arrows.value = [];
+    return;
+  }
+
   const leftEd = editor.getOriginalEditor();
   const acts = gutterActionsFromUnits(lastUnits);
-  // one arrow per leftLine prefer: line > block > hunk
+  // Primary: one arrow per leftLine, prefer line > block > hunk
   const byLine = new Map<number, GutterAction>();
   for (const a of acts) {
     const prev = byLine.get(a.leftLine);
-    if (!prev) {
+    if (!prev || KIND_RANK[a.kind] > KIND_RANK[prev.kind]) {
       byLine.set(a.leftLine, a);
-      continue;
     }
-    const rank = { line: 3, block: 2, hunk: 1 } as const;
-    if (rank[a.kind] > rank[prev.kind]) byLine.set(a.leftLine, a);
   }
-  // also keep distinct block/hunk at same line with offset if needed
-  const list: Array<GutterAction & { top: number; title: string; glyph: string }> =
-    [];
+
+  type Placed = GutterAction & {
+    top: number;
+    left: number;
+    title: string;
+    glyph: string;
+  };
+  const list: Placed[] = [];
+  const hostH = host.value.clientHeight || 800;
+
+  function glyphFor(kind: GutterAction["kind"]): string {
+    return kind === "line" ? "←" : kind === "block" ? "⇐" : "⟸";
+  }
+
+  function lineTop(line: number): number {
+    const top = leftEd.getTopForLineNumber(Math.max(1, line));
+    return top - leftEd.getScrollTop() + 2;
+  }
+
   for (const a of byLine.values()) {
-    const top = leftEd.getTopForLineNumber(Math.max(1, a.leftLine));
-    const scroll = leftEd.getScrollTop();
-    const y = top - scroll + 2;
-    const glyph =
-      a.kind === "line" ? "←" : a.kind === "block" ? "⇐" : "⟸";
     list.push({
       ...a,
-      top: y,
-      glyph,
+      top: lineTop(a.leftLine),
+      left: railLeft,
+      glyph: glyphFor(a.kind),
       title: t(a.labelKey),
     });
   }
-  // add block/hunk extras that lost to line at same spot — offset
+
+  // At most one secondary (block/hunk) under the primary on that line if useful
+  const secondaryPlaced = new Set<number>();
   for (const a of acts) {
     if (a.kind === "line") continue;
-    if (byLine.get(a.leftLine)?.id === a.id) continue;
-    if (a.kind === "block" || a.kind === "hunk") {
-      const top = leftEd.getTopForLineNumber(Math.max(1, a.leftLine));
-      const scroll = leftEd.getScrollTop();
-      list.push({
-        ...a,
-        top: top - scroll + (a.kind === "block" ? 18 : 34),
-        glyph: a.kind === "block" ? "⇐" : "⟸",
-        title: t(a.labelKey),
-      });
+    const primary = byLine.get(a.leftLine);
+    if (!primary || primary.id === a.id) continue;
+    // Only keep secondary when primary is the finer-grained "line" action
+    // and secondary is a wider accept (block preferred over hunk).
+    if (primary.kind !== "line") continue;
+    if (secondaryPlaced.has(a.leftLine)) continue;
+    // Prefer block over hunk when both lost to line
+    if (a.kind === "hunk") {
+      const hasBlock = acts.some(
+        (x) =>
+          x.leftLine === a.leftLine &&
+          x.kind === "block" &&
+          x.id !== primary.id
+      );
+      if (hasBlock) continue;
     }
+    secondaryPlaced.add(a.leftLine);
+    list.push({
+      ...a,
+      top: lineTop(a.leftLine) + SECONDARY_OFFSET_PX,
+      left: railLeft,
+      glyph: glyphFor(a.kind),
+      title: t(a.labelKey),
+    });
   }
-  arrows.value = list.filter((x) => x.top > -40 && x.top < (host.value?.clientHeight || 800) + 40);
+
+  arrows.value = list.filter(
+    (x) => x.top > -40 && x.top < hostH + 40
+  );
 }
 
 function applyEditability() {
@@ -131,6 +190,22 @@ function applyEditability() {
     originalEditable: !!props.editableLeft,
     renderSideBySide: !props.singlePane,
   });
+  // Pane mode change moves the rail
+  void nextTick(() => placeArrows());
+}
+
+function bindViewListeners() {
+  while (viewSubs.length) viewSubs.pop()?.dispose();
+  if (!editor) return;
+  const leftEd = editor.getOriginalEditor();
+  const rightEd = editor.getModifiedEditor();
+  const onView = () => placeArrows();
+  viewSubs.push(
+    leftEd.onDidScrollChange(onView),
+    rightEd.onDidScrollChange(onView),
+    leftEd.onDidLayoutChange(onView),
+    rightEd.onDidLayoutChange(onView)
+  );
 }
 
 function mountEditor() {
@@ -158,9 +233,7 @@ function mountEditor() {
     if (suppressEmit || !props.editableLeft) return;
     emit("leftChange", original!.getValue());
   });
-  const leftEd = editor.getOriginalEditor();
-  scrollSub = leftEd.onDidScrollChange(() => placeArrows());
-  layoutSub = leftEd.onDidLayoutChange(() => placeArrows());
+  bindViewListeners();
   setTimeout(() => {
     recomputeUnits();
     emit("ready");
@@ -199,8 +272,7 @@ onMounted(mountEditor);
 onBeforeUnmount(() => {
   contentSub?.dispose();
   sub?.dispose();
-  scrollSub?.dispose();
-  layoutSub?.dispose();
+  while (viewSubs.length) viewSubs.pop()?.dispose();
   editor?.dispose();
   original?.dispose();
   modified?.dispose();
@@ -230,6 +302,7 @@ function getLeftContent() {
 }
 
 function onArrowClick(a: GutterAction) {
+  // Always pull compare → work (glyph unchanged by display swap)
   emit("pullUnit", a.unit);
 }
 
@@ -250,7 +323,7 @@ defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
         type="button"
         class="gutter-arrow"
         :class="a.kind"
-        :style="{ top: a.top + 'px' }"
+        :style="{ top: a.top + 'px', left: a.left + 'px' }"
         :title="a.title"
         @click="onArrowClick(a)"
       >
@@ -281,8 +354,7 @@ defineExpose({ setLeftContent, recomputeUnits, revealLine, getLeftContent });
 }
 .gutter-arrow {
   position: absolute;
-  /* Monaco split is ~50%; arrows sit on center rail */
-  left: 50%;
+  /* left set from real Monaco split rail in placeArrows */
   transform: translateX(-50%);
   pointer-events: auto;
   width: 1.35rem;

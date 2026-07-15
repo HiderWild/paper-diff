@@ -5,15 +5,17 @@ import { storeToRefs } from "pinia";
 import type { DiffUnit } from "../../features/diff/sentenceMapper";
 import { useProjectStore } from "../../stores/project";
 import {
-  formatTargetLabel,
   useCompareTargetStore,
   type CompareTarget,
 } from "../../stores/compareTarget";
-import { gitLog } from "../../shared/api";
 
 const props = defineProps<{
   path: string;
   units: DiffUnit[];
+  /** Visible work-side full text (true left buffer) */
+  leftText?: string;
+  /** Visible compare-side full text (true right buffer; git/zone) */
+  rightText?: string;
 }>();
 
 const emit = defineEmits<{
@@ -38,27 +40,47 @@ const pickerOpen = ref(false);
 
 watch(
   () => [props.path, projectId.value, activeZoneId.value, zones.value] as const,
-  () => {
-    const mem = targets.getForProject(projectId.value);
+  ([path]) => {
+    // Prefer per-work-path memory; fall back to project default with path=work
+    const mem = targets.resolveForWork(projectId.value, path);
     if (mem) {
       if (mem.kind === "zone") {
         targetKind.value = "zone";
         zoneId.value = mem.zoneId;
-        zonePath.value = mem.path || props.path;
+        // When only project default applied, path is already rewritten to work path
+        zonePath.value = mem.path || path;
       } else {
         targetKind.value = "git";
         gitRef.value = mem.ref;
-        gitPath.value = mem.path || props.path;
+        gitPath.value = mem.path || path;
       }
     } else {
       targetKind.value = "zone";
       zoneId.value = activeZoneId.value || zones.value[0]?.id || "";
-      zonePath.value = props.path;
-      gitPath.value = props.path;
+      zonePath.value = path;
+      gitPath.value = path;
+    }
+    // Opening a new work path: always seed editable path fields to this file
+    // unless a file-scoped override already set them above (same work path).
+    // For brand-new path without file override, ensure fields match work path.
+    const scope = targets.getMemoryScope(projectId.value, path);
+    if (scope !== "file") {
+      zonePath.value = path;
+      gitPath.value = path;
     }
   },
   { immediate: true }
 );
+
+const memoryScope = computed(() =>
+  targets.getMemoryScope(projectId.value, props.path)
+);
+
+const memoryBadge = computed(() => {
+  if (memoryScope.value === "file") return t("comparer.rememberedFile");
+  if (memoryScope.value === "project") return t("comparer.rememberedProject");
+  return "";
+});
 
 const targetLabel = computed(() => {
   const cur = currentTarget();
@@ -89,17 +111,22 @@ function currentTarget(): CompareTarget | null {
 function applyTarget() {
   const t0 = currentTarget();
   if (!t0) return;
-  targets.setForProject(projectId.value, t0);
+  // Persist as both project default and per-workPath override for this file
+  targets.setForProject(projectId.value, t0, props.path);
   emit("targetChanged", t0);
   pickerOpen.value = false;
 }
 
 async function onAcceptAll() {
-  if (!pair.value) return;
   if (store.isDirty(props.path)) {
     if (!confirm(t("tools.dirtyAcceptConfirm"))) return;
   }
-  const content = await store.doAcceptAll();
+  // Pass visible right buffer so git/non-active targets write true compare content.
+  const content = await store.doAcceptAll({
+    workPath: props.path,
+    leftTextFull: props.leftText,
+    rightTextFull: props.rightText,
+  });
   emit("acceptAll");
   emit("afterMutation", content ?? null);
 }
@@ -120,6 +147,9 @@ watch(pickerOpen, (v) => {
     <div class="cmp-title-row">
       <span class="cmp-title">{{ title }}</span>
       <span class="cmp-path muted">{{ path }}</span>
+      <span v-if="memoryBadge" class="mem-badge muted" :title="memoryBadge">{{
+        memoryBadge
+      }}</span>
       <button
         type="button"
         class="mini secondary"
@@ -141,7 +171,7 @@ watch(pickerOpen, (v) => {
       <button
         type="button"
         class="mini"
-        :disabled="busy || !pair"
+        :disabled="busy || (!pair && rightText == null)"
         @click="onAcceptAll"
       >
         {{ t("toolbar.acceptFile") }}
@@ -239,6 +269,17 @@ watch(pickerOpen, (v) => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.75rem;
+}
+.mem-badge {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .target-picker {
   padding: 0.5rem 0.65rem 0.65rem;

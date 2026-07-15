@@ -1,6 +1,6 @@
 # paper-diff 补强计划：比较器真源拉取 · 预览缩放 · 中缝交互
 
-> **Status:** Ready to execute — 2026-07-15  
+> **Status:** **Steps 1–4 implemented** (true-source client apply, arrow rail geometry, memory v2, Word zoom) — 2026-07-15; Step 5 hover optional; Step 6 manual smoke  
 > **Origin:** 对「静默缩放 / 对照源记忆 / 中缝箭头」实现的**二次复审**（显示 vs 接受数据流、Word 缺口、箭头几何）  
 > **Does not supersede:** `2026-07-15-ux-gap-closure.md`（工作台/导入/autosave 骨架）；**本文件专收比较器 + 预览闭环**  
 > **Related:**  
@@ -140,18 +140,20 @@ target =
 
 **目标：** 屏幕右侧是什么，拉进来就是什么。
 
-1. [ ] 引入 `applyCompareSnippet(workPath, leftRange, rightText)`：  
+1. [x] 引入 `applyCompareSnippet(workPath, leftRange, rightText)`：  
    - 在 work 全文中按 line/col 替换为 `rightText`  
    - `putWorkFile` + 更新 revision（`getFilePair` 或 put 返回）  
    - `markDirty`/`clearDirty` 与 autosave 协调（PUT 后 clear）  
-2. [ ] `onPullUnit` / `doAccept` 分支：  
+   - 落地：`features/diff/applySnippet.ts` + `project.applyCompareUnit` / `applyCompareFileAll`  
+2. [x] `onPullUnit` / `doAccept` 分支：  
    - 若 target 为 git 或 zone 非 active 或 path≠work → **snippet 路径**  
    - 若 active zone 同路径 → 可保留 `acceptOps`  
-3. [ ] `doAcceptAll`：对 git/异源 → 整文件右侧内容 `putWorkFile`（或逐 hunk snippet）  
-4. [ ] 行/块 unit 必须带 **真实 rightText**（从当前右侧全文 `sliceRange`），禁止空文本 accept  
-5. [ ] 测试：  
-   - 单元：`applyCompareSnippet` 替换边界  
-   - 集成 mock：git 目标下 pull 后 work buffer == 期望切片  
+   - 箭头拉取（ToolBody 传入左右 buffer）一律客户端真源  
+3. [x] `doAcceptAll`：对 git/异源 → 整文件右侧内容 `putWorkFile`（或逐 hunk snippet）  
+4. [x] 行/块 unit 必须带 **真实 rightText**（从当前右侧全文 `sliceRange`），禁止空文本 accept  
+5. [x] 测试：  
+   - 单元：`applySnippet.test.ts` 替换边界  
+   - mock：`project.applyCompare.test.ts`（git/异源 pull → putWorkFile 期望切片）  
 
 **G/W/T：**
 
@@ -164,10 +166,10 @@ target =
 
 ### Step 2 — 箭头几何与优先级（G1–G4）〔P1〕
 
-1. [ ] 读取 Monaco Diff 中缝：`getOriginalEditor`/`getModifiedEditor` 布局 width 算中线 `left` px  
-2. [ ] 监听两侧 scroll + layout + option 变化，重放 `placeArrows`  
-3. [ ] 同一 `leftLine` 只显示一个主箭头；block/hunk 用不同 glyph 或长按/次按钮，避免三箭叠一处  
-4. [ ] 文档：`sidesSwapped` 下箭头仍「采用对照」  
+1. [x] 读取 Monaco Diff 中缝：`getOriginalEditor`/`getModifiedEditor` 布局 width 算中线 `left` px  
+2. [x] 监听两侧 scroll + layout + option 变化，重放 `placeArrows`  
+3. [x] 同一 `leftLine` 只显示一个主箭头；block/hunk 用不同 glyph 或长按/次按钮，避免三箭叠一处  
+4. [x] 文档：`sidesSwapped` 下箭头仍「采用对照」  
 
 **G/W/T：** 拖分屏后箭头仍贴中缝 ±4px；滚动不漂。
 
@@ -175,10 +177,10 @@ target =
 
 ### Step 3 — 记忆与打开策略（M1–M2）〔P1〕
 
-1. [ ] `memory[projectId].default` + `memory[projectId].byWorkPath[path]`  
-2. [ ] 打开 work 文件：优先 byWorkPath，否则 default，再否则 active zone 同路径  
-3. [ ] UI：对照选择器显示「已记住 · 本文件 / 项目默认」  
-4. [ ] 切换文件时若 path 变，自动把 zonePath/gitPath 默认填为当前 work path（可改）  
+1. [x] `memory[projectId].default` + `memory[projectId].byWorkPath[path]`  
+2. [x] 打开 work 文件：优先 byWorkPath，否则 default，再否则 active zone 同路径  
+3. [x] UI：对照选择器显示「已记住 · 本文件 / 项目默认」  
+4. [x] 切换文件时若 path 变，自动把 zonePath/gitPath 默认填为当前 work path（可改）  
 
 **G/W/T：** 文件 A 记 git:abc，文件 B 记 zone:Z；切换 A/B 右侧正确。
 
@@ -186,7 +188,7 @@ target =
 
 ### Step 4 — Word 缩放 + PDF 回归（P1–P3）〔P1〕
 
-1. [ ] DocxPreview：CSS `transform: scale` 或 font/zoom 控件 + Ctrl+滚轮（**静默**，不 loading）  
+1. [x] DocxPreview：CSS `transform: scale` 或 font/zoom 控件 + Ctrl+滚轮（**静默**，不 loading）  
 2. [ ] PDF：保持 frag 交换；可选缩放时 throttle  
 3. [ ] 手工：缩放 10 次无「加载中」横幅、无明显整页空白闪断  
 

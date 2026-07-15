@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { renderAsync } from "docx-preview";
 
@@ -11,10 +11,23 @@ const props = defineProps<{
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
+const scaleWrap = ref<HTMLDivElement | null>(null);
 const error = ref("");
 const loading = ref(false);
 const hasContent = ref(false);
+/** User zoom multiplier — CSS transform only (silent; never toggles loading). */
+const zoom = ref(1);
+const zoomPct = computed(() => Math.round(zoom.value * 100));
 let abort: AbortController | null = null;
+
+function applyZoomStyle() {
+  if (!scaleWrap.value) return;
+  const z = zoom.value;
+  scaleWrap.value.style.transform = `scale(${z})`;
+  scaleWrap.value.style.transformOrigin = "top left";
+  // Expand layout box so scroll area matches scaled content
+  scaleWrap.value.style.width = z !== 1 ? `${100 / z}%` : "100%";
+}
 
 async function render(url: string) {
   error.value = "";
@@ -51,16 +64,44 @@ async function render(url: string) {
   }
 }
 
+function onWheel(e: WheelEvent) {
+  // Ctrl/Cmd + wheel (trackpad pinch often sets ctrlKey on browsers)
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  const next = Math.min(4, Math.max(0.25, zoom.value * factor));
+  if (Math.abs(next - zoom.value) < 0.001) return;
+  zoom.value = next;
+  applyZoomStyle();
+}
+
+function zoomBy(factor: number) {
+  zoom.value = Math.min(4, Math.max(0.25, zoom.value * factor));
+  applyZoomStyle();
+}
+
+function zoomReset() {
+  zoom.value = 1;
+  applyZoomStyle();
+}
+
 watch(
   () => props.url,
   (u) => {
+    zoom.value = 1;
+    applyZoomStyle();
     if (props.legacyDoc) {
       error.value = t("preview.docLegacyUnsupported");
+      hasContent.value = false;
       if (host.value) host.value.innerHTML = "";
       return;
     }
     if (u) void render(u);
-    else if (host.value) host.value.innerHTML = "";
+    else {
+      hasContent.value = false;
+      if (host.value) host.value.innerHTML = "";
+    }
   },
   { immediate: true }
 );
@@ -71,10 +112,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="docx-host">
+  <div class="docx-host" @wheel="onWheel">
+    <div class="docx-toolbar">
+      <button type="button" class="mini secondary" @click="zoomBy(0.9)">−</button>
+      <span class="zoom-label">{{ zoomPct }}%</span>
+      <button type="button" class="mini secondary" @click="zoomBy(1.1)">+</button>
+      <button type="button" class="mini secondary" @click="zoomReset">
+        {{ t("pdf.zoomReset") }}
+      </button>
+      <span class="hint muted">{{ t("pdf.zoomHint") }}</span>
+    </div>
     <div v-if="legacyDoc" class="status-empty">
       {{ t("preview.docLegacyUnsupported") }}
     </div>
+    <!-- Only show loading on initial open when nothing is painted yet (never on zoom) -->
     <div
       v-else-if="loading && !hasContent"
       class="status-empty"
@@ -82,7 +133,11 @@ onBeforeUnmount(() => {
       {{ t("preview.loading") }}
     </div>
     <div v-if="error && !legacyDoc" class="error">{{ error }}</div>
-    <div ref="host" class="docx-scroll" />
+    <div class="docx-scroll">
+      <div ref="scaleWrap" class="docx-scale">
+        <div ref="host" class="docx-render" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -92,10 +147,43 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: auto;
   background: #525659;
+  display: flex;
+  flex-direction: column;
+}
+.docx-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, #3a3f44 92%, transparent);
+  padding: 0.25rem 0.5rem;
+  backdrop-filter: blur(4px);
+}
+.zoom-label {
+  min-width: 3rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: #e2e8f0;
+}
+.hint {
+  font-size: 0.7rem;
+  margin-left: 0.35rem;
 }
 .docx-scroll {
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 1rem;
+}
+.docx-scale {
+  transform-origin: top left;
+  width: 100%;
+}
+.docx-render {
+  min-height: 0;
 }
 .status-empty {
   color: #e2e8f0;
@@ -106,6 +194,9 @@ onBeforeUnmount(() => {
   color: #fecaca;
   padding: 0.5rem 1rem;
   font-size: 0.85rem;
+}
+.muted {
+  color: #94a3b8;
 }
 :deep(.docx-preview-body) {
   background: #fff;
