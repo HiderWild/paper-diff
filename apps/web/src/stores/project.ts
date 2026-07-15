@@ -64,8 +64,13 @@ import {
   type Zone,
 } from "../shared/api";
 import type { DiffUnit } from "../features/diff/sentenceMapper";
+import { applyUnitToWorkText } from "../features/diff/applySnippet";
 import { i18n } from "../i18n";
 import { useSettingsStore } from "./settings";
+import {
+  useCompareTargetStore,
+  type CompareTarget,
+} from "./compareTarget";
 
 function t(
   key: string,
@@ -621,9 +626,175 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
-  async function doAccept(unit: DiffUnit) {
-    if (!projectId.value || !pair.value || !currentPath.value) return;
-    if (gitPreviewPair.value) return;
+  /**
+   * Whether accept must use client-side apply (visible compare buffers)
+   * instead of backend active-zone accept.
+   */
+  function needsClientApply(
+    workPath: string,
+    target?: CompareTarget | null
+  ): boolean {
+    const cmp = useCompareTargetStore();
+    // Prefer workPath-scoped memory so file A/B targets differ (M1)
+    const t0 =
+      target ??
+      (projectId.value
+        ? cmp.resolveForWork(projectId.value, workPath)
+        : cmp.getForProject(projectId.value));
+    if (!t0) {
+      // no explicit target: backend active zone / revised — only safe if path matches
+      return false;
+    }
+    if (t0.kind === "git") return true;
+    // zone target: client apply if not active zone or path differs from work
+    if (t0.zoneId !== activeZoneId.value) return true;
+    if ((t0.path || workPath) !== workPath) return true;
+    return false;
+  }
+
+  /**
+   * Apply the visible compare-side unit into the work file via PUT.
+   * Guarantees "what you see is what you pull" for git / non-active zone.
+   */
+  async function applyCompareUnit(
+    unit: DiffUnit,
+    opts: {
+      workPath: string;
+      rightTextFull: string;
+      leftTextFull: string;
+      sidesSwapped?: boolean;
+    }
+  ): Promise<string | null> {
+    if (!projectId.value || !opts.workPath) return null;
+    busy.value = true;
+    error.value = "";
+    try {
+      const next = applyUnitToWorkText(opts.leftTextFull, unit, {
+        rightTextFull: opts.rightTextFull,
+        sidesSwapped: opts.sidesSwapped ?? sidesSwapped.value,
+      });
+      await putWorkFile(projectId.value, opts.workPath, next);
+      clearDirty(opts.workPath);
+      localBuffers.value = { ...localBuffers.value, [opts.workPath]: next };
+      if (currentPath.value === opts.workPath) {
+        try {
+          const p = await getFilePair(projectId.value, opts.workPath);
+          pair.value = {
+            ...p,
+            merged: {
+              ...p.merged,
+              content: next,
+            },
+          };
+        } catch {
+          if (pair.value) {
+            pair.value = {
+              ...pair.value,
+              merged: {
+                ...pair.value.merged,
+                content: next,
+              },
+            };
+          }
+        }
+      }
+      status.value = t("store.appliedCompare", { path: opts.workPath });
+      scheduleAutoCompile();
+      return next;
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+      return null;
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  /**
+   * Replace entire work file with visible right (compare) content.
+   */
+  async function applyCompareFileAll(opts: {
+    workPath: string;
+    rightTextFull: string;
+  }): Promise<string | null> {
+    if (!projectId.value || !opts.workPath) return null;
+    busy.value = true;
+    error.value = "";
+    try {
+      const next = opts.rightTextFull;
+      await putWorkFile(projectId.value, opts.workPath, next);
+      clearDirty(opts.workPath);
+      localBuffers.value = { ...localBuffers.value, [opts.workPath]: next };
+      if (currentPath.value === opts.workPath) {
+        try {
+          const p = await getFilePair(projectId.value, opts.workPath);
+          pair.value = {
+            ...p,
+            merged: {
+              ...p.merged,
+              content: next,
+            },
+          };
+        } catch {
+          if (pair.value) {
+            pair.value = {
+              ...pair.value,
+              merged: {
+                ...pair.value.merged,
+                content: next,
+              },
+            };
+          }
+        }
+      }
+      status.value = t("store.appliedCompareAll", { path: opts.workPath });
+      scheduleAutoCompile();
+      return next;
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+      return null;
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function doAccept(
+    unit: DiffUnit,
+    buffers?: {
+      leftTextFull?: string;
+      rightTextFull?: string;
+      workPath?: string;
+    }
+  ) {
+    if (!projectId.value || !currentPath.value) return null;
+    if (gitPreviewPair.value) return null;
+    const workPath = buffers?.workPath || currentPath.value;
+    const leftTextFull =
+      buffers?.leftTextFull ??
+      localBuffers.value[workPath] ??
+      pair.value?.merged?.content ??
+      pair.value?.left?.content ??
+      "";
+    const rightTextFull =
+      buffers?.rightTextFull ??
+      pair.value?.right?.content ??
+      pair.value?.revised?.content ??
+      "";
+
+    // Prefer client apply for arrow pulls whenever buffers are provided
+    // (true source from visible compare), or when target is git/non-active.
+    const forceClient =
+      buffers?.rightTextFull != null || needsClientApply(workPath);
+
+    if (forceClient) {
+      return applyCompareUnit(unit, {
+        workPath,
+        leftTextFull,
+        rightTextFull,
+        sidesSwapped: sidesSwapped.value,
+      });
+    }
+
+    if (!pair.value) return null;
     busy.value = true;
     error.value = "";
     try {
@@ -638,7 +809,7 @@ export const useProjectStore = defineStore("project", () => {
       const res = await acceptOps(projectId.value, [
         {
           op_id: unit.id,
-          file: currentPath.value,
+          file: workPath,
           granularity: unit.granularity,
           left_range,
           right_range,
@@ -653,6 +824,11 @@ export const useProjectStore = defineStore("project", () => {
           revision: res.merged.revision,
         },
       };
+      localBuffers.value = {
+        ...localBuffers.value,
+        [workPath]: res.merged.content,
+      };
+      clearDirty(workPath);
       status.value = t("store.accepted", {
         granularity: unit.granularity,
         revision: res.merged.revision,
@@ -667,13 +843,32 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
-  async function doAcceptAll() {
-    if (!projectId.value || !pair.value || !currentPath.value) return null;
+  async function doAcceptAll(buffers?: {
+    leftTextFull?: string;
+    rightTextFull?: string;
+    workPath?: string;
+  }) {
+    if (!projectId.value || !currentPath.value) return null;
+    const workPath = buffers?.workPath || currentPath.value;
+    const rightTextFull =
+      buffers?.rightTextFull ??
+      pair.value?.right?.content ??
+      pair.value?.revised?.content ??
+      "";
+
+    if (
+      buffers?.rightTextFull != null ||
+      needsClientApply(workPath)
+    ) {
+      return applyCompareFileAll({ workPath, rightTextFull });
+    }
+
+    if (!pair.value) return null;
     busy.value = true;
     try {
       const res = await acceptAll(
         projectId.value,
-        currentPath.value,
+        workPath,
         pair.value.merged.revision
       );
       pair.value = {
@@ -684,6 +879,11 @@ export const useProjectStore = defineStore("project", () => {
           revision: res.merged.revision,
         },
       };
+      localBuffers.value = {
+        ...localBuffers.value,
+        [workPath]: res.merged.content,
+      };
+      clearDirty(workPath);
       status.value = t("store.acceptedAll", {
         revision: res.merged.revision,
       });
@@ -1459,6 +1659,9 @@ export const useProjectStore = defineStore("project", () => {
     doEnqueueDir,
     doAccept,
     doAcceptAll,
+    applyCompareUnit,
+    applyCompareFileAll,
+    needsClientApply,
     doAcceptFile,
     doUndo,
     doCompile,

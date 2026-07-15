@@ -240,7 +240,10 @@ export default {
     gitPath: "Path in repo",
     pickCommit: "Choose commit…",
     applyTarget: "Apply target",
-    memoryHint: "Remembers this project’s last compare source for next open.",
+    memoryHint:
+      "Saved as project default and remembered for this file. Opening other files uses the default source with the current path.",
+    rememberedFile: "Remembered for this file",
+    rememberedProject: "Project default",
   },
   gutter: {
     pullLine: "Pull this line (compare → project)",
@@ -263,6 +266,8 @@ export default {
     importingGit: "Importing from git…",
     accepted: "Accepted {granularity} → rev {revision}",
     acceptedAll: "Accepted all → rev {revision}",
+    appliedCompare: "Pulled compare → work ({path})",
+    appliedCompareAll: "Pulled full compare file → work ({path})",
     actionPath: "{action} {path}",
     undoOk: "Undo ok",
     saved: "Saved {path}",

@@ -78,11 +78,15 @@ export function lineColToOffset(
   col: number
 ): number {
   const lines = text.split("\n");
+  if (line < 1) return 0;
+  if (line > lines.length) return text.length;
   let off = 0;
   for (let i = 0; i < line - 1; i++) {
     off += (lines[i]?.length ?? 0) + 1;
   }
-  return off + col;
+  const lineLen = lines[line - 1]?.length ?? 0;
+  const c = Math.max(0, Math.min(col, lineLen));
+  return off + c;
 }
 
 export function sliceRange(text: string, r: LineColRange): string {
