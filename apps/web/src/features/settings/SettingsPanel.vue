@@ -99,9 +99,9 @@ function onLocale(e: Event) {
         <button
           type="button"
           class="secondary reset-btn"
-          @click="workbench.openTool('output')"
+          @click="layout.openBottom()"
         >
-          {{ t("settings.openOutputTab") }}
+          {{ t("settings.showBottom") }}
         </button>
         <button
           type="button"

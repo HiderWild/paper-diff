@@ -149,6 +149,14 @@ const commandItems = computed(() => {
       run: () => workbench.openTool("pdf"),
     },
     {
+      id: "toggleOutput",
+      label: t("tools.output") + " (Ctrl+`)",
+      run: () => {
+        if (showBottom.value) layout.toggleBottom();
+        else layout.openBottom();
+      },
+    },
+    {
       id: "exportReport",
       label: t("settings.exportAcceptLog"),
       run: () => {
@@ -799,6 +807,13 @@ function onConflictCancel() {
 }
 
 function onOpenTool(kind: ToolKind) {
+  // Output is a locked bottom dock (not a closable workbench tab).
+  // Clicking the tool icon wakes / shows the pane; if already open, toggle hide.
+  if (kind === "output") {
+    if (showBottom.value) layout.toggleBottom();
+    else layout.openBottom();
+    return;
+  }
   workbench.openTool(kind, null);
 }
 
@@ -1034,6 +1049,7 @@ function formatCommitDate(iso?: string) {
     <header class="toolbar">
       <span class="title">{{ t("app.title") }}</span>
       <ToolStrip
+        :output-active="showBottom"
         @open="onOpenTool"
         @drag-start="() => undefined"
       />
@@ -1106,30 +1122,6 @@ function formatCommitDate(iso?: string) {
         <option value="hunk">{{ t("filter.hunks") }}</option>
         <option value="all">{{ t("filter.all") }}</option>
       </select>
-      <button
-        class="secondary"
-        :class="{ 'active-toggle': showFiles }"
-        :title="t('toolbar.toggleFiles')"
-        @click="layout.toggleFiles()"
-      >
-        {{ t("toolbar.toggleFiles") }}
-      </button>
-      <button
-        class="secondary"
-        type="button"
-        :title="t('tools.pdf')"
-        @click="workbench.openTool('pdf')"
-      >
-        {{ t("tools.pdf") }}
-      </button>
-      <button
-        class="secondary"
-        type="button"
-        :title="t('tools.output')"
-        @click="workbench.openTool('output')"
-      >
-        {{ t("tools.output") }}
-      </button>
       <span
         v-if="agentProvider"
         class="provider-badge"

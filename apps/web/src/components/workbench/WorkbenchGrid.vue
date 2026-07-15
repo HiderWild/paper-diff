@@ -48,7 +48,7 @@ function onGapDrop(rowId: string, insertIndex: number, e: DragEvent) {
   else if (colId) wb.moveColumn(colId, intent);
   else {
     const tool = e.dataTransfer?.getData("application/x-paper-diff-tool");
-    if (tool) {
+    if (tool && tool !== "output") {
       const tab = wb.openTool(tool as never, null);
       if (tab) {
         wb.detachTab(tab.id);

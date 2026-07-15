@@ -228,7 +228,11 @@ export const useWorkbenchStore = defineStore("workbench", () => {
   );
 
   function ensureSeed() {
-    // Empty layout is valid; kept for call-site compatibility.
+    // Empty layout is valid; strip any legacy "output" tabs (now a locked dock).
+    const legacy = Object.values(tabs.value).filter((t) => t.kind === "output");
+    for (const t of legacy) {
+      closeTab(t.id);
+    }
   }
 
   /** One empty column so a tool can be opened into it. */
@@ -304,6 +308,7 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     path: string | null = null,
     index?: number
   ) {
+    if (kind === "output") return null;
     const c = columns.value[columnId];
     if (!c) return null;
     const tab = createTab(kind, path);
@@ -322,8 +327,15 @@ export const useWorkbenchStore = defineStore("workbench", () => {
     return tab;
   }
 
-  /** Open tool: prefer focused column, else first column, else create empty column. */
+  /**
+   * Open tool: prefer focused column, else first column, else create empty column.
+   * Output is NOT a workbench tab — it lives in the locked bottom dock only.
+   * Callers that need the log should toggle layout.openBottom / toggleBottom.
+   */
   function openTool(kind: ToolKind, path: string | null = null) {
+    if (kind === "output") {
+      return null;
+    }
     let colId: string | null = null;
     if (focusedTabId.value) colId = findColumnOfTab(focusedTabId.value);
     if (!colId) {
