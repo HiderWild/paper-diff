@@ -391,6 +391,19 @@ export const EMPTY_TEX_CONTEXT: TexContext = {
 
 ---
 
+## 6.1 复审发现（2026-07-16）
+
+| 级别 | 问题 | 状态 |
+|------|------|------|
+| **严重** | texCtx 快照不响应：首次悬停 ensure() 异步未完成时快照 EMPTY_TEX_CONTEXT，已编译项目也显假黄条 + `[key]` 占位 | **已修**（`359e544`：watch `projectStore.texContext.ctx` → patch open card） |
+| 中 | `highlightChangedInRendered` DOM 路径零测试（vitest 纯 node 只覆盖 regex fallback） | 待补（需 jsdom/happy-dom env） |
+| 中 | Step 6 `WordHoverCard` 集成无组件测试（无 `@vue/test-utils`） | 待补（同上） |
+| 轻 | `\newlabel{key}{{}{page}}` 空编号不匹配（hyperref 偶发） | 可接受（回退显示 key） |
+| 轻 | 嵌套脚注计数器不共享（`renderTexSentence(arg.body, state.ctx)` 创建新 RenderState） | 可接受（计划"跨句不保证"） |
+| 轻 | `_store_aux_bbl` 无 feature flag（计划提 `PAPER_DIFF_STORE_AUX`，实现无条件拷贝） | 可接受（拷贝失败静默跳过） |
+
+---
+
 ## 7. 文件触点
 
 | 区域 | 路径 |
