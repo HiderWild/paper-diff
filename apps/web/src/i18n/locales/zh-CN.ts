@@ -318,6 +318,7 @@ export default {
     deleteBrief: "将删除：",
     insertLead: "将插入：",
     deleteLead: "将删除：",
+    expandedHint: "已扩展上下文（公式/词界）以便理解；采纳仍只改原始片段",
     apply: "采纳替换",
     applyInsert: "插入",
     applyDelete: "删除",

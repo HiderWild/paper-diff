@@ -590,7 +590,12 @@ function onEditorMouseMove(
     scheduleDismiss();
     return;
   }
-  const model = unitCardModel(unit, props.sidesSwapped);
+  const model = unitCardModel(
+    unit,
+    props.sidesSwapped,
+    props.left,
+    props.right
+  );
   const anchorKey = `${unit.id}:${trueSide}:${visual}`;
 
   // Same unit open → keep x/y frozen so apply button stays clickable
