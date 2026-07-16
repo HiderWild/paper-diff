@@ -3,6 +3,7 @@
  */
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { sanitizeMathLatex } from "./sanitizeMathLatex";
 
 let cssInjected = false;
 
@@ -85,9 +86,11 @@ export function renderMathHoverHtml(
   theme: "dark" | "light" = currentThemeMode()
 ): string {
   injectMathHoverCss();
+  // Drop \label/\tag/\ref… so KaTeX shows only the math body
+  const cleaned = sanitizeMathLatex(latex);
   try {
     // Prefer HTML-only (no MathML) so v-html + CSS color overrides apply cleanly
-    const body = katex.renderToString(latex, {
+    const body = katex.renderToString(cleaned, {
       displayMode: display,
       throwOnError: false,
       strict: "ignore",
@@ -96,12 +99,14 @@ export function renderMathHoverHtml(
     });
     // Fail closed: if KaTeX produced nothing useful, surface latex as error
     if (!body || !body.includes("katex")) {
-      return `<div class="pd-math-hover ${theme}"><div class="pd-math-err">${escapeHtml(latex)}</div></div>`;
+      return `<div class="pd-math-hover ${theme}"><div class="pd-math-err">${escapeHtml(cleaned || latex)}</div></div>`;
     }
-    const src = latex.length > 200 ? latex.slice(0, 200) + "…" : latex;
+    // Source line shows cleaned body (labels would only confuse)
+    const src =
+      cleaned.length > 200 ? cleaned.slice(0, 200) + "…" : cleaned;
     return `<div class="pd-math-hover ${theme}"><div class="pd-math-body">${body}</div><div class="pd-math-src">${escapeHtml(src)}</div></div>`;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return `<div class="pd-math-hover ${theme}"><div class="pd-math-err">${escapeHtml(msg)}</div><div class="pd-math-src">${escapeHtml(latex)}</div></div>`;
+    return `<div class="pd-math-hover ${theme}"><div class="pd-math-err">${escapeHtml(msg)}</div><div class="pd-math-src">${escapeHtml(cleaned || latex)}</div></div>`;
   }
 }

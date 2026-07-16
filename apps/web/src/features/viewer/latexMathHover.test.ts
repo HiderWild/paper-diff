@@ -19,4 +19,15 @@ describe("renderMathHoverHtml", () => {
     const html = renderMathHoverHtml("\\frac{a", false, "dark");
     expect(html).toContain("pd-math-hover");
   });
+
+  it("does not surface \\label in preview source", () => {
+    const html = renderMathHoverHtml(
+      String.raw`E=mc^2\label{eq:energy}`,
+      false,
+      "dark"
+    );
+    expect(html).toContain("katex");
+    expect(html).not.toContain("eq:energy");
+    expect(html).not.toContain("label");
+  });
 });
