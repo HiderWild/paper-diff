@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDiffUnits,
+  findSentenceContaining,
   isSentenceEndToken,
   tokenizeLatex,
 } from "./sentenceMapper";
@@ -82,5 +83,46 @@ describe("buildDiffUnits", () => {
       },
     ]);
     expect(units.some((u) => u.granularity === "sentence")).toBe(true);
+  });
+
+  it("sentence units cover full clause, not just changed tokens", () => {
+    const left =
+      "We introduce pointwise conformal deformations which expand area.";
+    const right =
+      "We study pointwise conformal deformations which expand area.";
+    const units = buildDiffUnits(left, right, [
+      {
+        originalStartLineNumber: 1,
+        originalEndLineNumber: 1,
+        modifiedStartLineNumber: 1,
+        modifiedEndLineNumber: 1,
+      },
+    ]);
+    const sents = units.filter((u) => u.granularity === "sentence");
+    expect(sents.length).toBeGreaterThan(0);
+    // Full English sentence on both sides (not mid-clause fragments)
+    expect(sents[0]!.leftText.trim()).toMatch(/^We introduce/);
+    expect(sents[0]!.leftText.trim()).toMatch(/area\.$/);
+    expect(sents[0]!.rightText.trim()).toMatch(/^We study/);
+    expect(sents[0]!.rightText.trim()).toMatch(/area\.$/);
+    // Must not look like the truncated intermediate blob from word-join only
+    expect(sents[0]!.leftText.includes("introduce pointwise")).toBe(true);
+  });
+});
+
+describe("findSentenceContaining", () => {
+  it("expands to enclosing English sentence", () => {
+    const t = "One. Two words here. Three.";
+    const i = t.indexOf("words");
+    const r = findSentenceContaining(t, i, i + 5);
+    expect(t.slice(r.start, r.end)).toBe("Two words here.");
+  });
+
+  it("does not swallow next paragraph across blank line", () => {
+    const t = "First sentence.\n\nNext paragraph continues.";
+    const i = t.indexOf("First");
+    const r = findSentenceContaining(t, i, i + 5);
+    expect(t.slice(r.start, r.end)).toBe("First sentence.");
+    expect(t.slice(r.start, r.end)).not.toContain("Next");
   });
 });
