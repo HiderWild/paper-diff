@@ -219,11 +219,13 @@ export function buildDiffUnits(
       units.push(...wordUnits);
     }
 
-    // Sentence aggregation over word units of this hunk
+    // Full-document sentence spans covering the changed words (not just concat of diffs)
     const words = units.filter(
       (u) => u.parentId === hunkId && u.granularity === "word"
     );
-    units.push(...sentencesFromWords(words, hunkId));
+    units.push(
+      ...sentencesFromWords(leftText, rightText, words, hunkId)
+    );
   }
   return units;
 }
@@ -290,46 +292,137 @@ function wordsFromHunk(
   return out;
 }
 
-function sentencesFromWords(words: DiffUnit[], hunkId: string): DiffUnit[] {
+/**
+ * True at end of a sentence terminator that should close the sentence.
+ * English `.` needs following space / end / quote; CJK ends stand alone.
+ */
+export function isSentenceBoundaryAfter(text: string, i: number): boolean {
+  const ch = text[i];
+  if (!ch) return false;
+  if (/[。！？；]/.test(ch)) return true;
+  if (!/[.!?]/.test(ch)) return false;
+  // abbreviation-ish: single capital letter before period (U.S.)
+  if (ch === "." && i > 0 && /[A-Z]/.test(text[i - 1]!) && (i < 2 || !/\w/.test(text[i - 2]!))) {
+    return false;
+  }
+  const next = text[i + 1];
+  if (next == null) return true;
+  if (/[\s"'”’)\]]/.test(next)) return true;
+  return false;
+}
+
+/**
+ * Expand [start,end) in `text` to the enclosing sentence (full clauses).
+ * Does **not** expand to whole paragraphs — stops at blank line.
+ */
+export function findSentenceContaining(
+  text: string,
+  start: number,
+  end: number
+): { start: number; end: number } {
+  if (!text) return { start: 0, end: 0 };
+  let s = Math.max(0, Math.min(start, text.length));
+  let e = Math.max(s, Math.min(end, text.length));
+
+  // Walk left to previous sentence end or blank-line / doc start
+  while (s > 0) {
+    const prev = text[s - 1]!;
+    if (prev === "\n" && s >= 2 && text[s - 2] === "\n") break; // blank line
+    if (isSentenceBoundaryAfter(text, s - 1)) break;
+    s--;
+  }
+  // skip leading whitespace/newlines into the sentence
+  while (s < e && /[ \t\r\n]/.test(text[s]!)) s++;
+
+  // Walk right past end to next sentence boundary or blank line
+  while (e < text.length) {
+    if (text[e] === "\n" && e + 1 < text.length && text[e + 1] === "\n") {
+      break;
+    }
+    if (isSentenceBoundaryAfter(text, e)) {
+      e++; // include terminator
+      // optional closing quotes
+      while (e < text.length && /["'”’)\]»]/.test(text[e]!)) e++;
+      break;
+    }
+    e++;
+  }
+  return { start: s, end: e };
+}
+
+/**
+ * Build sentence units from word diffs by expanding into **full sentence
+ * text** on each side (document-aware), then merging words that land in the
+ * same left+right sentence span. Never emits paragraph-level units.
+ */
+function sentencesFromWords(
+  leftText: string,
+  rightText: string,
+  words: DiffUnit[],
+  hunkId: string
+): DiffUnit[] {
   if (!words.length) return [];
+
+  type Key = string;
+  const groups = new Map<
+    Key,
+    {
+      leftStart: number;
+      leftEnd: number;
+      rightStart: number;
+      rightEnd: number;
+    }
+  >();
+
+  for (const w of words) {
+    const l0 = lineColToOffset(leftText, w.left.start_line, w.left.start_col);
+    const l1 = lineColToOffset(leftText, w.left.end_line, w.left.end_col);
+    const r0 = lineColToOffset(rightText, w.right.start_line, w.right.start_col);
+    const r1 = lineColToOffset(rightText, w.right.end_line, w.right.end_col);
+
+    // Empty insert/delete: still locate sentence from the non-empty side mid
+    const ls = findSentenceContaining(leftText, l0, Math.max(l0, l1));
+    const rs = findSentenceContaining(rightText, r0, Math.max(r0, r1));
+
+    // Group by sentence starts so multiple word edits in one sentence merge
+    const key = `${ls.start}:${rs.start}`;
+    const g = groups.get(key);
+    if (!g) {
+      groups.set(key, {
+        leftStart: ls.start,
+        leftEnd: ls.end,
+        rightStart: rs.start,
+        rightEnd: rs.end,
+      });
+    } else {
+      g.leftStart = Math.min(g.leftStart, ls.start);
+      g.leftEnd = Math.max(g.leftEnd, ls.end);
+      g.rightStart = Math.min(g.rightStart, rs.start);
+      g.rightEnd = Math.max(g.rightEnd, rs.end);
+    }
+  }
+
   const sentences: DiffUnit[] = [];
-  let buf: DiffUnit[] = [];
-  const flush = () => {
-    if (!buf.length) return;
-    const first = buf[0];
-    const last = buf[buf.length - 1];
+  for (const g of groups.values()) {
+    // Re-run containment on the union in case merge crossed a boundary oddly
+    const ls = findSentenceContaining(leftText, g.leftStart, g.leftEnd);
+    const rs = findSentenceContaining(rightText, g.rightStart, g.rightEnd);
+    const leftSlice = leftText.slice(ls.start, ls.end);
+    const rightSlice = rightText.slice(rs.start, rs.end);
+    // Skip empty noise
+    if (!leftSlice && !rightSlice) continue;
+    // If sentence equals a single tiny word and identical on both sides, skip
+    if (leftSlice === rightSlice && leftSlice.length < 2) continue;
+
     sentences.push({
       id: nid("sentence"),
       granularity: "sentence",
-      left: {
-        start_line: first.left.start_line,
-        start_col: first.left.start_col,
-        end_line: last.left.end_line,
-        end_col: last.left.end_col,
-      },
-      right: {
-        start_line: first.right.start_line,
-        start_col: first.right.start_col,
-        end_line: last.right.end_line,
-        end_col: last.right.end_col,
-      },
-      leftText: buf.map((w) => w.leftText).join(""),
-      rightText: buf.map((w) => w.rightText).join(""),
+      left: rangeFromOffsets(leftText, ls.start, ls.end),
+      right: rangeFromOffsets(rightText, rs.start, rs.end),
+      leftText: leftSlice,
+      rightText: rightSlice,
       parentId: hunkId,
     });
-    buf = [];
-  };
-  for (const w of words) {
-    buf.push(w);
-    if (
-      isSentenceEndToken(w.leftText) ||
-      isSentenceEndToken(w.rightText) ||
-      /[。！？.!?]/.test(w.leftText + w.rightText)
-    ) {
-      flush();
-    }
   }
-  flush();
-  // If only one sentence equal to single word, still keep sentence for Accept UI
   return sentences;
 }
