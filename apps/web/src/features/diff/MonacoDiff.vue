@@ -1097,6 +1097,18 @@ watch(
   }
 );
 
+// Reactively update open sentence hover card when TeX context loads/refreshes.
+// Without this, the first sentence hover snapshots EMPTY_TEX_CONTEXT (compiled=false)
+// before the async ensure() completes, showing a false "not compiled" banner.
+watch(
+  () => projectStore.texContext.ctx,
+  (newCtx) => {
+    if (hoverCard.value && hoverCard.value.model.kind === "sentence") {
+      hoverCard.value = { ...hoverCard.value, texCtx: newCtx };
+    }
+  }
+);
+
 onMounted(mountEditor);
 
 onBeforeUnmount(() => {
