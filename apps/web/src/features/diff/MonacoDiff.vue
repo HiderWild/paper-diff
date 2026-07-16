@@ -28,6 +28,9 @@ import {
   wordUnitsOf,
   type WordCardModel,
 } from "./wordHover";
+import type { LineColRange } from "./sentenceMapper";
+import type { TexContext } from "./texSentenceContext";
+import { useProjectStore } from "../../stores/project";
 
 self.MonacoEnvironment = {
   getWorker() {
@@ -81,6 +84,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const projectStore = useProjectStore();
 const host = ref<HTMLDivElement | null>(null);
 const arrowLayer = ref<HTMLDivElement | null>(null);
 /** Arrows always mean "pull compare → work"; sidesSwapped only flips display panes. */
@@ -116,6 +120,9 @@ const hoverCard = ref<{
   placement: "below" | "above";
   /** Stable key so re-hover same unit does not move the card */
   anchorKey: string;
+  texCtx?: TexContext;
+  workChangedTexts?: string[];
+  compareChangedTexts?: string[];
 } | null>(null);
 
 /** KaTeX formula preview (editor / tex language) — not Monaco built-in hover. */
@@ -281,8 +288,43 @@ function estimateHoverCardHeight(model: {
   // header ~28 + two snips stacked in height + gaps
   const body = Math.max(lines(w), lines(c)) * 16 + 28;
   const pair = 36 + body; // labels + padding
-  if (model.kind === "sentence") return Math.min(320, Math.max(140, pair));
+  if (model.kind === "sentence") {
+    // Rendered view is taller: KaTeX, toggle, possible banner
+    return Math.min(360, Math.max(180, pair + 40));
+  }
   return Math.min(260, Math.max(96, pair));
+}
+
+function rangesOverlap(a: LineColRange, b: LineColRange): boolean {
+  // Simple line-overlap check (word units are typically single-line)
+  if (a.start_line > b.end_line || b.start_line > a.end_line) return false;
+  if (a.start_line === b.end_line && a.start_col >= b.end_col) return false;
+  if (b.start_line === a.end_line && b.start_col >= a.end_col) return false;
+  return true;
+}
+
+/** Find word-level changed texts within a sentence unit's range, for both sides. */
+function changedTextsForSentence(
+  sentenceUnit: DiffUnit,
+  sidesSwapped: boolean
+): { work: string[]; compare: string[] } {
+  const words = wordUnitsOf(lastUnits);
+  // True work/compare ranges (not swapped): work = left, compare = right
+  const sRange = sidesSwapped ? sentenceUnit.right : sentenceUnit.left;
+  const cRange = sidesSwapped ? sentenceUnit.left : sentenceUnit.right;
+  const workTexts: string[] = [];
+  const compareTexts: string[] = [];
+  for (const w of words) {
+    const wWork = sidesSwapped ? w.right : w.left;
+    const wCompare = sidesSwapped ? w.left : w.right;
+    if (rangesOverlap(sRange, wWork) && w.leftText) {
+      workTexts.push(w.leftText); // true work text (not swapped)
+    }
+    if (rangesOverlap(cRange, wCompare) && w.rightText) {
+      compareTexts.push(w.rightText); // true compare text
+    }
+  }
+  return { work: workTexts, compare: compareTexts };
 }
 
 const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
@@ -632,6 +674,16 @@ function onEditorMouseMove(
   );
   const anchorKey = `${unit.id}:${trueSide}:${visual}`;
 
+  // Ensure TeX context is loaded for rendered sentence view
+  if (model.kind === "sentence") {
+    void projectStore.texContext.ensure();
+  }
+  // Compute word-level changed texts for highlighting in rendered view
+  const changed =
+    model.kind === "sentence"
+      ? changedTextsForSentence(unit, props.sidesSwapped)
+      : { work: [], compare: [] };
+
   // Same unit open → keep x/y frozen so apply button stays clickable
   if (hoverCard.value?.anchorKey === anchorKey) {
     if (hoverTimer != null) {
@@ -642,6 +694,9 @@ function onEditorMouseMove(
       hoverCard.value = {
         ...hoverCard.value,
         model,
+        texCtx: projectStore.texContext.ctx,
+        workChangedTexts: changed.work,
+        compareChangedTexts: changed.compare,
       };
     }
     return;
@@ -685,6 +740,9 @@ function onEditorMouseMove(
       y: placed.y,
       placement: placed.placement,
       anchorKey,
+      texCtx: projectStore.texContext.ctx,
+      workChangedTexts: changed.work,
+      compareChangedTexts: changed.compare,
     };
     hoverTimer = null;
   }, openMs);
@@ -1126,6 +1184,9 @@ defineExpose({
         :x="hoverCard.x"
         :y="hoverCard.y"
         :placement="hoverCard.placement"
+        :tex-ctx="hoverCard.texCtx"
+        :work-changed-texts="hoverCard.workChangedTexts"
+        :compare-changed-texts="hoverCard.compareChangedTexts"
         @apply="onHoverApply"
         @dismiss="clearWordHover"
         @pointer-enter="onCardPointerEnter"

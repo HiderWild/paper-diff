@@ -246,6 +246,7 @@ class CompileService:
             pdf_path = work / f"{Path(root).stem}.pdf"
             if pdf_path.is_file() and proc.returncode == 0:
                 self._store_pdf(ws, job, pdf_path)
+                self._store_aux_bbl(ws, job, work, Path(root).stem)
             else:
                 job["status"] = "failed"
                 job["errors"] = self._parse_errors(log_text)
@@ -334,6 +335,7 @@ class CompileService:
             pdf_path = diff_dir / "diff.pdf"
             if pdf_path.is_file() and proc.returncode == 0:
                 self._store_pdf(ws, job, pdf_path, name_hint="latexdiff")
+                self._store_aux_bbl(ws, job, diff_dir, "diff")
             else:
                 job["status"] = "failed"
                 job["errors"] = self._parse_errors(log_text)
@@ -364,6 +366,23 @@ class CompileService:
         job["pdf_url"] = (
             f"/api/v1/projects/{job['project_id']}/artifacts/pdf?job_id={job['job_id']}"
         )
+
+    def _store_aux_bbl(self, ws: Workspace, job: dict, work_dir: Path, stem: str) -> None:
+        """Persist .aux/.bbl artifacts alongside the PDF. Never raises."""
+        artifacts = ws.project_dir / "artifacts"
+        try:
+            artifacts.mkdir(exist_ok=True)
+        except Exception:
+            return
+        for ext in ("aux", "bbl"):
+            src = work_dir / f"{stem}.{ext}"
+            if not src.is_file():
+                continue
+            try:
+                shutil.copy2(src, artifacts / f"{job['job_id']}.{ext}")
+                shutil.copy2(src, artifacts / f"latest.{ext}")
+            except Exception:
+                continue
 
     def _parse_errors(self, log: str) -> list[dict]:
         errors = []
@@ -414,3 +433,27 @@ class CompileService:
         if not path.is_file():
             raise AppError("FILE_NOT_FOUND", "log not found", status_code=404)
         return path.read_text(encoding="utf-8", errors="replace")
+
+    def get_aux_text(self, project_id: str) -> str:
+        ws = self._ws(project_id)
+        path = ws.project_dir / "artifacts" / "latest.aux"
+        if not path.is_file():
+            raise AppError("FILE_NOT_FOUND", "aux not found", status_code=404)
+        return path.read_text(encoding="utf-8", errors="replace")
+
+    def get_bbl_text(self, project_id: str) -> str:
+        ws = self._ws(project_id)
+        path = ws.project_dir / "artifacts" / "latest.bbl"
+        if not path.is_file():
+            raise AppError("FILE_NOT_FOUND", "bbl not found", status_code=404)
+        return path.read_text(encoding="utf-8", errors="replace")
+
+    def get_tex_context(self, project_id: str) -> dict:
+        from app.domain.tex_context import build_tex_context
+
+        ws = self._ws(project_id)
+        aux_path = ws.project_dir / "artifacts" / "latest.aux"
+        bbl_path = ws.project_dir / "artifacts" / "latest.bbl"
+        aux_text = aux_path.read_text(encoding="utf-8", errors="replace") if aux_path.is_file() else None
+        bbl_text = bbl_path.read_text(encoding="utf-8", errors="replace") if bbl_path.is_file() else None
+        return build_tex_context(aux_text, bbl_text)

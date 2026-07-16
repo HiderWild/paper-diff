@@ -78,6 +78,7 @@ import {
   useCompareTargetStore,
   type CompareTarget,
 } from "./compareTarget";
+import { useTexContext } from "../features/diff/useTexContext";
 
 function t(
   key: string,
@@ -152,6 +153,9 @@ export const useProjectStore = defineStore("project", () => {
   const pdfTitle = ref<string | null>(null);
   let compileDebounce: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  // TeX context cache for rendered sentence diff; refreshed on compile success.
+  const texContext = useTexContext(projectId);
 
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
   const CSV_EXT = /\.(csv|tsv)$/i;
@@ -1148,6 +1152,8 @@ export const useProjectStore = defineStore("project", () => {
           pdfUrl(projectId.value, start.job_id) + `&t=${Date.now()}`;
         status.value =
           kind === "latexdiff" ? t("store.latexdiffOk") : t("store.compileOk");
+        // Invalidate + re-fetch TeX context so sentence hovers see new .aux data.
+        void texContext.refresh();
       } else {
         status.value = t("store.compileFailed");
         error.value = job.message || t("store.compileFailedMsg");
@@ -1742,5 +1748,6 @@ export const useProjectStore = defineStore("project", () => {
     isDocPath,
     startPolling,
     stopPolling,
+    texContext,
   };
 });

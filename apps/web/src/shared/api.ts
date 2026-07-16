@@ -1218,3 +1218,21 @@ export async function getHealth(): Promise<{
 }> {
   return parse(await fetch(`${BASE()}/api/v1/health`));
 }
+
+/** TeX context (compiled .aux/.bbl summary) for rendered sentence diff. */
+export type TexContextDto = {
+  compiled: boolean;
+  citations: Record<string, string>;
+  labels: Record<string, { number: string; page?: string }>;
+  bibliography?: Record<string, string> | null;
+};
+
+export async function getTexContext(
+  projectId: string
+): Promise<TexContextDto> {
+  return parse(
+    await fetch(
+      `${BASE()}/api/v1/projects/${projectId}/artifacts/tex-context`
+    )
+  );
+}

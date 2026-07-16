@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { WordCardModel } from "./wordHover";
+import type { TexContext } from "./texSentenceContext";
+import { EMPTY_TEX_CONTEXT } from "./texSentenceContext";
+import { renderTexSentence } from "./renderTexSentence";
+import { highlightChangedInRendered } from "./highlightChangedInRendered";
 
 const props = withDefaults(
   defineProps<{
@@ -10,6 +14,12 @@ const props = withDefaults(
     y: number;
     /** below: top edge at y; above: bottom edge at y (hug highlight top) */
     placement?: "below" | "above";
+    /** TeX context for rendered sentence view (citations/labels from .aux) */
+    texCtx?: TexContext;
+    /** Word-level changed texts to highlight in rendered view (work side) */
+    workChangedTexts?: string[];
+    /** Word-level changed texts to highlight in rendered view (compare side) */
+    compareChangedTexts?: string[];
   }>(),
   { placement: "below" }
 );
@@ -74,6 +84,47 @@ function compareDisplay(): { text: string; empty: boolean } {
     return { text: t("hoverAccept.compareEmpty"), empty: true };
   }
   return { text: clip(raw), empty: false };
+}
+
+// --- Rendered TeX sentence view (sentence replace only) ---
+const viewMode = ref<"source" | "render">("render");
+// Reset to render whenever the model changes (new unit hovered)
+watch(
+  () => props.model,
+  () => {
+    viewMode.value = "render";
+  }
+);
+
+const effectiveCtx = computed<TexContext>(
+  () => props.texCtx ?? EMPTY_TEX_CONTEXT
+);
+
+const isSentenceReplace = computed(
+  () => mode.value === "replace" && props.model.kind === "sentence"
+);
+
+const showNotCompiledBanner = computed(
+  () =>
+    isSentenceReplace.value &&
+    viewMode.value === "render" &&
+    !effectiveCtx.value.compiled
+);
+
+function renderedWorkHtml(): string {
+  if (!isSentenceReplace.value || viewMode.value !== "render") return "";
+  const raw = props.model.workText;
+  if (!raw) return "";
+  const { html } = renderTexSentence(raw, effectiveCtx.value);
+  return highlightChangedInRendered(html, props.workChangedTexts ?? []);
+}
+
+function renderedCompareHtml(): string {
+  if (!isSentenceReplace.value || viewMode.value !== "render") return "";
+  const raw = props.model.compareText;
+  if (!raw) return "";
+  const { html } = renderTexSentence(raw, effectiveCtx.value);
+  return highlightChangedInRendered(html, props.compareChangedTexts ?? []);
 }
 
 function onKey(e: KeyboardEvent) {
@@ -167,6 +218,24 @@ onBeforeUnmount(() => {
           :title="t('hoverAccept.expandedHint')"
           >+</span
         >
+        <span v-if="isSentenceReplace" class="view-toggle">
+          <button
+            type="button"
+            class="toggle-btn"
+            :class="{ active: viewMode === 'source' }"
+            @click.stop="viewMode = 'source'"
+          >
+            {{ t("hoverAccept.viewSource") }}
+          </button>
+          <button
+            type="button"
+            class="toggle-btn"
+            :class="{ active: viewMode === 'render' }"
+            @click.stop="viewMode = 'render'"
+          >
+            {{ t("hoverAccept.viewRender") }}
+          </button>
+        </span>
         <button
           ref="applyBtn"
           type="button"
@@ -177,26 +246,47 @@ onBeforeUnmount(() => {
           {{ applyLabel() }}
         </button>
       </div>
+      <div v-if="showNotCompiledBanner" class="not-compiled-banner">
+        {{ t("hoverAccept.notCompiledWarn") }}
+      </div>
       <div class="pair independent">
         <div class="side shrink-wrap">
           <div class="label">{{ t("hoverAccept.work") }}</div>
-          <code
-            class="snip"
-            :class="{ empty: workDisplay().empty, work: !workDisplay().empty }"
-            >{{ workDisplay().text }}</code
-          >
+          <template v-if="isSentenceReplace && viewMode === 'render'">
+            <div
+              class="snip rendered work"
+              :class="{ empty: workDisplay().empty }"
+              v-html="renderedWorkHtml()"
+            ></div>
+          </template>
+          <template v-else>
+            <code
+              class="snip"
+              :class="{ empty: workDisplay().empty, work: !workDisplay().empty }"
+              >{{ workDisplay().text }}</code
+            >
+          </template>
         </div>
         <div class="arrow" aria-hidden="true">←</div>
         <div class="side shrink-wrap">
           <div class="label">{{ t("hoverAccept.compare") }}</div>
-          <code
-            class="snip"
-            :class="{
-              empty: compareDisplay().empty,
-              compare: !compareDisplay().empty,
-            }"
-            >{{ compareDisplay().text }}</code
-          >
+          <template v-if="isSentenceReplace && viewMode === 'render'">
+            <div
+              class="snip rendered compare"
+              :class="{ empty: compareDisplay().empty }"
+              v-html="renderedCompareHtml()"
+            ></div>
+          </template>
+          <template v-else>
+            <code
+              class="snip"
+              :class="{
+                empty: compareDisplay().empty,
+                compare: !compareDisplay().empty,
+              }"
+              >{{ compareDisplay().text }}</code
+            >
+          </template>
         </div>
       </div>
     </template>
@@ -409,5 +499,75 @@ onBeforeUnmount(() => {
 }
 .muted {
   color: var(--muted);
+}
+
+/* --- Rendered TeX sentence view toggle + banner --- */
+.view-toggle {
+  display: inline-flex;
+  gap: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border, #2d3a4d);
+  flex-shrink: 0;
+}
+.toggle-btn {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.68rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.3;
+}
+.toggle-btn.active {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+}
+.toggle-btn:hover:not(.active) {
+  color: var(--text);
+}
+
+.not-compiled-banner {
+  font-size: 0.68rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, #fbbf24 18%, var(--panel));
+  color: #fbbf24;
+  border: 1px solid color-mix(in srgb, #fbbf24 30%, transparent);
+}
+
+/* Rendered sentence view — inline TeX rendering, not monospace */
+.snip.rendered {
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+  max-height: 12rem;
+  overflow: auto;
+}
+.snip.rendered :deep(.katex) {
+  font-size: 0.95em;
+}
+.snip.rendered :deep(.pd-tex-math) {
+  white-space: nowrap;
+}
+.snip.rendered :deep(.pd-tex-unknown) {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.snip.rendered :deep(.pd-tex-fn) {
+  font-size: 0.75em;
+  color: var(--muted);
+  margin-top: 0.3rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--border);
+}
+.snip.rendered :deep(.pd-diff-changed) {
+  background: color-mix(in srgb, #fde047 45%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 </style>

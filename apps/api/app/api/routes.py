@@ -31,6 +31,7 @@ from app.schemas.dto import (
     PutWorkFileRequest,
     RenameZoneRequest,
     SetRootRequest,
+    TexContextResponse,
     UndoRequest,
 )
 from app.services.agent_service import AgentService
@@ -662,6 +663,24 @@ def compile_log(project_id: str, job_id: str, svc: CompileService = Depends(comp
 def get_pdf(project_id: str, job_id: str | None = None, svc: CompileService = Depends(compiler)):
     data = svc.get_pdf_bytes(project_id, job_id)
     return Response(content=data, media_type="application/pdf")
+
+
+@router.get("/projects/{project_id}/artifacts/aux")
+def get_aux(project_id: str, svc: CompileService = Depends(compiler)):
+    text = svc.get_aux_text(project_id)
+    return Response(content=text, media_type="text/plain; charset=utf-8")
+
+
+@router.get("/projects/{project_id}/artifacts/bbl")
+def get_bbl(project_id: str, svc: CompileService = Depends(compiler)):
+    text = svc.get_bbl_text(project_id)
+    return Response(content=text, media_type="text/plain; charset=utf-8")
+
+
+@router.get("/projects/{project_id}/artifacts/tex-context")
+def get_tex_context(project_id: str, svc: CompileService = Depends(compiler)):
+    data = svc.get_tex_context(project_id)
+    return TexContextResponse(**data)
 
 
 @router.get("/projects/{project_id}/events")

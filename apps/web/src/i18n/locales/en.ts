@@ -336,6 +336,9 @@ export default {
     insertHint: "",
     deleteHint: "",
     appliedToast: "Applied · undo available",
+    viewSource: "Source",
+    viewRender: "Render",
+    notCompiledWarn: "Citation numbers not resolved; compile to show real numbers",
   },
   gitPick: {
     title: "Pick compare file from git",

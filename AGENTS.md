@@ -37,7 +37,7 @@
 - **Comparer + preview hardening (true-source pull / arrows / word zoom — execute next):** `docs/superpowers/plans/2026-07-15-comparer-preview-hardening.md`
 - **Large-file performance v1.1 (Steps 0–2 + light 3–4 in tree; window hydrate + hunk UI deferred):** `docs/superpowers/plans/2026-07-15-large-file-performance.md`
 - **Word/phrase hover-accept (complete S-tier + sentence; settings toggle):** `docs/superpowers/plans/2026-07-15-word-hover-accept.md` · matrix `...-matrix.md` · code: `wordHover.ts`, `WordHoverCard.vue`, `MonacoDiff.vue`
-- **Sentence rendered diff (path C: aux/bbl + KaTeX):** `docs/superpowers/plans/2026-07-15-sentence-rendered-diff.md` · code: `renderTexSentence.ts`, `useTexContext.ts`, `tex_context.py`
+- **Sentence rendered diff (path C: aux/bbl + KaTeX; P0+P1 done):** `docs/superpowers/plans/2026-07-15-sentence-rendered-diff.md` · code: `renderTexSentence.ts`, `highlightChangedInRendered.ts`, `useTexContext.ts`, `texSentenceContext.ts`, `WordHoverCard.vue` (sentence branch), `tex_context.py`, `compile_service._store_aux_bbl`
 
 ## Completion tiers (use in status claims)
 
