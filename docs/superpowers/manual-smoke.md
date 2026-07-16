@@ -16,6 +16,12 @@ cd apps/web && npm run dev
 3c. Click a project **`.pdf`** in the tree → PDF pane shows that file (title `PDF · path`), not only compile artifact.
 4. **Add compare zone** (zip or folder); activate → right side shows zone text; tree badges update.
 5. Accept a word/sentence chip → left updates; **Undo** restores.
+5b. **Sentence rendered diff** — hover a sentence-level change:
+   - Default view is **渲染** (rendered): inline math via KaTeX, `\cite` → `[N]`, `\ref` → number, `\textbf`/`\emph` styled, `\href` clickable.
+   - Toggle **源码** ↔ **渲染** in the card header.
+   - Changed words highlighted with yellow `<mark>` in rendered text (non-math parts only).
+   - **Compiled project**: `\cite{key}` shows real `[N]` from `.aux`.
+   - **Uncompiled project**: `\cite{key}` shows `[key]` placeholder + yellow banner "引用号未结算".
 6. Select TeX root → **Compile** (Docker optional; without image expect clear error).
 7. **Git** activity: status, commit message, history list.
 8. Pick commits A/B → Compare → open a path (preview, Accept disabled) → clear preview.

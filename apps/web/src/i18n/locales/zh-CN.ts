@@ -327,6 +327,9 @@ export default {
     insertHint: "",
     deleteHint: "",
     appliedToast: "已采纳 · 可撤销",
+    viewSource: "源码",
+    viewRender: "渲染",
+    notCompiledWarn: "引用号未结算，可能不准；编译后显示真实编号",
   },
   gitPick: {
     title: "从 Git 提交选择对照文件",

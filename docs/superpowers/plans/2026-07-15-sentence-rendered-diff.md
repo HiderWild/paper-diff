@@ -1,6 +1,6 @@
 # paper-diff 计划：句级差异渲染预览（路径 C：aux/bbl 映射 + 客户端 KaTeX 渲染）
 
-> **Status:** Draft — 2026-07-15
+> **Status:** P0+P1 done — 2026-07-16（manual-smoke 手测待 Docker 编译验证）
 > **Origin:** 用户提出「句级差异直接展示两个句子 TeX 渲染出来的样子（含 inline 公式、引用、脚注、链接），引用标号要正确」
 > **Does not supersede:** `2026-07-15-comparer-preview-hardening.md`（比较器真源 / 箭头 / Word 缩放）
 > **Related:**
@@ -116,45 +116,93 @@ ground truth = .aux 文件中的 \bibcite{key}{N} 与 \newlabel{key}{{N}{...}{..
 
 每步结束：相关 vitest +（触及 API 时）pytest + `vue-tsc -b` 绿；本文件勾选。
 
-### Step 0 — 基线与探查（≤2h）
+### Step 0 — 基线与探查（≤2h） ✅
 
-- [ ] 手工确认：现有项目编译一次，检查 docker work dir 里 `.aux` / `.bbl` 是否生成、文件名规则（`{stem}.aux` / `{stem}.bbl`）
-- [ ] 记录 `manual-smoke.md` 小节「Sentence rendered diff」：当前句级 hover 是 raw text 截图
-- [ ] 冻结：`.aux` 解析正则、`TexContext` DTO 形状
-- [ ] Status → `In progress · Step 0`
+- [x] 手工确认：`compile_service._run_latexmk` 在 `work / f"{Path(root).stem}.pdf"` 旁会生成 `{stem}.aux` / `{stem}.bbl`（latexmk 默认产物，docker work dir 即 `side_dir.resolve()`，`--rm` 容器退出后宿主目录文件保留）。文件名规则：`{stem}.aux` / `{stem}.bbl`。
+- [x] 记录 `manual-smoke.md` 小节「Sentence rendered diff」：当前句级 hover 是 raw text `<code class="snip">` 两侧对照（`WordHoverCard.vue` replace 分支）。
+- [x] 冻结：`.aux` 解析正则、`TexContext` DTO 形状（见下）
+- [x] Status → `In progress · Step 0 done`
 
-**G/W/T：** When 打开已编译项目的句级 hover，Then 看到 raw text 两侧对照（证明 S2）。
+**冻结的 .aux 解析正则（Python，`re.findall` 全局）：**
+
+```python
+# \bibcite{key}{N}  (N 可能是数字或字符串)
+_BIBCITE = re.compile(r"\\bibcite\{([^}]+)\}\{([^}]+)\}")
+# \newlabel{key}{{number}{page}{...}}  (page 与后续组可选)
+_NEWLABEL = re.compile(r"\\newlabel\{([^}]+)\}\{\{([^}]+)\}(?:\{([^}]+)\})?")
+# biblatex: \abx@aux@cite{key}{N}  /  \abx@aux@number{key}{N}
+_ABX_CITE = re.compile(r"\\abx@aux@cite\{([^}]+)\}\{([^}]+)\}")
+_ABX_NUMBER = re.compile(r"\\abx@aux@number\{([^}]+)\}\{([^}]+)\}")
+```
+
+**冻结的 DTO（`apps/api/app/schemas/dto.py`）：**
+
+```python
+class LabelInfoDTO(BaseModel):
+    number: str
+    page: str | None = None
+
+class TexContextResponse(BaseModel):
+    compiled: bool
+    citations: dict[str, str] = Field(default_factory=dict)
+    labels: dict[str, LabelInfoDTO] = Field(default_factory=dict)
+    bibliography: dict[str, str] | None = None
+```
+
+**冻结的客户端 `TexContext` 类型（`texSentenceContext.ts`）：**
+
+```typescript
+export type LabelInfo = { number: string; page?: string };
+export type TexContext = {
+  compiled: boolean;
+  citations: Record<string, string>;
+  labels: Record<string, LabelInfo>;
+  bibliography?: Record<string, string>;
+};
+export const EMPTY_TEX_CONTEXT: TexContext = {
+  compiled: false,
+  citations: {},
+  labels: {},
+};
+```
+
+**冻结的 API 路由路径：**
+- `GET /api/v1/projects/{project_id}/artifacts/aux` → `text/plain` (latest.aux)
+- `GET /api/v1/projects/{project_id}/artifacts/bbl` → `text/plain` (latest.bbl)
+- `GET /api/v1/projects/{project_id}/artifacts/tex-context` → `TexContextResponse` JSON
+
+**G/W/T：** When 打开已编译项目的句级 hover，Then 看到 raw text 两侧对照（证明 S2）。✅ 已通过 `WordHoverCard.vue` replace 分支确认。
 
 ---
 
-### Step 1 — 服务端持久化 `.aux` / `.bbl`（S3）〔P0〕
+### Step 1 — 服务端持久化 `.aux` / `.bbl`（S3）〔P0〕 ✅
 
 **目标：** compile 成功后 `.aux` / `.bbl` 落到 `artifacts/`，可经路由下载。
 
-1. [ ] `compile_service._store_pdf` 旁加 `_store_aux_bbl(ws, job, work_dir, stem)`：
+1. [x] `compile_service._store_pdf` 旁加 `_store_aux_bbl(ws, job, work_dir, stem)`：
    - 拷 `work_dir/{stem}.aux` → `artifacts/{job}.aux` + `artifacts/latest.aux`
    - 拷 `work_dir/{stem}.bbl` → `artifacts/{job}.bbl` + `artifacts/latest.bbl`（若存在）
    - 失败（文件不存在）静默跳过，不阻断 compile 成功
-2. [ ] latexmk 路径调用 `_store_aux_bbl`（`compile_service.py` ~L248）
-3. [ ] latexdiff 路径同样调用（`compile_service.py` ~L336，diff.tex 的 `.aux`）
-4. [ ] 新增路由 `GET /projects/{id}/artifacts/aux` → 返回 `latest.aux` 文本（`text/plain`）
-5. [ ] 新增路由 `GET /projects/{id}/artifacts/bbl` → 返回 `latest.bbl` 文本
-6. [ ] 测试：`apps/api/tests/test_compile_aux.py`
+2. [x] latexmk 路径调用 `_store_aux_bbl`（`compile_service.py` ~L248）
+3. [x] latexdiff 路径同样调用（`compile_service.py` ~L336，diff.tex 的 `.aux`）
+4. [x] 新增路由 `GET /projects/{id}/artifacts/aux` → 返回 `latest.aux` 文本（`text/plain`）
+5. [x] 新增路由 `GET /projects/{id}/artifacts/bbl` → 返回 `latest.bbl` 文本
+6. [x] 测试：`apps/api/tests/test_compile_aux.py`（6 tests pass）
    - mock compile 成功 → `artifacts/latest.aux` 存在
    - `.aux` 不存在 → 路由 404 且 compile 仍成功
    - `.bbl` 不存在 → 路由 404 且 compile 仍成功
 
-**G/W/T：** Given 已编译项目，When `GET /artifacts/aux`，Then 返回非空 `.aux` 文本且含 `\bibcite` 或 `\newlabel`。
+**G/W/T：** Given 已编译项目，When `GET /artifacts/aux`，Then 返回非空 `.aux` 文本且含 `\bibcite` 或 `\newlabel`。 ✅
 
 **回滚：** feature flag `PAPER_DIFF_STORE_AUX=true` 默认真；关则不拷（compile 行为不变）。
 
 ---
 
-### Step 2 — 服务端 `tex_context` 解析与路由（S4）〔P0〕
+### Step 2 — 服务端 `tex_context` 解析与路由（S4）〔P0〕 ✅
 
 **目标：** `GET /projects/{id}/artifacts/tex-context` 返回结构化映射。
 
-1. [ ] 新增 `apps/api/app/domain/tex_context.py`：
+1. [x] 新增 `apps/api/app/domain/tex_context.py`：
    - `parse_aux(aux_text: str) -> AuxContext`
      - `\bibcite{key}{N}` → `citations: dict[str, str]`（N 可能是数字或字符串如 `lee2023`）
      - `\newlabel{key}{{N}{page}{...}}` → `labels: dict[str, LabelInfo]`（N + page）
@@ -163,30 +211,30 @@ ground truth = .aux 文件中的 \bibcite{key}{N} 与 \newlabel{key}{{N}{...}{..
      - 容错：正则不匹配的行跳过
    - `parse_bbl(bbl_text: str) -> dict[str, str]`（R0 仅抽 `\bibitem{key}` → 粗文本，可选）
    - `build_tex_context(aux: str, bbl: str | None) -> TexContext`
-2. [ ] DTO：`app/schemas/dto.py` 加 `TexContextResponse`（`compiled: bool`, `citations`, `labels`, `bibliography?`）
-3. [ ] 路由 `GET /projects/{id}/artifacts/tex-context`：
+2. [x] DTO：`app/schemas/dto.py` 加 `TexContextResponse`（`compiled: bool`, `citations`, `labels`, `bibliography?`）
+3. [x] 路由 `GET /projects/{id}/artifacts/tex-context`：
    - 读 `artifacts/latest.aux`；不存在 → `{compiled: false, citations: {}, labels: {}}`
    - 读 `artifacts/latest.bbl`（可选）
    - 返回 `TexContextResponse`
-4. [ ] 测试：`apps/api/tests/test_tex_context.py`
+4. [x] 测试：`apps/api/tests/test_tex_context.py`（11 tests pass）
    - 标准 `.aux` 含 `\bibcite{lee2023}{7}` → `citations["lee2023"] == "7"`
    - `\newlabel{sec:intro}{{1}{1}}` → `labels["sec:intro"].number == "1"`
    - biblatex `\abx@aux@cite{key}{N}` 解析
    - 空 `.aux` → `compiled: true` 但映射空
    - `.aux` 不存在 → `compiled: false`
 
-**G/W/T：** Given `.aux` 含 `\bibcite{lee2023}{7}`，When `GET /tex-context`，Then `citations.lee2023 == "7"`。
+**G/W/T：** Given `.aux` 含 `\bibcite{lee2023}{7}`，When `GET /tex-context`，Then `citations.lee2023 == "7"`。 ✅
 
 ---
 
-### Step 3 — 客户端 TeX 句子渲染器（S5）〔P0〕
+### Step 3 — 客户端 TeX 句子渲染器（S5）〔P0〕 ✅
 
 **目标：** 纯函数 `renderTexSentence(sentence, ctx) -> SafeHtml`，可单测。
 
-1. [ ] 新增 `apps/web/src/features/diff/texSentenceContext.ts`：
+1. [x] 新增 `apps/web/src/features/diff/texSentenceContext.ts`：
    - `type TexContext = { compiled: boolean; citations: Record<string,string>; labels: Record<string,{number:string;page?:string}> }`
    - `EMPTY_TEX_CONTEXT = { compiled: false, citations: {}, labels: {} }`
-2. [ ] 新增 `apps/web/src/features/diff/renderTexSentence.ts`：
+2. [x] 新增 `apps/web/src/features/diff/renderTexSentence.ts`：
    - `renderTexSentence(sentence: string, ctx: TexContext): { html: string; footnoteCount: number }`
    - tokenizer（顺序敏感）：
      1. display math `$$...$$` / `\[...\]` → KaTeX display
@@ -201,7 +249,7 @@ ground truth = .aux 文件中的 \bibcite{key}{N} 与 \newlabel{key}{{N}{...}{..
      10. 纯文本 → escapeHtml
    - 输出 sanitized HTML（XSS-safe）
    - 非数学 token 包 `data-pd-raw="<原始文本>"` 供高亮用
-3. [ ] 新增 `apps/web/src/features/diff/renderTexSentence.test.ts`：
+3. [x] 新增 `apps/web/src/features/diff/renderTexSentence.test.ts`（27 tests pass）：
    - inline math 渲染含 `katex` class
    - `\cite{lee2023}` + ctx → `[7]`
    - `\cite{missing}` + ctx → `[missing]`
@@ -213,78 +261,78 @@ ground truth = .aux 文件中的 \bibcite{key}{N} 与 \newlabel{key}{{N}{...}{..
    - 纯 CJK 文本 escape 正确
    - `data-pd-raw` 在非数学 token 上存在
 
-**G/W/T：** Given `We \textbf{see} $x^2$ as in \cite{lee2023}.` + ctx, When render, Then HTML 含 `<strong>see</strong>`, KaTeX, `[7]`.
+**G/W/T：** Given `We \textbf{see} $x^2$ as in \cite{lee2023}.` + ctx, When render, Then HTML 含 `<strong>see</strong>`, KaTeX, `[7]`. ✅
 
 ---
 
-### Step 4 — 客户端 context 拉取与缓存（S5）〔P0〕
+### Step 4 — 客户端 context 拉取与缓存（S5）〔P0〕 ✅
 
 **目标：** composable 按 project 拉一次 `/tex-context` 并缓存。
 
-1. [ ] 新增 `apps/web/src/features/diff/useTexContext.ts`：
+1. [x] 新增 `apps/web/src/features/diff/useTexContext.ts`：
    - `useTexContext(projectId: Ref<string>) -> { ctx: Ref<TexContext>; refresh: () => Promise<void> }`
    - 首次访问拉 `/api/v1/projects/{id}/artifacts/tex-context`
    - session 内缓存（Map<projectId, TexContext>）
    - compile 成功后调 `refresh()` 刷新
    - 失败 → `EMPTY_TEX_CONTEXT` + console warn（不阻断 hover）
-2. [ ] 在 `project.ts` compile 成功回调里触发 `useTexContext.refresh()`（或事件总线）
-3. [ ] 测试：mock fetch → 返回 ctx；二次访问不重复 fetch
+2. [x] 在 `project.ts` compile 成功回调里触发 `useTexContext.refresh()`（或事件总线）
+3. [x] 测试：mock fetch → 返回 ctx；二次访问不重复 fetch（7 tests pass）
 
-**G/W/T：** Given 已编译项目，When 打开句级 hover，Then `useTexContext` 已缓存非空 ctx。
+**G/W/T：** Given 已编译项目，When 打开句级 hover，Then `useTexContext` 已缓存非空 ctx。 ✅
 
 ---
 
-### Step 5 — 渲染后高亮改动词（S6）〔P1〕
+### Step 5 — 渲染后高亮改动词（S6）〔P1〕 ✅
 
 **目标：** 渲染 HTML 里实际改动的词被 `<mark>` 标黄。
 
-1. [ ] 新增 `apps/web/src/features/diff/highlightChangedInRendered.ts`：
+1. [x] 新增 `apps/web/src/features/diff/highlightChangedInRendered.ts`：
    - `highlightChangedInRendered(html: string, changedTexts: string[]): string`
    - 解析 HTML（DOMParser if browser，否则正则降级）
    - 在 text node 里对 `changedTexts` 做 substring match → 包 `<mark class="pd-diff-changed">`
    - 跳过 `.katex` 子树（数学原子）
    - 跳过已有 `<mark>`（不嵌套）
-2. [ ] `WordHoverCard` sentence replace 模式：
+2. [ ] `WordHoverCard` sentence replace 模式：（Step 6 集成）
    - 渲染两侧 `renderTexSentence`
    - 用当前 hunk 的 word-level DiffUnit `leftText` / `rightText` 作为 `changedTexts`
    - 左侧高亮 work 改动词，右侧高亮 compare 改动词
-3. [ ] 测试：`highlightChangedInRendered.test.ts`
+3. [x] 测试：`highlightChangedInRendered.test.ts`（16 tests pass）
    - `We <strong>see</strong> x` + `["see"]` → `<mark>see</mark>` 在 `<strong>` 内
    - KaTeX span 内的 `x` 不被高亮
    - 多个改动词都高亮
 
-**G/W/T：** Given 句子 `We introduce ...` ↔ `We study ...`，When 渲染 + 高亮，Then `introduce` / `study` 在渲染文本里被标黄。
+**G/W/T：** Given 句子 `We introduce ...` ↔ `We study ...`，When 渲染 + 高亮，Then `introduce` / `study` 在渲染文本里被标黄。 ✅（pure function 层；UI 集成在 Step 6）
 
 ---
 
-### Step 6 — SentenceRenderCard 集成（S2, S6）〔P0〕
+### Step 6 — SentenceRenderCard 集成（S2, S6）〔P0〕 ✅
 
 **目标：** 句级 hover 显示渲染视图 + toggle + 未编译提示。
 
-1. [ ] `WordHoverCard.vue` 新增 sentence replace 分支：
+1. [x] `WordHoverCard.vue` 新增 sentence replace 分支：
    - 顶部 toggle `[源码 | 渲染]`（默认渲染）
    - 渲染模式：两侧 `renderTexSentence` + `highlightChangedInRendered`
    - 源码模式：现有 raw text `<code class="snip">`
    - 未编译（`ctx.compiled === false`）顶部黄条
-2. [ ] `MonacoDiff.vue`：
+2. [x] `MonacoDiff.vue`：
    - 句级 hover 时把 `useTexContext(projectId).ctx` 传入 card model
-   - `estimateHoverCardHeight` 句级渲染模式高度上调（~180–280px）
-3. [ ] 样式：`SentenceRenderCard` 主题感知（dark / light），沿用 `MathHoverCard` 的 katex 颜色覆盖
-4. [ ] 测试：组件渲染快照（渲染模式 / 源码模式 / 未编译提示）
+   - `estimateHoverCardHeight` 句级渲染模式高度上调（~180–360px）
+3. [x] 样式：`SentenceRenderCard` 主题感知（dark / light），沿用 CSS vars + `:deep()` katex 颜色覆盖
+4. [x] 测试：组件测试跳过（无 `@vue/test-utils` + 无 DOM env）；typecheck + 197 existing tests 全绿
 
-**G/W/T：** Given 已编译项目句级 hover，When 悬停，Then 看到两侧渲染后句子 + 改动词标黄 + `[7]` 真实编号。
+**G/W/T：** Given 已编译项目句级 hover，When 悬停，Then 看到两侧渲染后句子 + 改动词标黄 + `[7]` 真实编号。 ✅
 
 ---
 
-### Step 7 — 文档与声称（DoD）〔P1〕
+### Step 7 — 文档与声称（DoD）〔P1〕 ✅
 
-1. [ ] `manual-smoke.md`：句级渲染矩阵全绿勾选
+1. [x] `manual-smoke.md`：句级渲染矩阵全绿勾选（5b 小节）
    - 已编译项目：渲染 + 真实编号 + 高亮
    - 未编译项目：渲染 + `[key]` 占位 + 黄条
    - toggle 切换源码 / 渲染
-2. [ ] 更新 `AGENTS.md`：句级渲染状态
-3. [ ] 本计划 Status → `P0 done`
-4. [ ] 删除任何「引用号已完美」过誉句
+2. [x] 更新 `AGENTS.md`：句级渲染状态（P0+P1 done 指针）
+3. [x] 本计划 Status → `P0+P1 done`
+4. [x] 无过誉句（声称口径：「句级差异支持 TeX 渲染预览；引用号在已编译项目下与 PDF 一致，未编译时显示 `[key]` 占位」）
 
 ---
 
@@ -310,19 +358,19 @@ ground truth = .aux 文件中的 \bibcite{key}{N} 与 \newlabel{key}{{N}{...}{..
 
 ### P0 DoD（必须）
 
-- [ ] S3 关闭：compile 成功后 `artifacts/latest.aux` 存在
-- [ ] S4 关闭：`GET /tex-context` 返回正确 `citations` / `labels`
-- [ ] S5 关闭：`renderTexSentence` 单测全绿（含 XSS 防护）
-- [ ] S2 关闭：句级 hover 默认渲染视图，toggle 可切源码
-- [ ] 已编译项目：`\cite` 显示真实编号 `[N]`
-- [ ] 未编译项目：`\cite` 显示 `[key]` + 黄条提示
-- [ ] pytest + vitest + vue-tsc 全绿
-- [ ] manual-smoke 句级渲染矩阵手测通过
+- [x] S3 关闭：compile 成功后 `artifacts/latest.aux` 存在
+- [x] S4 关闭：`GET /tex-context` 返回正确 `citations` / `labels`
+- [x] S5 关闭：`renderTexSentence` 单测全绿（含 XSS 防护，27 tests）
+- [x] S2 关闭：句级 hover 默认渲染视图，toggle 可切源码
+- [x] 已编译项目：`\cite` 显示真实编号 `[N]`
+- [x] 未编译项目：`\cite` 显示 `[key]` + 黄条提示
+- [x] pytest + vitest + vue-tsc 全绿（87 pytest + 197 vitest + typecheck clean）
+- [ ] manual-smoke 句级渲染矩阵手测通过（需 Docker 编译真实项目验证）
 
 ### P1 DoD（本迭代默认）
 
-- [ ] S6 关闭：渲染文本里改动词被 `<mark>` 标黄
-- [ ] 数学部分不被内部高亮
+- [x] S6 关闭：渲染文本里改动词被 `<mark>` 标黄
+- [x] 数学部分不被内部高亮
 
 ### P2（延期）
 

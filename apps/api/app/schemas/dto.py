@@ -151,3 +151,15 @@ class CsvPreviewRequest(BaseModel):
 
 class DryRunImportRequest(BaseModel):
     paths: list[str]
+
+
+class LabelInfoDTO(BaseModel):
+    number: str
+    page: str | None = None
+
+
+class TexContextResponse(BaseModel):
+    compiled: bool
+    citations: dict[str, str] = Field(default_factory=dict)
+    labels: dict[str, LabelInfoDTO] = Field(default_factory=dict)
+    bibliography: dict[str, str] | None = None
