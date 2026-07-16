@@ -3,11 +3,16 @@ import { computed, nextTick, onMounted, onBeforeUnmount, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { WordCardModel } from "./wordHover";
 
-const props = defineProps<{
-  model: WordCardModel;
-  x: number;
-  y: number;
-}>();
+const props = withDefaults(
+  defineProps<{
+    model: WordCardModel;
+    x: number;
+    y: number;
+    /** below: top edge at y; above: bottom edge at y (hug highlight top) */
+    placement?: "below" | "above";
+  }>(),
+  { placement: "below" }
+);
 
 const emit = defineEmits<{
   apply: [];
@@ -102,7 +107,11 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="word-hover-card"
-    :class="['mode-' + mode, mode !== 'replace' ? 'compact' : 'replace-mode']"
+    :class="[
+      'mode-' + mode,
+      mode !== 'replace' ? 'compact' : 'replace-mode',
+      'place-' + placement,
+    ]"
     role="dialog"
     :aria-label="titleForKind()"
     :style="{ left: x + 'px', top: y + 'px' }"
@@ -202,8 +211,12 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border, #2d3a4d);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
   font-size: 0.85rem;
-  /* x is span center; y is bottom of last highlight line — only center horizontally */
+  /* x = highlight horizontal center */
   transform: translateX(-50%);
+}
+/* below: card top sits on highlight bottom (y); above: card bottom sits on highlight top (y) */
+.word-hover-card.place-above {
+  transform: translate(-50%, -100%);
 }
 
 /* insert/delete: single horizontal track, no separate layers */

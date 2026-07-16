@@ -53,14 +53,16 @@ export function hitTestHoverUnit(
   if (!includeSentence) return null;
   const sentences = sentenceUnitsOf(units);
   let best: DiffUnit | null = null;
-  let bestSpan = Number.POSITIVE_INFINITY;
+  let bestScore = Number.POSITIVE_INFINITY;
   for (const u of sentences) {
     const r = unitRangeForTrueSide(u, trueSide, sidesSwapped);
     const pad = padForRange(r, padCols);
     if (!rangeContains(r, line, col0, pad)) continue;
     const span = rangeSpanChars(r);
-    if (span < bestSpan) {
-      bestSpan = span;
+    const onCoreLine = line >= r.start_line && line <= r.end_line;
+    const score = (onCoreLine ? 0 : 1_000_000) + span;
+    if (score < bestScore) {
+      bestScore = score;
       best = u;
     }
   }
@@ -173,7 +175,7 @@ export function hitTestWordUnit(
 ): DiffUnit | null {
   const words = wordUnitsOf(units);
   let best: DiffUnit | null = null;
-  let bestSpan = Number.POSITIVE_INFINITY;
+  let bestScore = Number.POSITIVE_INFINITY;
   for (const u of words) {
     const r = unitRangeForTrueSide(u, trueSide, sidesSwapped);
     const pad = padForRange(r, padCols);
@@ -182,8 +184,12 @@ export function hitTestWordUnit(
     // Prefer non-empty smaller spans; empty ranges use large "virtual" span
     // so a real word under the caret still wins when both match.
     const rankSpan = isEmptyRange(r) ? span + 50 : span;
-    if (rankSpan < bestSpan) {
-      bestSpan = rankSpan;
+    // Strongly prefer ranges whose real line band includes the cursor line
+    // (not only adjacent-line pad). Avoids latching onto a unit above.
+    const onCoreLine = line >= r.start_line && line <= r.end_line;
+    const score = (onCoreLine ? 0 : 1_000_000) + rankSpan;
+    if (score < bestScore) {
+      bestScore = score;
       best = u;
     }
   }
