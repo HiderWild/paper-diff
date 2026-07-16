@@ -28,7 +28,11 @@ export function renderTexSentence(
     footnotes: [] as FootnoteEntry[],
   };
   const html = tokenize(sentence, state);
+  // Sort footnotes by number so nested footnotes (pushed during outer body
+  // tokenization) appear in reading order, not push order.
   const fnHtml = state.footnotes
+    .slice()
+    .sort((a, b) => a.n - b.n)
     .map(
       (f) =>
         `<div class="pd-tex-fn"><sup>${f.n}</sup> <span>${f.html}</span></div>`
@@ -285,7 +289,9 @@ function tokenize(s: string, state: RenderState): string {
             const original = s.slice(i, arg.end);
             state.fnCounter.n += 1;
             const n = state.fnCounter.n;
-            const inner = renderTexSentence(arg.body, state.ctx).html;
+            // Use tokenize (not renderTexSentence) so nested footnotes share
+            // the same counter and footnotes array via state.
+            const inner = tokenize(arg.body, state);
             state.footnotes.push({ n, html: inner });
             out += `<sup class="pd-tex-fn-mark" data-pd-raw="${escapeHtml(original)}">${n}</sup>`;
             i = arg.end;

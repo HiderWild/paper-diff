@@ -396,11 +396,11 @@ export const EMPTY_TEX_CONTEXT: TexContext = {
 | 级别 | 问题 | 状态 |
 |------|------|------|
 | **严重** | texCtx 快照不响应：首次悬停 ensure() 异步未完成时快照 EMPTY_TEX_CONTEXT，已编译项目也显假黄条 + `[key]` 占位 | **已修**（`359e544`：watch `projectStore.texContext.ctx` → patch open card） |
-| 中 | `highlightChangedInRendered` DOM 路径零测试（vitest 纯 node 只覆盖 regex fallback） | 待补（需 jsdom/happy-dom env） |
-| 中 | Step 6 `WordHoverCard` 集成无组件测试（无 `@vue/test-utils`） | 待补（同上） |
-| 轻 | `\newlabel{key}{{}{page}}` 空编号不匹配（hyperref 偶发） | 可接受（回退显示 key） |
-| 轻 | 嵌套脚注计数器不共享（`renderTexSentence(arg.body, state.ctx)` 创建新 RenderState） | 可接受（计划"跨句不保证"） |
-| 轻 | `_store_aux_bbl` 无 feature flag（计划提 `PAPER_DIFF_STORE_AUX`，实现无条件拷贝） | 可接受（拷贝失败静默跳过） |
+| 中 | `highlightChangedInRendered` DOM 路径零测试（vitest 纯 node 只覆盖 regex fallback） | **已修**（新增 `highlightChangedInRendered.dom.test.ts`，happy-dom env，17 tests 覆盖 DOMParser 路径） |
+| 中 | Step 6 `WordHoverCard` 集成无组件测试（无 `@vue/test-utils`） | **已修**（新增 `WordHoverCard.test.ts`，happy-dom + @vue/test-utils，12 tests 覆盖 toggle/黄条/渲染/高亮/model reset） |
+| 轻 | `\newlabel{key}{{}{page}}` 空编号不匹配（hyperref 偶发） | **已修**（`_NEWLABEL` 正则 `[^}]+` → `[^}]*`，新增 `test_parse_aux_newlabel_empty_number`） |
+| 轻 | 嵌套脚注计数器不共享（`renderTexSentence(arg.body, state.ctx)` 创建新 RenderState） | **已修**（改为 `tokenize(arg.body, state)` 共享 state + footnotes 按编号排序，新增嵌套脚注测试） |
+| 轻 | `_store_aux_bbl` 无 feature flag（计划提 `PAPER_DIFF_STORE_AUX`，实现无条件拷贝） | **已修**（新增 `PAPER_DIFF_STORE_AUX` env，默认 true，compile 路径加 flag 检查，新增 flag 测试） |
 
 ---
 

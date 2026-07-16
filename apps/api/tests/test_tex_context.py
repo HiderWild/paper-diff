@@ -22,6 +22,12 @@ def test_parse_aux_newlabel_no_page():
     assert labels == {"eq:x": {"number": "2", "page": None}}
 
 
+def test_parse_aux_newlabel_empty_number():
+    """hyperref occasionally emits \\newlabel{key}{{}{page}} (empty number)."""
+    citations, labels = parse_aux("\\newlabel{foo}{{}{1}}\n")
+    assert labels == {"foo": {"number": "", "page": "1"}}
+
+
 def test_parse_aux_biblatex_abx_cite():
     citations, labels = parse_aux("\\abx@aux@cite{key1}{3}\n")
     assert citations == {"key1": "3"}

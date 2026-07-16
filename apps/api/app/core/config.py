@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     compile_timeout_s: int = 120
     tex_image: str = "paper-diff-texlive:latest"
     docker_enabled: bool = True
+    # Persist .aux/.bbl after compile for rendered sentence diff (Step 1).
+    # Set PAPER_DIFF_STORE_AUX=false to disable (e.g. disk-constrained deploys).
+    store_aux: bool = True
     # Keep projects across API restarts by default (work + zones on disk).
     # Set PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP=true only for disposable dev wipes.
     clear_workspace_on_startup: bool = False

@@ -19,6 +19,7 @@
 - `PAPER_DIFF_WORKSPACE_ROOT` — project storage (default `./data/projects`)
 - `PAPER_DIFF_TEX_IMAGE` — default `paper-diff-texlive:latest`
 - `PAPER_DIFF_DOCKER_ENABLED` — default true
+- `PAPER_DIFF_STORE_AUX` — persist .aux/.bbl after compile for rendered sentence diff (default true; set false for disk-constrained deploys)
 - `PAPER_DIFF_COMPILE_TIMEOUT_S` — default 120
 - `PAPER_DIFF_MAX_UPLOAD_MB` — zip size limit per side (default 500)
 - `PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP` — wipe workspace on API start (default **false**; set `true` only for disposable wipes)

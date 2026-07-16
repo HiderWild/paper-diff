@@ -246,7 +246,8 @@ class CompileService:
             pdf_path = work / f"{Path(root).stem}.pdf"
             if pdf_path.is_file() and proc.returncode == 0:
                 self._store_pdf(ws, job, pdf_path)
-                self._store_aux_bbl(ws, job, work, Path(root).stem)
+                if self.settings.store_aux:
+                    self._store_aux_bbl(ws, job, work, Path(root).stem)
             else:
                 job["status"] = "failed"
                 job["errors"] = self._parse_errors(log_text)
@@ -335,7 +336,8 @@ class CompileService:
             pdf_path = diff_dir / "diff.pdf"
             if pdf_path.is_file() and proc.returncode == 0:
                 self._store_pdf(ws, job, pdf_path, name_hint="latexdiff")
-                self._store_aux_bbl(ws, job, diff_dir, "diff")
+                if self.settings.store_aux:
+                    self._store_aux_bbl(ws, job, diff_dir, "diff")
             else:
                 job["status"] = "failed"
                 job["errors"] = self._parse_errors(log_text)
