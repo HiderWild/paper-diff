@@ -326,6 +326,8 @@ export default {
     deleteBrief: "Will delete:",
     insertLead: "Will insert:",
     deleteLead: "Will delete:",
+    expandedHint:
+      "Context expanded (math/word bounds) for readability; apply still uses the original span",
     apply: "Replace",
     applyInsert: "Insert",
     applyDelete: "Delete",

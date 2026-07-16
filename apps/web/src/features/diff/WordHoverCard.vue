@@ -154,13 +154,19 @@ onBeforeUnmount(() => {
       </button>
     </template>
 
-    <!-- Replace: header row + pair below (still same flow: apply at end of head row) -->
+    <!-- Replace: header + independent-width sides (short side hugs content) -->
     <template v-else>
       <div class="replace-head">
         <span class="mode-badge replace">{{
           t("hoverAccept.badgeReplace")
         }}</span>
         <span class="kind-title">{{ titleForKind() }}</span>
+        <span
+          v-if="model.displayExpanded"
+          class="ctx-hint muted"
+          :title="t('hoverAccept.expandedHint')"
+          >+</span
+        >
         <button
           ref="applyBtn"
           type="button"
@@ -171,8 +177,8 @@ onBeforeUnmount(() => {
           {{ applyLabel() }}
         </button>
       </div>
-      <div class="pair">
-        <div class="side">
+      <div class="pair independent">
+        <div class="side shrink-wrap">
           <div class="label">{{ t("hoverAccept.work") }}</div>
           <code
             class="snip"
@@ -181,7 +187,7 @@ onBeforeUnmount(() => {
           >
         </div>
         <div class="arrow" aria-hidden="true">←</div>
-        <div class="side">
+        <div class="side shrink-wrap">
           <div class="label">{{ t("hoverAccept.compare") }}</div>
           <code
             class="snip"
@@ -329,12 +335,25 @@ onBeforeUnmount(() => {
   border-left: 2px solid var(--green, #22c55e);
 }
 
+/* Independent columns: short side hugs content; long side may grow to max */
 .pair {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 0.35rem;
-  align-items: start;
-  width: 100%;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 0.4rem;
+  width: max-content;
+  max-width: min(40rem, 90vw);
+}
+.pair .side.shrink-wrap {
+  flex: 0 1 auto;
+  width: max-content;
+  max-width: min(22rem, 48vw);
+  min-width: 0;
+}
+.pair .side.shrink-wrap .snip {
+  width: max-content;
+  max-width: 100%;
 }
 .label {
   font-size: 0.68rem;
@@ -349,9 +368,10 @@ onBeforeUnmount(() => {
   background: var(--surface-deep, #0b0f14);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 4.5rem;
+  max-height: 5.5rem;
   overflow: auto;
-  min-height: 1.4rem;
+  min-height: 1.2rem;
+  box-sizing: border-box;
 }
 .snip.work {
   border-left: 2px solid var(--danger, #f87171);
@@ -365,11 +385,20 @@ onBeforeUnmount(() => {
   font-style: italic;
   font-family: inherit;
   background: color-mix(in srgb, var(--muted) 8%, var(--surface-deep, #0b0f14));
+  width: auto;
 }
 .arrow {
+  flex: 0 0 auto;
   align-self: center;
   color: var(--accent);
   font-size: 1rem;
-  padding-top: 0.9rem;
+  padding-top: 0.75rem;
+}
+.ctx-hint {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+.muted {
+  color: var(--muted);
 }
 </style>

@@ -3,6 +3,7 @@
  * Ranges use DiffUnit conventions: lines 1-based, cols 0-based, end exclusive.
  */
 import type { DiffUnit, LineColRange } from "./sentenceMapper";
+import { expandHoverPair } from "./expandHoverSnippet";
 
 export type TrueSide = "work" | "compare";
 
@@ -16,6 +17,8 @@ export type WordCardModel = {
   isDelete: boolean;
   /** word | sentence | other */
   kind: "word" | "sentence" | "other";
+  /** Display grew past raw unit slice (math / word / phrase context) */
+  displayExpanded?: boolean;
 };
 
 /** Word-level units only. */
@@ -199,13 +202,19 @@ export function hitTestWordUnit(
 /**
  * Card model always labels true buffers (work / compare), not visual L/R.
  * Unit texts are relative to Monaco props (display order); swap flips mapping.
+ *
+ * @param fullLeft Monaco props.left buffer (original pane)
+ * @param fullRight Monaco props.right buffer (modified pane)
+ * When provided, may expand display snippets for math / incomplete tokens.
  */
 export function unitCardModel(
   unit: DiffUnit,
-  sidesSwapped = false
+  sidesSwapped = false,
+  fullLeft?: string,
+  fullRight?: string
 ): WordCardModel {
-  const workText = sidesSwapped ? unit.rightText ?? "" : unit.leftText ?? "";
-  const compareText = sidesSwapped ? unit.leftText ?? "" : unit.rightText ?? "";
+  let workText = sidesSwapped ? unit.rightText ?? "" : unit.leftText ?? "";
+  let compareText = sidesSwapped ? unit.leftText ?? "" : unit.rightText ?? "";
   const workRange = sidesSwapped ? unit.right : unit.left;
   const compareRange = sidesSwapped ? unit.left : unit.right;
   const isInsert =
@@ -220,7 +229,34 @@ export function unitCardModel(
       : unit.granularity === "sentence"
         ? "sentence"
         : "other";
-  return { unit, workText, compareText, isInsert, isDelete, kind };
+
+  let displayExpanded = false;
+  if (fullLeft != null && fullRight != null && !isInsert && !isDelete) {
+    // Map true-side full texts
+    const workFull = sidesSwapped ? fullRight : fullLeft;
+    const compareFull = sidesSwapped ? fullLeft : fullRight;
+    const expanded = expandHoverPair(
+      workFull,
+      compareFull,
+      workRange,
+      compareRange,
+      workText,
+      compareText
+    );
+    workText = expanded.work.text;
+    compareText = expanded.compare.text;
+    displayExpanded = expanded.work.expanded || expanded.compare.expanded;
+  }
+
+  return {
+    unit,
+    workText,
+    compareText,
+    isInsert,
+    isDelete,
+    kind,
+    displayExpanded,
+  };
 }
 
 /** Cap decorations for performance. */
