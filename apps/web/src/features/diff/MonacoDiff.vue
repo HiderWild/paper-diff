@@ -113,6 +113,7 @@ const hoverCard = ref<{
   model: WordCardModel;
   x: number;
   y: number;
+  placement: "below" | "above";
   /** Stable key so re-hover same unit does not move the card */
   anchorKey: string;
 } | null>(null);
@@ -123,6 +124,7 @@ const mathHover = ref<{
   display: boolean;
   x: number;
   y: number;
+  placement: "below" | "above";
   startOffset: number;
   endOffset: number;
 } | null>(null);
@@ -159,16 +161,25 @@ function normalizeRangeEnd(
   return { lineNumber: line, column: col };
 }
 
+export type FloatAnchor = {
+  /** Horizontal center of highlight (viewport X) */
+  x: number;
+  /** Top edge of highlight span (viewport Y of first line top) */
+  topY: number;
+  /** Bottom edge of highlight span (viewport Y of last line bottom) */
+  bottomY: number;
+};
+
 /**
- * Pin float cards under the **last line** of the highlight, centered on the
- * span horizontally. Client/viewport coords for position:fixed.
- * Frozen once open for the same anchor (caller must not re-write x/y).
+ * Geometry of a text span in viewport coords.
+ * topY / bottomY hug the **highlight** (not full editor line chrome beyond height).
+ * Horizontal center from start/end of the span on the last (or only) line.
  */
 function clientAnchorForRange(
   ed: monaco.editor.ICodeEditor,
   start: { lineNumber: number; column: number },
   end: { lineNumber: number; column: number }
-): { x: number; y: number } | null {
+): FloatAnchor | null {
   const dom = ed.getDomNode();
   if (!dom) return null;
   const model = ed.getModel();
@@ -180,42 +191,64 @@ function clientAnchorForRange(
   const endPos = normalizeRangeEnd(model, startPos, end);
 
   const pStart = ed.getScrolledVisiblePosition(startPos);
-  // Prefer last line of the highlight for vertical stickiness
-  const pEndLine = ed.getScrolledVisiblePosition({
-    lineNumber: endPos.lineNumber,
-    column: 1,
-  });
   const pEnd = ed.getScrolledVisiblePosition(endPos);
-  if (!pStart && !pEndLine && !pEnd) return null;
+  const pFirstLine = ed.getScrolledVisiblePosition({
+    lineNumber: startPos.lineNumber,
+    column: startPos.column,
+  });
+  const pLastLine = ed.getScrolledVisiblePosition({
+    lineNumber: endPos.lineNumber,
+    column: Math.max(1, endPos.column),
+  });
+  if (!pStart && !pEnd && !pFirstLine && !pLastLine) return null;
 
-  // Horizontal: mid of start/end when same line; else mid of last line's content
+  // Horizontal mid of highlight (same line: start–end cols; multi: last-line start→end)
   let leftPx: number;
   let rightPx: number;
   if (startPos.lineNumber === endPos.lineNumber) {
-    leftPx = (pStart ?? pEnd)!.left;
-    rightPx = (pEnd ?? pStart)!.left;
+    leftPx = (pStart ?? pFirstLine ?? pEnd)!.left;
+    rightPx = (pEnd ?? pLastLine ?? pStart)!.left;
   } else {
-    // multi-line: center over the last line from col1 → end
-    const pLastStart =
-      pEndLine ??
-      ed.getScrolledVisiblePosition({
-        lineNumber: endPos.lineNumber,
-        column: 1,
-      });
-    leftPx = (pLastStart ?? pEnd ?? pStart)!.left;
-    rightPx = (pEnd ?? pLastStart ?? pStart)!.left;
+    const pLastStart = ed.getScrolledVisiblePosition({
+      lineNumber: endPos.lineNumber,
+      column: 1,
+    });
+    leftPx = (pLastStart ?? pLastLine ?? pEnd ?? pStart)!.left;
+    rightPx = (pEnd ?? pLastLine ?? pLastStart)!.left;
   }
 
-  // Vertical: bottom of **last** content line + small gap (not first line)
-  const pVert = pEndLine ?? pEnd ?? pStart!;
-  const lineH = pVert.height || 18;
-  const x = rect.left + (leftPx + rightPx) / 2;
-  const y = rect.top + pVert.top + lineH + 2;
+  const pTop = pFirstLine ?? pStart ?? pEnd!;
+  const pBot = pLastLine ?? pEnd ?? pStart!;
+  const topH = pTop.height || 18;
+  const botH = pBot.height || 18;
 
-  // Keep on-screen enough to reach the apply button, without floating far away
+  const x = rect.left + (leftPx + rightPx) / 2;
+  // Tight to highlight glyph box top / bottom (not another line of gutter)
+  const topY = rect.top + pTop.top;
+  const bottomY = rect.top + pBot.top + botH;
+
   const cx = Math.min(Math.max(x, 24), window.innerWidth - 24);
-  const cy = Math.min(Math.max(y, 8), window.innerHeight - 40);
-  return { x: cx, y: cy };
+  // Don't clamp top/bottom aggressively — placement flip uses real edges
+  return {
+    x: cx,
+    topY: Math.max(0, topY),
+    bottomY: Math.max(topY + topH * 0.5, bottomY),
+  };
+}
+
+/** Prefer below; flip above when not enough viewport room under highlight. */
+function placeFloatFromAnchor(
+  anchor: FloatAnchor,
+  estimatedHeight: number
+): { x: number; y: number; placement: "below" | "above" } {
+  const gap = 2;
+  const need = Math.max(28, estimatedHeight);
+  const spaceBelow = window.innerHeight - anchor.bottomY - 8;
+  const spaceAbove = anchor.topY - 8;
+  if (spaceBelow >= need || spaceBelow >= spaceAbove) {
+    return { x: anchor.x, y: anchor.bottomY + gap, placement: "below" };
+  }
+  return { x: anchor.x, y: anchor.topY - gap, placement: "above" };
 }
 
 const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
@@ -357,16 +390,19 @@ function tryShowMathHover(
 
   const startPos = model.getPositionAt(snip.startOffset);
   const endPos = model.getPositionAt(snip.endOffset);
-  const anchor = clientAnchorForRange(ed, startPos, endPos);
-  if (!anchor) return false;
+  const geom = clientAnchorForRange(ed, startPos, endPos);
+  if (!geom) return false;
+  // Math cards are taller; reserve ~140px when deciding flip
+  const placed = placeFloatFromAnchor(geom, snip.display ? 160 : 96);
 
   if (mathHoverTimer != null) clearTimeout(mathHoverTimer);
   mathHoverTimer = setTimeout(() => {
     mathHover.value = {
       latex: snip.latex,
       display: snip.display,
-      x: anchor.x,
-      y: anchor.y,
+      x: placed.x,
+      y: placed.y,
+      placement: placed.placement,
       startOffset: snip.startOffset,
       endOffset: snip.endOffset,
     };
@@ -529,16 +565,27 @@ function onEditorMouseMove(
   const trueSide = trueSideForVisualEditor(visual, props.sidesSwapped);
   // Monaco columns are 1-based → DiffUnit 0-based
   const col0 = Math.max(0, pos.column - 1);
-  // Pad hit box so thin insert/delete underlines stay pickable
-  const unit = hitTestHoverUnit(
+  // Exact hit first so we don't latch onto a padded unit above; then padded
+  let unit = hitTestHoverUnit(
     lastUnits,
     trueSide,
     pos.lineNumber,
     col0,
     props.sidesSwapped,
-    true, // include sentence if no smaller word hit
-    3 // base pad cols; empty ranges get more via padForRange
+    true,
+    0
   );
+  if (!unit) {
+    unit = hitTestHoverUnit(
+      lastUnits,
+      trueSide,
+      pos.lineNumber,
+      col0,
+      props.sidesSwapped,
+      true,
+      3
+    );
+  }
   if (!unit) {
     scheduleDismiss();
     return;
@@ -552,7 +599,6 @@ function onEditorMouseMove(
       clearTimeout(hoverTimer);
       hoverTimer = null;
     }
-    // Refresh model text if needed but never move
     if (hoverCard.value.model !== model) {
       hoverCard.value = {
         ...hoverCard.value,
@@ -569,26 +615,30 @@ function onEditorMouseMove(
       : editor.getModifiedEditor();
   const visRange = visual === "original" ? unit.left : unit.right;
   const mr = unitToMonacoRange(visRange);
-  const anchor = clientAnchorForRange(
+  const geom = clientAnchorForRange(
     ed,
     { lineNumber: mr.startLineNumber, column: mr.startColumn },
     { lineNumber: mr.endLineNumber, column: mr.endColumn }
   );
-  // Fallback: if layout not ready, use last mouse once (only for first open)
-  const be = e.event.browserEvent as MouseEvent | undefined;
-  const fallbackX = be?.clientX ?? e.event.posx ?? 0;
-  const fallbackY = (be?.clientY ?? e.event.posy ?? 0) + 14;
-  const ax = anchor?.x ?? fallbackX;
-  const ay = anchor?.y ?? fallbackY;
+  // Compact ~36px; replace pair taller
+  const estH = model.isInsert || model.isDelete ? 40 : 110;
+  const placed = geom
+    ? placeFloatFromAnchor(geom, estH)
+    : {
+        x: (e.event.browserEvent as MouseEvent | undefined)?.clientX ?? 0,
+        y:
+          ((e.event.browserEvent as MouseEvent | undefined)?.clientY ?? 0) + 14,
+        placement: "below" as const,
+      };
 
   if (hoverTimer != null) clearTimeout(hoverTimer);
-  // Insert/delete open slightly faster (harder to re-hit); replace stays 350ms
   const openMs = model.isInsert || model.isDelete ? 220 : 350;
   hoverTimer = setTimeout(() => {
     hoverCard.value = {
       model,
-      x: ax,
-      y: ay,
+      x: placed.x,
+      y: placed.y,
+      placement: placed.placement,
       anchorKey,
     };
     hoverTimer = null;
@@ -1030,6 +1080,7 @@ defineExpose({
         :model="hoverCard.model"
         :x="hoverCard.x"
         :y="hoverCard.y"
+        :placement="hoverCard.placement"
         @apply="onHoverApply"
         @dismiss="clearWordHover"
         @pointer-enter="onCardPointerEnter"
@@ -1041,6 +1092,7 @@ defineExpose({
         :display="mathHover.display"
         :x="mathHover.x"
         :y="mathHover.y"
+        :placement="mathHover.placement"
         @dismiss="clearMathHover"
         @pointer-enter="onMathCardEnter"
         @pointer-leave="onMathCardLeave"

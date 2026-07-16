@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch, withDefaults } from "vue";
 import {
   currentThemeMode,
   injectMathHoverCss,
   renderMathHoverHtml,
 } from "./renderMathHoverHtml";
 
-const props = defineProps<{
-  latex: string;
-  display: boolean;
-  x: number;
-  y: number;
-}>();
+const props = withDefaults(
+  defineProps<{
+    latex: string;
+    display: boolean;
+    x: number;
+    y: number;
+    placement?: "below" | "above";
+  }>(),
+  { placement: "below" }
+);
 
 const emit = defineEmits<{
   dismiss: [];
@@ -57,7 +61,7 @@ watch(
   <div
     ref="root"
     class="math-hover-float"
-    :class="theme"
+    :class="[theme, 'place-' + placement]"
     :style="{ left: x + 'px', top: y + 'px' }"
     role="tooltip"
     @pointerenter="emit('pointerEnter')"
@@ -77,6 +81,9 @@ watch(
   max-width: min(36rem, 92vw);
   pointer-events: auto;
   filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.35));
+}
+.math-hover-float.place-above {
+  transform: translate(-50%, -100%);
 }
 .math-hover-body :deep(.pd-math-hover) {
   /* card chrome lives inside renderMathHoverHtml */
