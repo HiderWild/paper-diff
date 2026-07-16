@@ -238,7 +238,13 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  min-width: 14rem;
+  min-width: 0;
+  /* sentence text can be long — grow with content, don't force wide empty sides */
+  width: max-content;
+  max-width: min(40rem, 92vw);
+}
+.word-hover-card.replace-mode.mode-replace {
+  /* same rules; sentence/word both use replace template */
 }
 
 .replace-head {
@@ -335,12 +341,13 @@ onBeforeUnmount(() => {
   border-left: 2px solid var(--green, #22c55e);
 }
 
-/* Independent columns: short side hugs content; long side may grow to max */
+/* Independent columns: short side hugs content; long side grows within max */
 .pair {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: flex-start;
+  justify-content: flex-start;
   gap: 0.4rem;
   width: max-content;
   max-width: min(40rem, 90vw);
@@ -352,8 +359,10 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .pair .side.shrink-wrap .snip {
+  display: inline-block;
   width: max-content;
-  max-width: 100%;
+  max-width: min(22rem, 48vw);
+  vertical-align: top;
 }
 .label {
   font-size: 0.68rem;

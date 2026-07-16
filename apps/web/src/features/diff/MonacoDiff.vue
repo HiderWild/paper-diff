@@ -236,19 +236,53 @@ function clientAnchorForRange(
   };
 }
 
-/** Prefer below; flip above when not enough viewport room under highlight. */
+/**
+ * Prefer below the highlight bottom; flip above the highlight top when
+ * there is not enough viewport room for the card under the span.
+ * IMPORTANT: do NOT place below merely because spaceBelow > spaceAbove when
+ * both are smaller than the card — that left tall sentence cards far below.
+ */
 function placeFloatFromAnchor(
   anchor: FloatAnchor,
   estimatedHeight: number
 ): { x: number; y: number; placement: "below" | "above" } {
   const gap = 2;
-  const need = Math.max(28, estimatedHeight);
-  const spaceBelow = window.innerHeight - anchor.bottomY - 8;
-  const spaceAbove = anchor.topY - 8;
-  if (spaceBelow >= need || spaceBelow >= spaceAbove) {
+  const need = Math.max(40, estimatedHeight);
+  const pad = 10;
+  const spaceBelow = window.innerHeight - anchor.bottomY - pad;
+  const spaceAbove = anchor.topY - pad;
+
+  if (spaceBelow >= need) {
     return { x: anchor.x, y: anchor.bottomY + gap, placement: "below" };
   }
-  return { x: anchor.x, y: anchor.topY - gap, placement: "above" };
+  if (spaceAbove >= need) {
+    return { x: anchor.x, y: anchor.topY - gap, placement: "above" };
+  }
+  // Neither side fully fits: use the larger side so the card is less clipped
+  if (spaceAbove > spaceBelow) {
+    return { x: anchor.x, y: anchor.topY - gap, placement: "above" };
+  }
+  return { x: anchor.x, y: anchor.bottomY + gap, placement: "below" };
+}
+
+/** Estimate hover card height so sentence/replace cards flip correctly. */
+function estimateHoverCardHeight(model: {
+  isInsert?: boolean;
+  isDelete?: boolean;
+  kind?: string;
+  workText?: string;
+  compareText?: string;
+}): number {
+  if (model.isInsert || model.isDelete) return 44;
+  const w = model.workText || "";
+  const c = model.compareText || "";
+  const lines = (s: string) =>
+    Math.max(1, Math.ceil(s.length / 42) + (s.match(/\n/g)?.length ?? 0));
+  // header ~28 + two snips stacked in height + gaps
+  const body = Math.max(lines(w), lines(c)) * 16 + 28;
+  const pair = 36 + body; // labels + padding
+  if (model.kind === "sentence") return Math.min(320, Math.max(140, pair));
+  return Math.min(260, Math.max(96, pair));
 }
 
 const KIND_RANK = { line: 3, block: 2, hunk: 1 } as const;
@@ -614,6 +648,7 @@ function onEditorMouseMove(
   }
 
   // Anchor to the span on the editor the user is hovering (visual buffer)
+  // Word + sentence share the same hug/flip path.
   const ed =
     visual === "original"
       ? editor.getOriginalEditor()
@@ -625,8 +660,7 @@ function onEditorMouseMove(
     { lineNumber: mr.startLineNumber, column: mr.startColumn },
     { lineNumber: mr.endLineNumber, column: mr.endColumn }
   );
-  // Compact ~36px; replace pair taller
-  const estH = model.isInsert || model.isDelete ? 40 : 110;
+  const estH = estimateHoverCardHeight(model);
   const placed = geom
     ? placeFloatFromAnchor(geom, estH)
     : {
@@ -637,7 +671,13 @@ function onEditorMouseMove(
       };
 
   if (hoverTimer != null) clearTimeout(hoverTimer);
-  const openMs = model.isInsert || model.isDelete ? 220 : 350;
+  // Sentence opens a bit slower; insert/delete faster
+  const openMs =
+    model.isInsert || model.isDelete
+      ? 220
+      : model.kind === "sentence"
+        ? 300
+        : 350;
   hoverTimer = setTimeout(() => {
     hoverCard.value = {
       model,
