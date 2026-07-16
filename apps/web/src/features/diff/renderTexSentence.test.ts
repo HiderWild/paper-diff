@@ -177,6 +177,28 @@ describe("renderTexSentence", () => {
     expect(html).toContain("pd-tex-fn-mark");
   });
 
+  it("nested footnotes share counter (no restart from 1)", () => {
+    // Outer footnote 1 contains an inner footnote — it should be numbered 2,
+    // not 1 (which would duplicate the outer). Counter is shared via state.
+    const { html, footnoteCount } = renderTexSentence(
+      "see\\footnote{note\\footnote{inner}}",
+      EMPTY_TEX_CONTEXT
+    );
+    expect(footnoteCount).toBe(2);
+    // Both footnote superscript marks should be present: 1 and 2
+    expect(html).toContain("pd-tex-fn-mark");
+    expect(html).toMatch(/>1<\/sup>/);
+    expect(html).toMatch(/>2<\/sup>/);
+    // The inner footnote body should appear in the footnotes section
+    expect(html).toContain("inner");
+    // Footnotes divs should be in numeric order (1 before 2)
+    const fn1Pos = html.indexOf('<div class="pd-tex-fn"><sup>1</sup>');
+    const fn2Pos = html.indexOf('<div class="pd-tex-fn"><sup>2</sup>');
+    expect(fn1Pos).toBeGreaterThanOrEqual(0);
+    expect(fn2Pos).toBeGreaterThanOrEqual(0);
+    expect(fn1Pos).toBeLessThan(fn2Pos);
+  });
+
   it("xss: script tag in text is escaped", () => {
     const { html } = renderTexSentence(
       "<script>alert(1)</script>",

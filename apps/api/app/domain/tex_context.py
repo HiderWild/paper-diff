@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 _BIBCITE = re.compile(r"\\bibcite\{([^}]+)\}\{([^}]+)\}")
-_NEWLABEL = re.compile(r"\\newlabel\{([^}]+)\}\{\{([^}]+)\}(?:\{([^}]+)\})?")
+_NEWLABEL = re.compile(r"\\newlabel\{([^}]+)\}\{\{([^}]*)\}(?:\{([^}]*)\})?")
 _ABX_CITE = re.compile(r"\\abx@aux@cite\{([^}]+)\}\{([^}]+)\}")
 _ABX_NUMBER = re.compile(r"\\abx@aux@number\{([^}]+)\}\{([^}]+)\}")
 
