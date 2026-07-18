@@ -13,3 +13,4 @@ apps/web/dist/
 *.tsbuildinfo
 *.pdf
 !fixtures/**/*.pdf
+.run/
