@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import io
 import zipfile
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.infra.workspace_fs import Workspace
 from app.services.compile_service import CompileService
+from app.storage.factory import ProjectStorageFactory
 
 
 def _zip_bytes(files: dict[str, str]) -> bytes:
@@ -49,11 +48,10 @@ def _make_project(client: TestClient) -> str:
 
 def test_compile_success_persists_aux(client: TestClient, tmp_path):
     pid = _make_project(client)
-    ws_root = Path(tmp_path / "ws" / pid)
-    artifacts = ws_root / "artifacts"
-    artifacts.mkdir(parents=True, exist_ok=True)
-    (artifacts / "latest.aux").write_text(
-        "\\bibcite{lee2023}{7}\n\\newlabel{sec:intro}{{1}{1}}\n", encoding="utf-8"
+    project = ProjectStorageFactory.local(tmp_path / "ws").for_project(pid)
+    project.write_artifact(
+        "latest.aux",
+        b"\\bibcite{lee2023}{7}\n\\newlabel{sec:intro}{{1}{1}}\n",
     )
 
     r = client.get(f"/api/v1/projects/{pid}/artifacts/aux")
@@ -92,37 +90,36 @@ def test_tex_context_no_aux_returns_compiled_false(client: TestClient):
 
 def test_store_aux_bbl_silent_when_missing(tmp_path):
     settings = Settings(workspace_root=tmp_path / "ws", docker_enabled=False)
-    svc = CompileService(settings)
-    ws = Workspace(tmp_path / "ws", "proj1")
-    ws.ensure_dirs()
+    factory = ProjectStorageFactory.local(settings.workspace_root)
+    svc = CompileService(settings, factory)
+    project = factory.for_project("proj1")
+    project.ensure_layout()
     work = tmp_path / "work"
     work.mkdir()
     # Should not raise even though files are missing.
-    svc._store_aux_bbl(ws, {"job_id": "job1"}, work, "nostem")
+    svc._store_aux_bbl(project, {"job_id": "job1"}, work, "nostem")
 
 
 def test_store_aux_bbl_copies_when_present(tmp_path):
     settings = Settings(workspace_root=tmp_path / "ws", docker_enabled=False)
-    svc = CompileService(settings)
-    ws = Workspace(tmp_path / "ws", "proj1")
-    ws.ensure_dirs()
+    factory = ProjectStorageFactory.local(settings.workspace_root)
+    svc = CompileService(settings, factory)
+    project = factory.for_project("proj1")
+    project.ensure_layout()
     work = tmp_path / "work"
     work.mkdir()
     (work / "main.aux").write_text("AUX_CONTENT", encoding="utf-8")
     (work / "main.bbl").write_text("BBL_CONTENT", encoding="utf-8")
 
-    svc._store_aux_bbl(ws, {"job_id": "job1"}, work, "main")
+    svc._store_aux_bbl(project, {"job_id": "job1"}, work, "main")
 
-    artifacts = ws.project_dir / "artifacts"
     for name, content in (
         ("job1.aux", "AUX_CONTENT"),
         ("latest.aux", "AUX_CONTENT"),
         ("job1.bbl", "BBL_CONTENT"),
         ("latest.bbl", "BBL_CONTENT"),
     ):
-        p = artifacts / name
-        assert p.is_file(), f"missing {name}"
-        assert p.read_text(encoding="utf-8") == content
+        assert project.read_artifact(name).decode("utf-8") == content
 
 
 def test_store_aux_flag_disabled_skips_copy(tmp_path):
@@ -131,9 +128,10 @@ def test_store_aux_flag_disabled_skips_copy(tmp_path):
         workspace_root=tmp_path / "ws", docker_enabled=False, store_aux=False
     )
     assert settings.store_aux is False
-    svc = CompileService(settings)
-    ws = Workspace(tmp_path / "ws", "proj1")
-    ws.ensure_dirs()
+    factory = ProjectStorageFactory.local(settings.workspace_root)
+    svc = CompileService(settings, factory)
+    project = factory.for_project("proj1")
+    project.ensure_layout()
     work = tmp_path / "work"
     work.mkdir()
     (work / "main.aux").write_text("AUX_CONTENT", encoding="utf-8")

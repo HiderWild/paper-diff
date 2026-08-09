@@ -2,37 +2,106 @@
 
 from __future__ import annotations
 
-import io
-import shutil
 import uuid
-import zipfile
-from pathlib import Path
+from datetime import datetime
 
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.domain.aligner import align_paths, is_text_path
 from app.domain.merge_engine import LineColRange, apply_replace, extract_range
 from app.domain.root_detect import detect_root_candidates, is_dot_path
-from app.infra.workspace_fs import Workspace
+from app.domain.text_file import decode_text_bytes, splice_text_lines
+from app.integrations.ports import GitBackend
+from app.storage.archives import ArchiveTransfer
+from app.storage.errors import (
+    InvalidArchive,
+    InvalidStorageKey,
+    StorageNotFound,
+    StorageQuotaExceeded,
+)
+from app.storage.factory import ProjectStorageFactory
+from app.storage.project_store import ProjectStorage
+from app.storage.types import FileKind, TreeRef
 from app.services.compare_service import CompareService
 from app.services.zone_service import ZoneService
 
 
 class ProjectService:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        storage: ProjectStorageFactory,
+        git_service: GitBackend | None = None,
+    ):
         self.settings = settings
-        self.settings.workspace_root.mkdir(parents=True, exist_ok=True)
+        self.storage = storage
+        self.git_service = git_service
 
-    def _ws(self, project_id: str) -> Workspace:
-        return Workspace(self.settings.workspace_root, project_id)
+    def _project(self, project_id: str) -> ProjectStorage:
+        return self.storage.for_project(project_id)
+
+    def _require_project(self, project_id: str) -> ProjectStorage:
+        project = self._project(project_id)
+        if not project.exists():
+            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        return project
+
+    @staticmethod
+    def _tree_ref(side: str) -> TreeRef:
+        if side in ("work", "merged"):
+            return TreeRef.work()
+        if side == "base":
+            return TreeRef.base()
+        if side == "revised":
+            return TreeRef.revised()
+        if side.startswith("zone:"):
+            return TreeRef.zone(side[5:])
+        raise AppError("VALIDATION_ERROR", f"unknown side: {side}", status_code=422)
+
+    @staticmethod
+    def _path_error(path: str, exc: Exception) -> AppError:
+        if isinstance(exc, InvalidStorageKey):
+            return AppError("PATH_TRAVERSAL", "path traversal denied", status_code=400)
+        return AppError("FILE_NOT_FOUND", f"file not found: {path}", status_code=404)
+
+    def _read_text(self, project: ProjectStorage, tree: TreeRef, path: str) -> str:
+        try:
+            return project.read_text(tree, path)
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise self._path_error(path, exc) from exc
+
+    def _read_bytes(self, project: ProjectStorage, tree: TreeRef, path: str) -> bytes:
+        try:
+            return project.read_bytes(tree, path)
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise self._path_error(path, exc) from exc
+
+    def _write_bytes(
+        self,
+        project: ProjectStorage,
+        tree: TreeRef,
+        path: str,
+        data: bytes,
+    ) -> None:
+        try:
+            project.write_bytes(tree, path, data)
+        except InvalidStorageKey as exc:
+            raise self._path_error(path, exc) from exc
 
     def _zones(self) -> ZoneService:
-        return ZoneService(self.settings)
+        return ZoneService(self.settings, self.storage)
+
+    def _git(self):
+        if self.git_service is None:
+            from app.services.git_service import GitService
+
+            self.git_service = GitService(self.settings, self.storage)
+        return self.git_service
 
     def create_project(self) -> dict:
         pid = uuid.uuid4().hex[:12]
-        ws = self._ws(pid)
-        ws.ensure_dirs()
+        project = self._project(pid)
+        project.ensure_layout()
         meta = {
             "id": pid,
             "status": "empty",
@@ -44,164 +113,77 @@ class ProjectService:
             "active_zone_id": None,
             "zones": {},
         }
-        ws.save_meta(meta)
+        project.save_project_meta(meta)
         try:
-            from app.services.git_service import GitService
-
-            GitService(self.settings).ensure_repo(pid)
+            self._git().ensure_repo(pid)
         except Exception:
             pass
         return {"id": pid, "status": "empty", "model": "v2"}
 
     def list_projects(self) -> dict:
-        """List persisted projects under workspace_root (for restore after restart)."""
-        root = self.settings.workspace_root
-        if not root.exists():
-            return {"projects": []}
+        """List persisted projects for the injected storage namespace."""
         projects = []
-        for child in sorted(root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not child.is_dir():
-                continue
-            meta_path = child / "meta.json"
-            if not meta_path.is_file():
-                continue
+        for project_id in self.storage.list_project_ids():
+            project = self._project(project_id)
             try:
-                ws = self._ws(child.name)
-                meta = ws.load_meta()
+                meta = project.load_project_meta()
             except Exception:
                 continue
-            zids = ws.list_zone_ids() if hasattr(ws, "list_zone_ids") else []
-            work_count = 0
+            zids = project.list_zone_ids()
+            work_count = len(project.list_files(TreeRef.work()))
+            info = project.store.stat(project.layout.meta)
             try:
-                work_count = len(ws.list_files("work"))
-            except Exception:
-                pass
+                updated_at = datetime.fromisoformat(meta.get("updated_at") or "").timestamp()
+            except ValueError:
+                updated_at = (
+                    info.modified_at.timestamp()
+                    if info is not None and info.modified_at is not None
+                    else 0.0
+                )
             projects.append(
                 {
-                    "id": meta.get("id") or child.name,
+                    "id": meta.get("id") or project_id,
                     "status": meta.get("status", "empty"),
                     "model": meta.get("model", "v2"),
                     "root_file": meta.get("root_file"),
                     "active_zone_id": meta.get("active_zone_id"),
                     "zone_count": len(zids),
                     "work_file_count": work_count,
-                    "updated_at": child.stat().st_mtime,
+                    "updated_at": updated_at,
                 }
             )
+        projects.sort(key=lambda item: item["updated_at"], reverse=True)
         return {"projects": projects}
 
     @staticmethod
-    def _decode_zip_filename(info: zipfile.ZipInfo) -> str:
-        """Recover Unicode path for zip entries.
+    def _decode_zip_filename(info) -> str:
+        return ArchiveTransfer.decode_zip_filename(info)
 
-        Many Windows/Chinese zip tools store names as GBK/GB18030 bytes but
-        omit the UTF-8 flag (bit 11). Python then decodes via CP437 → mojibake
-        in the tree (e.g. 导出 → µ¼≥º) and file-raw looks up the wrong path.
-        """
-        name = (info.filename or "").replace("\\", "/")
-        # Official UTF-8 flag — trust the string
-        if info.flag_bits & 0x800:
-            return name
-
-        def score(s: str) -> int:
-            # Higher = more likely intended human filename
-            cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff")
-            repl = s.count("\ufffd")
-            return cjk * 10 - repl * 50 + (2 if s.isascii() else 0)
-
-        candidates: list[str] = [name]
-        raw: bytes | None = None
-        v = getattr(info, "orig_filename", None)
-        if isinstance(v, (bytes, bytearray)):
-            raw = bytes(v)
-        if raw is None:
-            try:
-                raw = name.encode("cp437")
-            except UnicodeEncodeError:
-                return name
-        for enc in ("utf-8", "gbk", "gb18030", "big5"):
-            try:
-                candidates.append(raw.decode(enc).replace("\\", "/"))
-            except UnicodeDecodeError:
-                continue
-        best = max(candidates, key=score)
-        # If nothing looks better than the original and original already has CJK, keep it
-        return best
-
-    def _safe_extract_zip(self, data: bytes, dest: Path, label: str = "zip") -> None:
-        if not data:
-            raise AppError("INVALID_ZIP", f"{label} is empty", status_code=400)
-        if len(data) < 4 or data[:2] != b"PK":
-            raise AppError(
-                "INVALID_ZIP",
-                f"{label} is not a valid zip (missing PK header). "
-                "Use .zip, not .rar/.7z/.tar.gz, and re-export if needed.",
-                status_code=400,
+    def _import_zip(
+        self,
+        project: ProjectStorage,
+        tree: TreeRef,
+        data: bytes,
+        *,
+        label: str,
+    ) -> list[str]:
+        try:
+            return ArchiveTransfer.import_zip(
+                project,
+                tree,
+                data,
+                label=label,
+                max_expanded_bytes=self.settings.max_upload_mb * 1024 * 1024,
             )
-        if dest.exists():
-            shutil.rmtree(dest)
-        dest.mkdir(parents=True, exist_ok=True)
-        try:
-            zf = zipfile.ZipFile(io.BytesIO(data))
-        except zipfile.BadZipFile as e:
-            raise AppError(
-                "INVALID_ZIP",
-                f"{label} is not a valid zip: {e}",
-                status_code=400,
-            ) from e
-        try:
-            for info in zf.infolist():
-                name = self._decode_zip_filename(info)
-                if name.endswith("/"):
-                    continue
-                parts = [p for p in name.split("/") if p and p != "."]
-                if any(p == ".." for p in parts):
-                    raise AppError(
-                        "PATH_TRAVERSAL",
-                        f"{label} contains path traversal",
-                        status_code=400,
-                    )
-                if not parts:
-                    continue
-                if parts[0] == "__MACOSX" or parts[-1].startswith("._"):
-                    continue
-                if parts[-1] in (".DS_Store", "Thumbs.db", "desktop.ini"):
-                    continue
-                target = dest.joinpath(*parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    with zf.open(info) as src, open(target, "wb") as out:
-                        shutil.copyfileobj(src, out, length=1024 * 1024)
-                except RuntimeError as e:
-                    raise AppError(
-                        "INVALID_ZIP",
-                        f"{label} entry cannot be extracted ({name}): {e}",
-                        status_code=400,
-                    ) from e
-                except OSError as e:
-                    raise AppError(
-                        "EXTRACT_FAILED",
-                        f"{label} extract failed for {name}: {e}",
-                        status_code=400,
-                    ) from e
-        finally:
-            zf.close()
-        children = list(dest.iterdir())
-        if len(children) == 1 and children[0].is_dir():
-            only = children[0]
-            tmp = dest.parent / f".hoist_{dest.name}"
-            if tmp.exists():
-                shutil.rmtree(tmp)
-            only.rename(tmp)
-            shutil.rmtree(dest)
-            tmp.rename(dest)
+        except StorageQuotaExceeded as exc:
+            raise AppError("UPLOAD_TOO_LARGE", str(exc), status_code=413) from exc
+        except InvalidArchive as exc:
+            raise AppError("INVALID_ZIP", str(exc), status_code=400) from exc
 
     def import_work_zip(self, project_id: str, zip_bytes: bytes) -> dict:
-        ws = self._ws(project_id)
-        if not ws.project_dir.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        self._safe_extract_zip(zip_bytes, ws.work_dir, label="work.zip")
-        return self._finalize_work(ws, source="upload")
+        project = self._require_project(project_id)
+        self._import_zip(project, TreeRef.work(), zip_bytes, label="work.zip")
+        return self._finalize_work(project, source="upload")
 
     def _normalize_work_rel(self, rel: str) -> list[str] | None:
         rel = (rel or "").replace("\\", "/").lstrip("/")
@@ -218,10 +200,8 @@ class ProjectService:
 
     def dry_run_work_files(self, project_id: str, paths: list[str]) -> dict:
         """Report which paths would conflict under work/ before upload."""
-        ws = self._ws(project_id)
-        if not ws.project_dir.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        existing = set(ws.list_files("work"))
+        project = self._require_project(project_id)
+        existing = set(project.list_files(TreeRef.work()))
         conflicts = []
         planned = []
         invalid = []
@@ -234,9 +214,11 @@ class ProjectService:
             entry = {"path": rel}
             if rel in existing:
                 try:
-                    p = ws.resolve_under(ws.work_dir, rel)
-                    entry["existing_size"] = p.stat().st_size if p.is_file() else None
-                except AppError:
+                    info = project.stat_file(TreeRef.work(), rel)
+                    entry["existing_size"] = (
+                        info.size if info is not None and info.kind == FileKind.FILE else None
+                    )
+                except InvalidStorageKey:
                     entry["existing_size"] = None
                 conflicts.append(entry)
             else:
@@ -271,28 +253,27 @@ class ProjectService:
         """
         from app.domain.media import IMAGE_EXTS, WORD_EXTS, RAW_PREVIEW_EXTS
 
-        ws = self._ws(project_id)
-        if not ws.project_dir.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        project = self._require_project(project_id)
         if on_conflict == "cancel":
             raise AppError("IMPORT_CANCELLED", "import cancelled by client", status_code=400)
 
         resolutions = resolutions or {}
-        ws.work_dir.mkdir(parents=True, exist_ok=True)
-        existing = set(ws.list_files("work"))
+        existing = set(project.list_files(TreeRef.work()))
         written: list[str] = []
         skipped: list[dict] = []
         renamed: list[dict] = []
         overwritten: list[str] = []
 
         def unique_name(rel: str) -> str:
-            p = Path(rel)
-            stem, suf, parent = p.stem, p.suffix, p.parent.as_posix()
-            if parent == ".":
-                parent = ""
+            parent, _, filename = rel.rpartition("/")
+            stem, dot, extension = filename.rpartition(".")
+            if not dot or not stem:
+                stem, suffix = filename, ""
+            else:
+                suffix = f".{extension}"
             n = 1
             while True:
-                name = f"{stem} ({n}){suf}"
+                name = f"{stem} ({n}){suffix}"
                 cand = f"{parent}/{name}" if parent else name
                 if cand not in existing and cand not in written:
                     return cand
@@ -342,23 +323,22 @@ class ProjectService:
                     overwritten.append(rel)
 
             # allow any file type for supplement (binary office, media, text)
-            suf = Path(rel).suffix.lower()
+            filename = rel.rsplit("/", 1)[-1]
+            suf = f".{filename.rsplit('.', 1)[-1].lower()}" if "." in filename else ""
             _ = IMAGE_EXTS, WORD_EXTS, RAW_PREVIEW_EXTS, suf  # kept for policy hooks
-            target = ws.resolve_under(ws.work_dir, rel)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
+            self._write_bytes(project, TreeRef.work(), rel, content)
             written.append(rel)
             existing.add(rel)
 
         if finalize or mode == "replace":
-            result = self._finalize_work(ws, source="files")
+            result = self._finalize_work(project, source="files")
         else:
             # supplement: refresh root candidates if needed, keep existing root
-            meta = ws.load_meta()
-            work_files = ws.list_files("work")
+            meta = project.load_project_meta()
+            work_files = project.list_files(TreeRef.work())
 
             def read_work(p: str) -> str:
-                return ws.read_text("work", p)
+                return self._read_text(project, TreeRef.work(), p)
 
             if not meta.get("root_candidates"):
                 cands = detect_root_candidates(work_files, read_work)
@@ -371,12 +351,12 @@ class ProjectService:
             meta["status"] = "ready"
             if meta.get("versions", {}).get("work"):
                 meta["versions"]["work"]["file_count"] = len(work_files)
-            ws.save_meta(meta)
+            project.save_project_meta(meta)
             from app.services.compare_service import CompareService
 
-            cmp = CompareService(self.settings)
-            meta = cmp.ensure_init_states(ws, meta)
-            ws.save_meta(meta)
+            cmp = CompareService(self.settings, self.storage)
+            meta = cmp.ensure_init_states(project, meta)
+            project.save_project_meta(meta)
             result = self.get_project(project_id)
 
         result["written"] = written
@@ -386,16 +366,16 @@ class ProjectService:
         result["mode"] = mode
         return result
 
-    def _finalize_work(self, ws: Workspace, source: str = "upload") -> dict:
-        work_files = ws.list_files("work")
+    def _finalize_work(self, project: ProjectStorage, source: str = "upload") -> dict:
+        work_files = project.list_files(TreeRef.work())
 
         def read_work(p: str) -> str:
-            return ws.read_text("work", p)
+            return self._read_text(project, TreeRef.work(), p)
 
         candidates = detect_root_candidates(work_files, read_work)
         recommended = candidates[0]["path"] if candidates else None
         revisions = {p: 0 for p in work_files if is_text_path(p)}
-        meta = ws.load_meta()
+        meta = project.load_project_meta()
         meta.update(
             {
                 "status": "ready",
@@ -417,32 +397,28 @@ class ProjectService:
         if "active_zone_id" not in meta:
             meta["active_zone_id"] = None
         meta.setdefault("zones", {})
-        cmp = CompareService(self.settings)
-        meta = cmp.ensure_init_states(ws, meta)
-        ws.save_meta(meta)
+        cmp = CompareService(self.settings, self.storage)
+        meta = cmp.ensure_init_states(project, meta)
+        project.save_project_meta(meta)
         try:
-            from app.services.git_service import GitService
-
-            gs = GitService(self.settings)
-            gs.ensure_repo(ws.project_id)
+            gs = self._git()
+            gs.ensure_repo(project.scope.project_id)
             gs.commit(
-                ws.project_id,
+                project.scope.project_id,
                 message="Initial import",
                 paths=None,
                 sync_from_merged=True,
             )
         except Exception:
             pass
-        return self.get_project(ws.project_id)
+        return self.get_project(project.scope.project_id)
 
     def upload_versions(self, project_id: str, base_zip: bytes, revised_zip: bytes) -> dict:
         """Compat: base → work, revised → zone (compat_revised), activate zone."""
-        ws = self._ws(project_id)
-        if not ws.project_dir.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        project = self._require_project(project_id)
         # also fill legacy dirs for latexdiff + existing tests that may touch them
-        self._safe_extract_zip(base_zip, ws.work_dir, label="base.zip")
-        self._safe_extract_zip(base_zip, ws.base_dir, label="base.zip")
+        self._import_zip(project, TreeRef.work(), base_zip, label="base.zip")
+        self._import_zip(project, TreeRef.base(), base_zip, label="base.zip")
         zs = self._zones()
         zmeta = zs.create_zone(
             project_id,
@@ -450,9 +426,14 @@ class ProjectService:
             source="compat_revised",
         )
         zid = zmeta["id"]
-        self._safe_extract_zip(revised_zip, ws.zone_dir(zid), label="revised.zip")
-        self._safe_extract_zip(revised_zip, ws.revised_dir, label="revised.zip")
-        return self._finalize_compat(ws, zid, base_meta={"source": "upload"}, revised_meta={"source": "upload"})
+        self._import_zip(project, TreeRef.zone(zid), revised_zip, label="revised.zip")
+        self._import_zip(project, TreeRef.revised(), revised_zip, label="revised.zip")
+        return self._finalize_compat(
+            project,
+            zid,
+            base_meta={"source": "upload"},
+            revised_meta={"source": "upload"},
+        )
 
     def import_from_git(
         self,
@@ -463,89 +444,35 @@ class ProjectService:
         subdir: str | None = None,
     ) -> dict:
         """Materialize base_ref → work, revised_ref → zone."""
-        import subprocess
-        import tarfile
-        import tempfile
-
-        ws = self._ws(project_id)
-        if not ws.project_dir.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        if not shutil.which("git"):
-            raise AppError("GIT_UNAVAILABLE", "git not found on PATH", status_code=503)
+        project = self._require_project(project_id)
 
         sub = (subdir or "").replace("\\", "/").strip("/")
         if sub and (".." in sub.split("/") or sub.startswith("/")):
             raise AppError("PATH_TRAVERSAL", "invalid subdir", status_code=400)
+        tar_base, tar_rev = self._git().archive_refs(
+            repo_url,
+            base_ref,
+            revised_ref,
+            sub or None,
+        )
 
-        def extract_tar_to(dest: Path, data: bytes) -> None:
-            if dest.exists():
-                shutil.rmtree(dest)
-            dest.mkdir(parents=True, exist_ok=True)
-            with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
-                for member in tar.getmembers():
-                    if not member.isfile():
-                        continue
-                    name = member.name.replace("\\", "/")
-                    if sub and name.startswith(sub + "/"):
-                        name = name[len(sub) + 1 :]
-                    elif sub and name == sub:
-                        continue
-                    parts = [p for p in name.split("/") if p and p != "."]
-                    if not parts or any(p == ".." for p in parts):
-                        continue
-                    target = dest.joinpath(*parts)
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    f = tar.extractfile(member)
-                    if f:
-                        target.write_bytes(f.read())
-
-        def archive_from(repo_cwd: Path, ref: str) -> bytes:
-            cmd = ["git", "archive", "--format=tar", ref]
-            if sub:
-                cmd.append(f"{sub}/")
-            proc = subprocess.run(cmd, cwd=str(repo_cwd), capture_output=True, check=False)
-            if proc.returncode != 0:
-                err = (proc.stderr or b"").decode("utf-8", errors="replace")
-                raise AppError("GIT_ERROR", f"git archive {ref}: {err}", status_code=400)
-            return proc.stdout
-
-        local = Path(repo_url)
-        if local.exists():
-            tar_base = archive_from(local, base_ref)
-            tar_rev = archive_from(local, revised_ref)
-        else:
-            with tempfile.TemporaryDirectory() as tmp:
-                clone = Path(tmp) / "repo"
-                c = subprocess.run(
-                    [
-                        "git",
-                        "clone",
-                        "--filter=blob:none",
-                        "--no-checkout",
-                        repo_url,
-                        str(clone),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if c.returncode != 0:
-                    raise AppError(
-                        "GIT_ERROR",
-                        f"clone failed: {c.stderr or c.stdout}",
-                        status_code=400,
-                    )
-                subprocess.run(
-                    ["git", "fetch", "origin", base_ref, revised_ref],
-                    cwd=clone,
-                    capture_output=True,
-                    check=False,
-                )
-                tar_base = archive_from(clone, base_ref)
-                tar_rev = archive_from(clone, revised_ref)
-
-        extract_tar_to(ws.work_dir, tar_base)
-        extract_tar_to(ws.base_dir, tar_base)
+        archive_limit = self.settings.max_upload_mb * 1024 * 1024
+        ArchiveTransfer.import_tar(
+            project,
+            TreeRef.work(),
+            tar_base,
+            label=f"git archive {base_ref}",
+            subdir=sub or None,
+            max_expanded_bytes=archive_limit,
+        )
+        ArchiveTransfer.import_tar(
+            project,
+            TreeRef.base(),
+            tar_base,
+            label=f"git archive {base_ref}",
+            subdir=sub or None,
+            max_expanded_bytes=archive_limit,
+        )
         zs = self._zones()
         zmeta = zs.create_zone(
             project_id,
@@ -553,10 +480,24 @@ class ProjectService:
             source="git",
         )
         zid = zmeta["id"]
-        extract_tar_to(ws.zone_dir(zid), tar_rev)
-        extract_tar_to(ws.revised_dir, tar_rev)
+        ArchiveTransfer.import_tar(
+            project,
+            TreeRef.zone(zid),
+            tar_rev,
+            label=f"git archive {revised_ref}",
+            subdir=sub or None,
+            max_expanded_bytes=archive_limit,
+        )
+        ArchiveTransfer.import_tar(
+            project,
+            TreeRef.revised(),
+            tar_rev,
+            label=f"git archive {revised_ref}",
+            subdir=sub or None,
+            max_expanded_bytes=archive_limit,
+        )
         return self._finalize_compat(
-            ws,
+            project,
             zid,
             base_meta={
                 "source": "git",
@@ -574,27 +515,27 @@ class ProjectService:
 
     def _finalize_compat(
         self,
-        ws: Workspace,
+        project: ProjectStorage,
         zone_id: str,
         base_meta: dict,
         revised_meta: dict,
     ) -> dict:
-        work_files = ws.list_files("work")
-        zone_files = ws.list_files_in(ws.zone_dir(zone_id))
+        work_files = project.list_files(TreeRef.work())
+        zone_files = project.list_files(TreeRef.zone(zone_id))
         alignment = align_paths(work_files, zone_files)
 
         def read_work(p: str) -> str:
-            return ws.read_text("work", p)
+            return self._read_text(project, TreeRef.work(), p)
 
         def read_zone(p: str) -> str:
-            return ws.read_text(f"zone:{zone_id}", p)
+            return self._read_text(project, TreeRef.zone(zone_id), p)
 
         candidates = detect_root_candidates(work_files, read_work)
         if not candidates:
             candidates = detect_root_candidates(zone_files, read_zone)
         recommended = candidates[0]["path"] if candidates else None
         revisions = {p: 0 for p in work_files if is_text_path(p)}
-        meta = ws.load_meta()
+        meta = project.load_project_meta()
         base_info = {**base_meta, "file_count": len(work_files)}
         revised_info = {**revised_meta, "file_count": len(zone_files)}
         meta.update(
@@ -625,30 +566,25 @@ class ProjectService:
                 "base_ref": base_meta.get("ref"),
                 "revised_ref": revised_meta.get("ref"),
             }
-        cmp = CompareService(self.settings)
-        meta = cmp.ensure_init_states(ws, meta)
-        ws.save_meta(meta)
+        cmp = CompareService(self.settings, self.storage)
+        meta = cmp.ensure_init_states(project, meta)
+        project.save_project_meta(meta)
         non_dot = [
             p
             for p in (set(work_files) | set(zone_files))
             if not is_dot_path(p) and is_text_path(p)
         ]
         if non_dot:
-            cmp.enqueue(ws.project_id, paths=non_dot, include_dot_paths=False)
-        return self.get_project(ws.project_id)
+            cmp.enqueue(project.scope.project_id, paths=non_dot, include_dot_paths=False)
+        return self.get_project(project.scope.project_id)
 
     def get_project(self, project_id: str) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         zones_summary = []
-        for zid in ws.list_zone_ids():
-            zpath = ws.zone_meta_path(zid)
+        for zid in project.list_zone_ids():
             try:
-                import json
-
-                zm = json.loads(zpath.read_text(encoding="utf-8")) if zpath.exists() else {}
+                zm = project.load_zone_meta(zid)
             except Exception:
                 zm = {}
             zones_summary.append(
@@ -677,40 +613,41 @@ class ProjectService:
         }
 
     def set_root(self, project_id: str, root_file: str) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         if meta.get("status") != "ready":
             raise AppError("VALIDATION_ERROR", "versions not uploaded", status_code=400)
         path = root_file.replace("\\", "/").lstrip("/")
         exists = False
-        for side in ("work", "merged", "base", "revised"):
+        for tree in (TreeRef.work(), TreeRef.base(), TreeRef.revised()):
             try:
-                side_dir = ws._side_dir(side)
-                p = ws.resolve_under(side_dir, path)
-                if p.is_file():
+                info = project.stat_file(tree, path)
+                if info is not None and info.kind == FileKind.FILE:
                     exists = True
                     break
-            except AppError:
+            except InvalidStorageKey:
                 continue
         if not exists:
             zid = meta.get("active_zone_id")
             if zid:
                 try:
-                    p = ws.resolve_under(ws.zone_dir(zid), path)
-                    if p.is_file():
+                    info = project.stat_file(TreeRef.zone(zid), path)
+                    if info is not None and info.kind == FileKind.FILE:
                         exists = True
-                except AppError:
+                except InvalidStorageKey:
                     pass
         if not exists:
             raise AppError("FILE_NOT_FOUND", f"root file not found: {path}", status_code=404)
         meta["root_file"] = path
         meta["root_detection"] = "user"
-        ws.save_meta(meta)
+        project.save_project_meta(meta)
         return self.get_project(project_id)
 
-    def _left_right_sets(self, ws: Workspace, meta: dict) -> tuple[set[str], set[str], set[str]]:
+    def _left_right_sets(
+        self,
+        project: ProjectStorage,
+        meta: dict,
+    ) -> tuple[set[str], set[str], set[str]]:
         """Return (work, right, merged=work) path sets.
 
         Zones are isolated snapshots; they are NOT merged into the explorer tree.
@@ -718,23 +655,19 @@ class ProjectService:
         path is always user-initiated (no global active zone).
         Optional legacy dual-zip still exposes revised paths when present (compat).
         """
-        work = set(ws.list_files("work"))
+        work = set(project.list_files(TreeRef.work()))
         # legacy fallback if work empty but base/merged present
-        if not work and ws.base_dir.exists():
-            work = set(ws.list_files("base"))
         if not work:
-            work = set(ws.list_files("merged"))
+            work = set(project.list_files(TreeRef.base()))
         # Compat only: dual-zip revised tree (not zone activate).
-        right = set(ws.list_files("revised")) if ws.revised_dir.exists() else set()
+        right = set(project.list_files(TreeRef.revised()))
         return work, right, work
 
     def tree(self, project_id: str) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         compare = meta.get("compare") or {}
-        work, right, merged = self._left_right_sets(ws, meta)
+        work, right, merged = self._left_right_sets(project, meta)
         all_paths = sorted(work | right | merged)
         nodes = []
         for p in all_paths:
@@ -766,10 +699,8 @@ class ProjectService:
         }
 
     def work_tree(self, project_id: str) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        files = ws.list_files("work")
+        project = self._require_project(project_id)
+        files = project.list_files(TreeRef.work())
         return {
             "files": files,
             "nodes": [
@@ -783,24 +714,25 @@ class ProjectService:
         }
 
     def work_file(self, project_id: str, path: str) -> dict:
-        ws = self._ws(project_id)
-        meta = ws.load_meta()
-        content = ws.read_text("work", path)
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
+        content = self._read_text(project, TreeRef.work(), path)
         rev = meta.get("revisions", {}).get(path, 0)
         return {
             "path": path,
             "encoding": "utf-8",
             "content": content,
-            "sha256": ws.file_sha256(content),
+            "sha256": project.file_sha256(content),
             "revision": rev,
         }
 
     def work_file_meta(self, project_id: str, path: str) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        out = ws.file_meta("work", path)
-        rev = ws.load_meta().get("revisions", {}).get(path, 0)
+        project = self._require_project(project_id)
+        try:
+            out = project.file_meta(TreeRef.work(), path)
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise self._path_error(path, exc) from exc
+        rev = project.load_project_meta().get("revisions", {}).get(path, 0)
         out["revision"] = rev
         return out
 
@@ -811,11 +743,12 @@ class ProjectService:
         start_line: int,
         end_line: int,
     ) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        project = self._require_project(project_id)
         max_lines = int(getattr(self.settings, "max_file_slice_lines", 4000) or 4000)
-        return ws.file_slice("work", path, start_line, end_line, max_lines)
+        try:
+            return project.file_slice(TreeRef.work(), path, start_line, end_line, max_lines)
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise self._path_error(path, exc) from exc
 
     def put_work_file_range(
         self,
@@ -826,35 +759,30 @@ class ProjectService:
         content: str,
     ) -> dict:
         """Splice line range into work file (1-based inclusive); reuses undo snapshot."""
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        project = self._require_project(project_id)
         try:
-            before = ws.read_text("work", path)
+            before = self._read_text(project, TreeRef.work(), path)
         except AppError as e:
             if e.code == "FILE_NOT_FOUND":
                 before = ""
             else:
                 raise
-        new_content = Workspace.splice_text_lines(before, start_line, end_line, content)
+        new_content = splice_text_lines(before, start_line, end_line, content)
         return self.put_work_file(project_id, path, new_content)
 
     def put_work_file(self, project_id: str, path: str, content: str) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
+        project = self._require_project(project_id)
 
-        current_rev = ws.load_meta().get("revisions", {}).get(path, 0)
+        current_rev = project.load_project_meta().get("revisions", {}).get(path, 0)
         try:
-            before = ws.read_text("work", path)
+            before = self._read_text(project, TreeRef.work(), path)
         except AppError as e:
             if e.code == "FILE_NOT_FOUND":
                 before = ""
             else:
                 raise
         snap_id = f"{path.replace('/', '__')}__{current_rev}"
-        ws.snapshots_dir.mkdir(parents=True, exist_ok=True)
-        (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
+        project.write_snapshot(f"{snap_id}.txt", before.encode("utf-8"))
 
         def mut(meta: dict) -> dict:
             current = meta.setdefault("revisions", {}).get(path, 0)
@@ -873,14 +801,14 @@ class ProjectService:
                 meta["versions"]["merged"]["dirty"] = True
             return meta
 
-        ws.write_text("work", path, content)
-        meta = ws.mutate_meta(mut)
+        self._write_bytes(project, TreeRef.work(), path, content.encode("utf-8"))
+        meta = project.mutate_project_meta(mut)
         rev = meta.get("revisions", {}).get(path, 0)
         return {
             "path": path,
             "encoding": "utf-8",
             "content": content,
-            "sha256": ws.file_sha256(content),
+            "sha256": project.file_sha256(content),
             "revision": rev,
         }
 
@@ -891,18 +819,15 @@ class ProjectService:
         return self._file_raw(project_id, f"zone:{zone_id}", path)
 
     def _file_raw(self, project_id: str, side: str, path: str) -> tuple[bytes, str]:
-        from pathlib import Path as _Path
-
         from app.domain.media import RAW_PREVIEW_EXTS
 
         # Fail closed on traversal before media-type checks
         if ".." in path.replace("\\", "/").split("/"):
             raise AppError("PATH_TRAVERSAL", "path traversal denied", status_code=400)
 
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        suf = _Path(path).suffix.lower()
+        project = self._require_project(project_id)
+        filename = path.replace("\\", "/").rsplit("/", 1)[-1]
+        suf = f".{filename.rsplit('.', 1)[-1].lower()}" if "." in filename else ""
         if suf not in RAW_PREVIEW_EXTS:
             raise AppError(
                 "UNSUPPORTED_MEDIA",
@@ -910,11 +835,7 @@ class ProjectService:
                 f"(got extension {suf or '(none)'}; check filename encoding)",
                 status_code=415,
             )
-        side_dir = ws._side_dir(side)
-        target = ws.resolve_under(side_dir, path)
-        if not target.is_file():
-            raise AppError("FILE_NOT_FOUND", f"file not found: {path}", status_code=404)
-        data = target.read_bytes()
+        data = self._read_bytes(project, self._tree_ref(side), path)
         media = {
             ".png": "image/png",
             ".jpg": "image/jpeg",
@@ -932,42 +853,45 @@ class ProjectService:
         return data, media
 
     def file_pair(self, project_id: str, path: str) -> dict:
-        ws = self._ws(project_id)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         if meta.get("status") != "ready":
             raise AppError("VALIDATION_ERROR", "versions not uploaded", status_code=400)
 
-        def blob_from_side(side: str) -> dict | None:
+        def blob_from_tree(tree: TreeRef) -> dict | None:
             try:
-                content = ws.read_text(side, path)
-            except AppError as e:
-                if e.code == "FILE_NOT_FOUND":
-                    return None
-                raise
+                content = project.read_text(tree, path)
+            except StorageNotFound:
+                return None
+            except InvalidStorageKey as exc:
+                raise self._path_error(path, exc) from exc
             return {
                 "content": content,
-                "sha256": ws.file_sha256(content),
+                "sha256": project.file_sha256(content),
             }
 
-        work_b = blob_from_side("work")
-        if work_b is None and ws.base_dir.exists():
-            work_b = blob_from_side("base")
+        work_b = blob_from_tree(TreeRef.work())
+        if work_b is None:
+            work_b = blob_from_tree(TreeRef.base())
 
         zid = meta.get("active_zone_id")
         zone_b = None
-        if zid and ws.zone_root(zid).exists():
-            zone_b = blob_from_side(f"zone:{zid}")
-        elif ws.revised_dir.exists():
-            zone_b = blob_from_side("revised")
+        zone_exists = bool(
+            zid and project.store.stat(project.layout.zone_root(zid)) is not None
+        )
+        if zid and zone_exists:
+            zone_b = blob_from_tree(TreeRef.zone(zid))
+        else:
+            zone_b = blob_from_tree(TreeRef.revised())
+        has_revised = bool(project.list_files(TreeRef.revised()))
 
         # merged alias work
         merged_b = work_b
 
         if work_b is None and zone_b is None:
-            ws.resolve_under(ws.work_dir, path)
             raise AppError("FILE_NOT_FOUND", f"file not found: {path}", status_code=404)
 
-        empty = {"content": "", "sha256": ws.file_sha256("")}
+        empty = {"content": "", "sha256": project.file_sha256("")}
         rev_num = meta.get("revisions", {}).get(path, 0)
         left = {
             "kind": "work",
@@ -981,7 +905,7 @@ class ProjectService:
                 "zone_id": zid,
                 **zone_b,
             }
-        elif zid is None and not (ws.revised_dir.exists() and any(ws.revised_dir.iterdir())):
+        elif zid is None and not has_revised:
             right = None
         else:
             right = {"kind": "zone", "zone_id": zid, **empty}
@@ -1003,11 +927,11 @@ class ProjectService:
         }
 
     def diff_index(self, project_id: str) -> dict:
-        ws = self._ws(project_id)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         if meta.get("status") != "ready":
             raise AppError("VALIDATION_ERROR", "versions not uploaded", status_code=400)
-        work, right, merged = self._left_right_sets(ws, meta)
+        work, right, merged = self._left_right_sets(project, meta)
         all_paths = sorted(work | right | merged)
         compare = meta.get("compare") or {}
         files = []
@@ -1079,15 +1003,15 @@ class ProjectService:
             },
         }
 
-    def _active_right_side(self, ws: Workspace, meta: dict) -> str:
+    def _active_right_tree(self, project: ProjectStorage, meta: dict) -> TreeRef:
         zid = meta.get("active_zone_id")
-        if zid and ws.zone_root(zid).exists():
-            return f"zone:{zid}"
-        return "revised"
+        if zid and project.store.stat(project.layout.zone_root(zid)) is not None:
+            return TreeRef.zone(zid)
+        return TreeRef.revised()
 
     def accept(self, project_id: str, ops: list[dict]) -> dict:
-        ws = self._ws(project_id)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         if not ops:
             raise AppError("VALIDATION_ERROR", "no ops", status_code=422)
         file_path = ops[0]["file"]
@@ -1099,9 +1023,9 @@ class ProjectService:
                     status_code=422,
                 )
 
-        merged = ws.read_text("merged", file_path)
-        right_side = self._active_right_side(ws, meta)
-        revised = ws.read_text(right_side, file_path)
+        merged = self._read_text(project, TreeRef.work(), file_path)
+        right_tree = self._active_right_tree(project, meta)
+        revised = self._read_text(project, right_tree, file_path)
         current_rev = meta.get("revisions", {}).get(file_path, 0)
 
         content = merged
@@ -1132,12 +1056,11 @@ class ProjectService:
             replacement = extract_range(revised, right_r)
             if i == 0:
                 snap_id = f"{file_path.replace('/', '__')}__{current_rev}"
-                snap_path = ws.snapshots_dir / f"{snap_id}.txt"
-                snap_path.write_text(content, encoding="utf-8")
+                project.write_snapshot(f"{snap_id}.txt", content.encode("utf-8"))
             content = apply_replace(content, left_r, replacement)
 
         new_rev = current_rev + 1
-        ws.write_text("merged", file_path, content)
+        self._write_bytes(project, TreeRef.work(), file_path, content.encode("utf-8"))
         meta.setdefault("revisions", {})[file_path] = new_rev
         meta.setdefault("accept_log", []).append(
             {
@@ -1150,22 +1073,22 @@ class ProjectService:
         )
         if meta.get("versions", {}).get("merged"):
             meta["versions"]["merged"]["dirty"] = True
-        ws.save_meta(meta)
+        project.save_project_meta(meta)
         return {
             "applied": [op.get("op_id") for op in ops],
             "rejected": [],
             "file": file_path,
             "merged": {
                 "content": content,
-                "sha256": ws.file_sha256(content),
+                "sha256": project.file_sha256(content),
                 "revision": new_rev,
             },
             "dirty": True,
         }
 
     def accept_all(self, project_id: str, file_path: str, expected_merged_revision: int) -> dict:
-        ws = self._ws(project_id)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         current_rev = meta.get("revisions", {}).get(file_path, 0)
         if expected_merged_revision != current_rev:
             raise AppError(
@@ -1174,12 +1097,12 @@ class ProjectService:
                 status_code=409,
                 details={"expected": expected_merged_revision, "actual": current_rev},
             )
-        before = ws.read_text("merged", file_path)
+        before = self._read_text(project, TreeRef.work(), file_path)
         snap_id = f"{file_path.replace('/', '__')}__{current_rev}"
-        (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
-        right_side = self._active_right_side(ws, meta)
-        revised = ws.read_text(right_side, file_path)
-        ws.write_text("merged", file_path, revised)
+        project.write_snapshot(f"{snap_id}.txt", before.encode("utf-8"))
+        right_tree = self._active_right_tree(project, meta)
+        revised = self._read_text(project, right_tree, file_path)
+        self._write_bytes(project, TreeRef.work(), file_path, revised.encode("utf-8"))
         new_rev = current_rev + 1
         meta.setdefault("revisions", {})[file_path] = new_rev
         meta.setdefault("accept_log", []).append(
@@ -1193,12 +1116,12 @@ class ProjectService:
         )
         if meta.get("versions", {}).get("merged"):
             meta["versions"]["merged"]["dirty"] = True
-        ws.save_meta(meta)
+        project.save_project_meta(meta)
         return {
             "file": file_path,
             "merged": {
                 "content": revised,
-                "sha256": ws.file_sha256(revised),
+                "sha256": project.file_sha256(revised),
                 "revision": new_rev,
             },
             "dirty": True,
@@ -1206,20 +1129,23 @@ class ProjectService:
 
     def accept_file(self, project_id: str, path: str, action: str) -> dict:
         """File-level ops: add (from zone/revised), delete (from work), replace_all."""
-        ws = self._ws(project_id)
-        meta0 = ws.load_meta()
+        project = self._require_project(project_id)
+        meta0 = project.load_project_meta()
         if meta0.get("status") != "ready":
             raise AppError("VALIDATION_ERROR", "versions not uploaded", status_code=400)
         action = action.lower().strip()
         if action not in ("add", "delete", "replace_all"):
             raise AppError("VALIDATION_ERROR", f"unknown action: {action}", status_code=422)
 
-        right_side = self._active_right_side(ws, meta0)
-        right_dir = ws._side_dir(right_side)
-
-        ws.resolve_under(ws.merged_dir, path)
+        right_tree = self._active_right_tree(project, meta0)
         current_rev = meta0.get("revisions", {}).get(path, 0)
         snap_id = f"{path.replace('/', '__')}__{current_rev}__{action}"
+
+        try:
+            current_info = project.stat_file(TreeRef.work(), path)
+        except InvalidStorageKey as exc:
+            raise self._path_error(path, exc) from exc
+        existed_before = bool(current_info and current_info.kind == FileKind.FILE)
 
         def apply_meta(meta: dict, entry: dict, rev: int | None) -> dict:
             if rev is not None:
@@ -1230,17 +1156,13 @@ class ProjectService:
             return meta
 
         if action == "add":
-            src = ws.resolve_under(right_dir, path)
-            if not src.is_file():
-                raise AppError("FILE_NOT_FOUND", f"not in revised/zone: {path}", status_code=404)
-            before = ""
-            if ws.resolve_under(ws.merged_dir, path).is_file():
-                before = ws.read_text("merged", path)
-            (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
-            dest = ws.resolve_under(ws.merged_dir, path)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-            content = dest.read_text(encoding="utf-8", errors="replace") if is_text_path(path) else ""
+            revised_data = self._read_bytes(project, right_tree, path)
+            before_data = (
+                self._read_bytes(project, TreeRef.work(), path) if existed_before else b""
+            )
+            project.write_snapshot(f"{snap_id}.txt", before_data)
+            self._write_bytes(project, TreeRef.work(), path, revised_data)
+            content = decode_text_bytes(revised_data)[0] if is_text_path(path) else ""
             new_rev = current_rev + 1
             entry = {
                 "file": path,
@@ -1248,9 +1170,10 @@ class ProjectService:
                 "to_revision": new_rev,
                 "ops": [{"type": "accept_file", "action": "add"}],
                 "snapshot": f"{snap_id}.txt",
-                "snapshot_kind": "text" if is_text_path(path) else "marker",
+                "snapshot_kind": "bytes",
+                "existed_before": existed_before,
             }
-            ws.mutate_meta(
+            project.mutate_project_meta(
                 lambda m: apply_meta(m, entry, new_rev if is_text_path(path) else None)
             )
             return {
@@ -1264,12 +1187,11 @@ class ProjectService:
             }
 
         if action == "delete":
-            dest = ws.resolve_under(ws.merged_dir, path)
-            if not dest.is_file():
+            if not existed_before:
                 raise AppError("FILE_NOT_FOUND", f"not in merged/work: {path}", status_code=404)
-            before = dest.read_text(encoding="utf-8", errors="replace") if is_text_path(path) else ""
-            (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
-            dest.unlink()
+            before_data = self._read_bytes(project, TreeRef.work(), path)
+            project.write_snapshot(f"{snap_id}.txt", before_data)
+            project.delete_file(TreeRef.work(), path)
             new_rev = current_rev + 1
             entry = {
                 "file": path,
@@ -1277,20 +1199,17 @@ class ProjectService:
                 "to_revision": new_rev,
                 "ops": [{"type": "accept_file", "action": "delete"}],
                 "snapshot": f"{snap_id}.txt",
+                "snapshot_kind": "bytes",
+                "existed_before": True,
             }
-            ws.mutate_meta(lambda m: apply_meta(m, entry, new_rev))
+            project.mutate_project_meta(lambda m: apply_meta(m, entry, new_rev))
             return {"file": path, "action": "delete", "dirty": True}
 
-        if not ws.resolve_under(right_dir, path).is_file():
-            raise AppError("FILE_NOT_FOUND", f"not in revised/zone: {path}", status_code=404)
-        before = ""
-        if ws.resolve_under(ws.merged_dir, path).is_file() and is_text_path(path):
-            before = ws.read_text("merged", path)
-        (ws.snapshots_dir / f"{snap_id}.txt").write_text(before, encoding="utf-8")
-        dest = ws.resolve_under(ws.merged_dir, path)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ws.resolve_under(right_dir, path), dest)
-        content = ws.read_text("merged", path) if is_text_path(path) else ""
+        revised_data = self._read_bytes(project, right_tree, path)
+        before_data = self._read_bytes(project, TreeRef.work(), path) if existed_before else b""
+        project.write_snapshot(f"{snap_id}.txt", before_data)
+        self._write_bytes(project, TreeRef.work(), path, revised_data)
+        content = decode_text_bytes(revised_data)[0] if is_text_path(path) else ""
         new_rev = current_rev + 1
         entry = {
             "file": path,
@@ -1298,8 +1217,10 @@ class ProjectService:
             "to_revision": new_rev,
             "ops": [{"type": "accept_file", "action": "replace_all"}],
             "snapshot": f"{snap_id}.txt",
+            "snapshot_kind": "bytes",
+            "existed_before": existed_before,
         }
-        ws.mutate_meta(
+        project.mutate_project_meta(
             lambda m: apply_meta(m, entry, new_rev if is_text_path(path) else None)
         )
         return {
@@ -1307,17 +1228,15 @@ class ProjectService:
             "action": "replace_all",
             "merged": {
                 "content": content if is_text_path(path) else None,
-                "sha256": ws.file_sha256(content) if is_text_path(path) else None,
+                "sha256": project.file_sha256(content) if is_text_path(path) else None,
                 "revision": new_rev if is_text_path(path) else current_rev,
             },
             "dirty": True,
         }
 
     def accept_report(self, project_id: str) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         return {
             "project_id": project_id,
             "root_file": meta.get("root_file"),
@@ -1330,20 +1249,13 @@ class ProjectService:
         }
 
     def export_merged_zip(self, project_id: str) -> bytes:
-        ws = self._ws(project_id)
-        if not ws.merged_dir.exists():
-            raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for p in ws.list_files("merged"):
-                full = ws.resolve_under(ws.merged_dir, p)
-                zf.write(full, p)
-        return buf.getvalue()
+        project = self._require_project(project_id)
+        return ArchiveTransfer.export_zip(project, TreeRef.work())
 
     def undo(self, project_id: str, steps: int = 1) -> dict:
         """Undo accepts and accept-file ops using snapshots."""
-        ws = self._ws(project_id)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         log = meta.get("accept_log", [])
         if not log:
             raise AppError("VALIDATION_ERROR", "nothing to undo", status_code=400)
@@ -1356,38 +1268,38 @@ class ProjectService:
             entry = log.pop()
             snap = entry["snapshot"]
             file_path = entry["file"]
-            snap_path = ws.snapshots_dir / snap
             ops = entry.get("ops") or []
             action = None
             if ops and isinstance(ops[0], dict):
                 action = ops[0].get("action") or ops[0].get("type")
-            if not snap_path.exists() and action != "delete":
+            snapshot_exists = project.snapshot_exists(snap)
+            if not snapshot_exists and action != "delete":
                 raise AppError("INTERNAL", f"missing snapshot {snap}", status_code=500)
-            content = snap_path.read_text(encoding="utf-8") if snap_path.exists() else ""
-            if action == "add" and content == "":
-                target = ws.resolve_under(ws.merged_dir, file_path)
-                if target.is_file():
-                    target.unlink()
-            elif action == "delete":
-                if is_text_path(file_path):
-                    ws.write_text("merged", file_path, content)
-                else:
-                    ws.write_text("merged", file_path, content)
+            snapshot_data = project.read_snapshot(snap) if snapshot_exists else b""
+            existed_before = entry.get("existed_before")
+            remove_added = action == "add" and (
+                existed_before is False
+                or (existed_before is None and snapshot_data == b"")
+            )
+            if remove_added:
+                project.delete_file(TreeRef.work(), file_path)
             else:
-                ws.write_text("merged", file_path, content)
+                self._write_bytes(project, TreeRef.work(), file_path, snapshot_data)
             meta.setdefault("revisions", {})[file_path] = entry["from_revision"]
             last_file = file_path
-            last_content = content
+            last_content = (
+                decode_text_bytes(snapshot_data)[0] if is_text_path(file_path) else None
+            )
             last_rev = entry["from_revision"]
         meta["accept_log"] = log
         if not log and meta.get("versions", {}).get("merged"):
             meta["versions"]["merged"]["dirty"] = False
-        ws.save_meta(meta)
+        project.save_project_meta(meta)
         return {
             "file": last_file,
             "merged": {
                 "content": last_content,
-                "sha256": ws.file_sha256(last_content or ""),
+                "sha256": project.file_sha256(last_content or ""),
                 "revision": last_rev,
             },
         }

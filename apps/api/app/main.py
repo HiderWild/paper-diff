@@ -11,71 +11,77 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the LICENSE
 # file in the repository root for the full text (AGPL-3.0-or-later).
 
+from __future__ import annotations
+
 import logging
-import shutil
 import traceback
 from contextlib import asynccontextmanager
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router
+from app.composition.container import default_container
 from app.core.config import get_settings
 from app.core.errors import AppError, app_error_handler
+from app.storage.admin import StorageAdmin
+from app.storage.errors import (
+    InvalidStorageKey,
+    StorageCapabilityUnavailable,
+    StorageConflict,
+    StorageError,
+    StorageNotFound,
+    StorageQuotaExceeded,
+    StorageUnavailable,
+)
+
+if TYPE_CHECKING:
+    from app.composition.container import AppContainer
+
+ContainerResolver = Callable[[Request], "AppContainer"]
 
 logger = logging.getLogger("paper_diff")
 
 
-def clear_workspace_if_enabled() -> None:
-    """Remove project trees under workspace_root when clear_workspace_on_startup is true."""
-    settings = get_settings()
+def clear_workspace_if_enabled(application: FastAPI | None = None) -> None:
+    """Clear the configured storage namespace when explicitly enabled."""
+    injected = getattr(getattr(application, "state", None), "container", None)
+    resolver = getattr(getattr(application, "state", None), "container_resolver", None)
+    if injected is None and resolver is not None:
+        logger.warning("startup clear skipped for request-scoped container resolver")
+        return
+    settings = injected.settings if injected is not None else get_settings()
     if not settings.clear_workspace_on_startup:
         logger.info(
             "workspace cleanup skipped (PAPER_DIFF_CLEAR_WORKSPACE_ON_STARTUP=false)"
         )
         return
-    root = settings.workspace_root
     try:
-        root = root.resolve()
-    except OSError:
-        root = settings.workspace_root
-    if not root.exists():
-        root.mkdir(parents=True, exist_ok=True)
-        logger.info("workspace root created: %s", root)
+        factory = injected.storage if injected is not None else default_container(settings).storage
+        removed = StorageAdmin(factory).clear_namespace()
+    except StorageCapabilityUnavailable as exc:
+        logger.warning("%s", exc)
         return
-    # Only wipe if path looks like a workspace dir (avoid accidental home wipe)
-    name = root.name.lower()
-    if name not in ("projects", "workspace", "workspaces", "data") and "project" not in name:
-        # Still allow default ./data/projects and custom paths containing paper-diff
-        if "paper-diff" not in str(root).lower() and "paper_diff" not in str(root).lower():
-            logger.warning(
-                "refusing to clear workspace_root=%s (name not recognized as dev workspace); "
-                "set path under *projects* or containing paper-diff, or clear manually",
-                root,
-            )
-            return
-    removed = 0
-    for child in list(root.iterdir()):
-        try:
-            if child.is_dir():
-                shutil.rmtree(child)
-            else:
-                child.unlink(missing_ok=True)
-            removed += 1
-        except OSError as e:
-            logger.warning("failed to remove %s: %s", child, e)
-    logger.info("cleared workspace on startup: %s (%d entries)", root, removed)
+    logger.info("cleared storage namespace %s (%d entries)", factory.namespace, removed)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    clear_workspace_if_enabled()
+    clear_workspace_if_enabled(_app)
     yield
 
 
-def create_app() -> FastAPI:
+def create_app(
+    container: AppContainer | None = None,
+    *,
+    container_resolver: ContainerResolver | None = None,
+) -> FastAPI:
     app = FastAPI(title="paper-diff API", version="0.2.0", lifespan=lifespan)
+    app.state.container = container
+    app.state.container_resolver = container_resolver
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -84,6 +90,34 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(AppError, app_error_handler)
+
+    @app.exception_handler(StorageError)
+    async def storage_error_handler(_request: Request, exc: StorageError):
+        if isinstance(exc, InvalidStorageKey):
+            status, code = 400, "INVALID_STORAGE_KEY"
+        elif isinstance(exc, StorageNotFound):
+            status, code = 404, "FILE_NOT_FOUND"
+        elif isinstance(exc, StorageConflict):
+            status, code = 409, "STORAGE_CONFLICT"
+        elif isinstance(exc, StorageQuotaExceeded):
+            status, code = 413, "STORAGE_QUOTA_EXCEEDED"
+        elif isinstance(exc, StorageCapabilityUnavailable):
+            status, code = 501, "STORAGE_CAPABILITY_UNAVAILABLE"
+        elif isinstance(exc, StorageUnavailable):
+            status, code = 503, "STORAGE_UNAVAILABLE"
+        else:
+            status, code = 500, "STORAGE_ERROR"
+        return JSONResponse(
+            status_code=status,
+            content={
+                "error": {
+                    "code": code,
+                    "message": str(exc) or type(exc).__name__,
+                    "details": None,
+                    "request_id": None,
+                }
+            },
+        )
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):

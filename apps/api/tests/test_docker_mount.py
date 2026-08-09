@@ -1,6 +1,6 @@
 """Path helpers for Docker volume mounts on Windows."""
 
-from app.infra.docker_mount import docker_volume_spec
+from app.integrations.docker_mount import docker_volume_spec
 
 
 def test_docker_volume_forward_slashes():

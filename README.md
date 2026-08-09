@@ -1,5 +1,7 @@
 # paper-diff
 
+宿主系统集成与自定义存储适配请参阅 [文件存储集成指南](docs/architecture/storage-host-integration.md)。
+
 Web UI for **LaTeX paper version diff + accept merge + full-document Docker compile**.
 
 - **Frontend:** Vue 3 + Monaco Diff (left = merged, right = revised) + PDF.js  

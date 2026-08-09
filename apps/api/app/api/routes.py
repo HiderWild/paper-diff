@@ -4,9 +4,10 @@ import json
 import time
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
+from app.composition.container import AppContainer, default_container
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.schemas.dto import (
@@ -48,28 +49,39 @@ from app.services.zone_service import ZoneService
 router = APIRouter(prefix="/api/v1")
 
 
-def projects(settings: Settings = Depends(get_settings)) -> ProjectService:
-    return ProjectService(settings)
+def container(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> AppContainer:
+    resolver = getattr(request.app.state, "container_resolver", None)
+    if resolver is not None:
+        return resolver(request)
+    injected = getattr(request.app.state, "container", None)
+    return injected or default_container(settings)
 
 
-def compiler(settings: Settings = Depends(get_settings)) -> CompileService:
-    return CompileService(settings)
+def projects(app: AppContainer = Depends(container)) -> ProjectService:
+    return app.projects
 
 
-def comparer(settings: Settings = Depends(get_settings)) -> CompareService:
-    return CompareService(settings)
+def compiler(app: AppContainer = Depends(container)) -> CompileService:
+    return app.compiler
 
 
-def git(settings: Settings = Depends(get_settings)) -> GitService:
-    return GitService(settings)
+def comparer(app: AppContainer = Depends(container)) -> CompareService:
+    return app.comparer
 
 
-def zones(settings: Settings = Depends(get_settings)) -> ZoneService:
-    return ZoneService(settings)
+def git(app: AppContainer = Depends(container)) -> GitService:
+    return app.git
 
 
-def agent(settings: Settings = Depends(get_settings)) -> AgentService:
-    return AgentService(settings)
+def zones(app: AppContainer = Depends(container)) -> ZoneService:
+    return app.zones
+
+
+def agent(app: AppContainer = Depends(container)) -> AgentService:
+    return app.agent
 
 
 @router.post("/projects")

@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.infra.workspace_fs import Workspace
 from app.services.project_service import ProjectService
+from app.storage.factory import ProjectStorageFactory
+from app.storage.project_store import ProjectStorage
 
 
 def _now_iso() -> str:
@@ -16,17 +17,19 @@ def _now_iso() -> str:
 
 
 class AgentService:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        storage: ProjectStorageFactory,
+    ):
         self.settings = settings
+        self.storage = storage
 
-    def _ws(self, project_id: str) -> Workspace:
-        return Workspace(self.settings.workspace_root, project_id)
-
-    def _require_project(self, project_id: str) -> Workspace:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
+    def _require_project(self, project_id: str) -> ProjectStorage:
+        project = self.storage.for_project(project_id)
+        if not project.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        return ws
+        return project
 
     def _provider_mode(self) -> str:
         """Return off | http | stub (stub only when explicitly set)."""
@@ -190,8 +193,8 @@ class AgentService:
         if content is None:
             raise AppError("VALIDATION_ERROR", "content required", status_code=422)
 
-        ws = self._require_project(project_id)
-        meta = ws.load_meta()
+        project = self._require_project(project_id)
+        meta = project.load_project_meta()
         current = meta.get("revisions", {}).get(path, 0)
         if expected_revision and expected_revision != current:
             raise AppError(
@@ -201,7 +204,7 @@ class AgentService:
                 details={"expected": expected_revision, "actual": current},
             )
 
-        psvc = ProjectService(self.settings)
+        psvc = ProjectService(self.settings, self.storage)
         written = psvc.put_work_file(project_id, path, content)
 
         def mut(m: dict) -> dict:
@@ -220,7 +223,7 @@ class AgentService:
                 m["agent_log"] = log[-200:]
             return m
 
-        ws.mutate_meta(mut)
+        project.mutate_project_meta(mut)
         return {
             "status": "ok",
             "provider": "stub",

@@ -1,4 +1,4 @@
-"""Async per-file compare queue. Compares work vs active zone (with legacy fallback)."""
+"""Async per-file compare queue over the unified project storage facade."""
 
 from __future__ import annotations
 
@@ -6,13 +6,14 @@ import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.domain.aligner import is_text_path
 from app.domain.root_detect import is_dot_path
-from app.infra.workspace_fs import Workspace
+from app.storage.factory import ProjectStorageFactory
+from app.storage.project_store import ProjectStorage
+from app.storage.types import FileKind, TreeRef
 
 _executor = ThreadPoolExecutor(max_workers=2)
 _project_locks: dict[str, threading.Lock] = {}
@@ -31,32 +32,41 @@ def _sha_bytes(data: bytes) -> str:
 
 
 class CompareService:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        storage: ProjectStorageFactory,
+    ):
         self.settings = settings
+        self.storage = storage
 
-    def _ws(self, project_id: str) -> Workspace:
-        return Workspace(self.settings.workspace_root, project_id)
+    def _project(self, project_id: str) -> ProjectStorage:
+        return self.storage.for_project(project_id)
 
-    def _sides(self, ws: Workspace, meta: dict | None = None) -> tuple[set[str], set[str], set[str], str | None]:
-        """Return (work, right, merged, zone_id).
+    @staticmethod
+    def _prefix_exists(project: ProjectStorage, tree: TreeRef) -> bool:
+        return project.store.stat(project.layout.tree(tree)) is not None
 
-        Zones are isolated; no global active zone is used for auto-compare.
-        Right side is only legacy dual-zip revised if present.
-        """
+    def _sides(
+        self,
+        project: ProjectStorage,
+        meta: dict | None = None,
+    ) -> tuple[set[str], set[str], set[str], str | None]:
+        """Return work, legacy revised, merged(work), and no active zone."""
         if meta is None:
-            meta = ws.load_meta()
-        work = set(ws.list_files("work"))
-        if not work and ws.base_dir.exists():
-            work = set(ws.list_files("base"))
-        if not work:
-            work = set(ws.list_files("merged"))
-        right = set(ws.list_files("revised")) if ws.revised_dir.exists() else set()
+            meta = project.load_project_meta()
+        work = set(project.list_files(TreeRef.work()))
+        if not work and self._prefix_exists(project, TreeRef.base()):
+            work = set(project.list_files(TreeRef.base()))
+        right = (
+            set(project.list_files(TreeRef.revised()))
+            if self._prefix_exists(project, TreeRef.revised())
+            else set()
+        )
         return work, right, work, None
 
     def get_states(self, project_id: str) -> dict[str, dict]:
-        ws = self._ws(project_id)
-        meta = ws.load_meta()
-        return dict(meta.get("compare") or {})
+        return dict(self._project(project_id).load_project_meta().get("compare") or {})
 
     def enqueue(
         self,
@@ -66,101 +76,82 @@ class CompareService:
         prefixes: list[str] | None = None,
         priority: bool = False,
     ) -> dict:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
+        project = self._project(project_id)
+        if not project.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        meta = ws.load_meta()
+        meta = project.load_project_meta()
         if meta.get("status") != "ready":
             raise AppError("VALIDATION_ERROR", "project not ready", status_code=400)
 
-        work, right, merged, _zid = self._sides(ws, meta)
+        work, right, merged, _zone_id = self._sides(project, meta)
         all_paths = sorted(work | right | merged)
-
-        selected: list[str]
         if paths:
-            selected = [p.replace("\\", "/").lstrip("/") for p in paths]
+            selected = [path.replace("\\", "/").lstrip("/") for path in paths]
         elif prefixes:
-            prefs = [p.replace("\\", "/").rstrip("/") for p in prefixes]
+            normalized = [prefix.replace("\\", "/").rstrip("/") for prefix in prefixes]
             selected = [
-                p
-                for p in all_paths
-                if any(p == pref or p.startswith(pref + "/") for pref in prefs)
+                path
+                for path in all_paths
+                if any(path == prefix or path.startswith(prefix + "/") for prefix in normalized)
             ]
         else:
             selected = list(all_paths)
-
         if not include_dot_paths:
-            selected = [p for p in selected if not is_dot_path(p)]
+            selected = [path for path in selected if not is_dot_path(path)]
 
         queued_holder: list[str] = []
 
-        def mut(meta: dict) -> dict:
-            compare: dict = dict(meta.get("compare") or {})
+        def mutate(document: dict) -> dict:
+            compare = dict(document.get("compare") or {})
             queued: list[str] = []
-            for p in selected:
-                if p not in all_paths:
+            for path in selected:
+                if path not in all_paths:
                     continue
-                st = compare.get(p) or {}
-                if st.get("state") in ("ready", "comparing") and not priority:
-                    if st.get("state") == "ready" and not priority:
-                        continue
-                compare[p] = {
+                previous = compare.get(path) or {}
+                if previous.get("state") in ("ready", "comparing") and not priority:
+                    continue
+                compare[path] = {
                     "state": "queued",
-                    "status": st.get("status"),
-                    "kind": "text" if is_text_path(p) else "binary",
+                    "status": previous.get("status"),
+                    "kind": "text" if is_text_path(path) else "binary",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "error": None,
                 }
-                queued.append(p)
-
-            for p in all_paths:
-                if p in compare:
+                queued.append(path)
+            for path in all_paths:
+                if path in compare:
                     continue
-                if is_dot_path(p) and not include_dot_paths:
-                    compare[p] = {
-                        "state": "skipped",
-                        "status": None,
-                        "kind": "text" if is_text_path(p) else "binary",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                        "error": None,
-                    }
-                else:
-                    compare[p] = {
-                        "state": "pending",
-                        "status": None,
-                        "kind": "text" if is_text_path(p) else "binary",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                        "error": None,
-                    }
-
-            meta["compare"] = compare
-            meta["include_dot_paths"] = bool(
-                meta.get("include_dot_paths") or include_dot_paths
+                skipped = is_dot_path(path) and not include_dot_paths
+                compare[path] = {
+                    "state": "skipped" if skipped else "pending",
+                    "status": None,
+                    "kind": "text" if is_text_path(path) else "binary",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "error": None,
+                }
+            document["compare"] = compare
+            document["include_dot_paths"] = bool(
+                document.get("include_dot_paths") or include_dot_paths
             )
             queued_holder.extend(queued)
-            return meta
+            return document
 
-        ws.mutate_meta(mut)
-
-        for p in queued_holder:
-            _executor.submit(self._run_one, project_id, p)
-
+        project.mutate_project_meta(mutate)
+        for path in queued_holder:
+            _executor.submit(self._run_one, project_id, path)
         return {"queued": queued_holder, "count": len(queued_holder)}
 
     def _patch_compare_entry(self, project_id: str, path: str, entry: dict) -> None:
-        ws = self._ws(project_id)
-
-        def mut(meta: dict) -> dict:
-            compare = dict(meta.get("compare") or {})
+        def mutate(document: dict) -> dict:
+            compare = dict(document.get("compare") or {})
             compare[path] = entry
-            meta["compare"] = compare
-            return meta
+            document["compare"] = compare
+            return document
 
-        ws.mutate_meta(mut)
+        self._project(project_id).mutate_project_meta(mutate)
 
     def _run_one(self, project_id: str, path: str) -> None:
-        lock = _lock(project_id)
-        with lock:
+        with _lock(project_id):
             self._patch_compare_entry(
                 project_id,
                 path,
@@ -172,9 +163,8 @@ class CompareService:
                     "error": None,
                 },
             )
-            ws = self._ws(project_id)
             try:
-                result = self._compare_path(ws, path)
+                result = self._compare_path(self._project(project_id), path)
                 self._patch_compare_entry(
                     project_id,
                     path,
@@ -185,7 +175,7 @@ class CompareService:
                         "error": None,
                     },
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 self._patch_compare_entry(
                     project_id,
                     path,
@@ -194,112 +184,106 @@ class CompareService:
                         "status": "unknown",
                         "kind": "text" if is_text_path(path) else "binary",
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                        "error": str(e),
+                        "error": str(exc),
                     },
                 )
 
-    def _compare_path(self, ws: Workspace, path: str) -> dict:
+    @staticmethod
+    def _is_file(project: ProjectStorage, tree: TreeRef, path: str) -> bool:
+        info = project.stat_file(tree, path)
+        return bool(info and info.kind == FileKind.FILE)
+
+    def _compare_path(self, project: ProjectStorage, path: str) -> dict:
         kind = "text" if is_text_path(path) else "binary"
-        # Explicit zone compares are client-driven; server queue is work-only /
-        # legacy revised dual-zip.
-        zid = None
+        work_tree = TreeRef.work()
+        in_work = self._is_file(project, work_tree, path)
+        if not in_work and self._prefix_exists(project, TreeRef.base()):
+            base_tree = TreeRef.base()
+            in_work = self._is_file(project, base_tree, path)
+            if in_work:
+                work_tree = base_tree
+        revised_tree = TreeRef.revised()
+        in_revised = self._is_file(project, revised_tree, path)
+        in_merged = self._is_file(project, TreeRef.work(), path)
 
-        work_p = ws.resolve_under(ws.work_dir, path)
-        in_w = work_p.is_file()
-        if not in_w and ws.base_dir.exists():
-            # legacy
-            base_p = ws.resolve_under(ws.base_dir, path)
-            in_w = base_p.is_file()
-            work_side = "base" if in_w else "work"
-            work_p = base_p if in_w else work_p
-        else:
-            work_side = "work"
-
-        rev_p = ws.resolve_under(ws.revised_dir, path)
-        rev_side = "revised"
-        in_r = rev_p.is_file()
-
-        merged_p = ws.resolve_under(ws.merged_dir, path)
-        in_m = merged_p.is_file()
-
-        w_sha = z_sha = m_sha = None
-        status: str
-        if not in_r and in_w:
-            # work only (no dual-zip revised companion)
-            if kind == "text":
-                wc = ws.read_text(work_side, path)
-                w_sha = ws.file_sha256(wc)
-            else:
-                w_sha = _sha_bytes(work_p.read_bytes())
+        work_sha = revised_sha = merged_sha = None
+        if not in_revised and in_work:
+            work_data = project.read_bytes(work_tree, path)
+            work_sha = (
+                project.file_sha256(project.read_text(work_tree, path))
+                if kind == "text"
+                else _sha_bytes(work_data)
+            )
             status = "work"
-        elif in_w and in_r:
+        elif in_work and in_revised:
+            work_data = project.read_bytes(work_tree, path)
+            revised_data = project.read_bytes(revised_tree, path)
             if kind == "text":
-                wc = ws.read_text(work_side, path)
-                rc = ws.read_text(rev_side, path)
-                w_sha = ws.file_sha256(wc)
-                z_sha = ws.file_sha256(rc)
-                status = "same" if wc == rc else "modified"
+                work_text = project.read_text(work_tree, path)
+                revised_text = project.read_text(revised_tree, path)
+                work_sha = project.file_sha256(work_text)
+                revised_sha = project.file_sha256(revised_text)
+                status = "same" if work_text == revised_text else "modified"
             else:
-                wb = work_p.read_bytes()
-                rb = rev_p.read_bytes()
-                w_sha = _sha_bytes(wb)
-                z_sha = _sha_bytes(rb)
-                status = "same" if wb == rb else "modified"
-        elif in_r and not in_w:
+                work_sha = _sha_bytes(work_data)
+                revised_sha = _sha_bytes(revised_data)
+                status = "same" if work_data == revised_data else "modified"
+        elif in_revised:
             status = "added"
-            if kind == "text":
-                z_sha = ws.file_sha256(ws.read_text(rev_side, path))
-            else:
-                z_sha = _sha_bytes(rev_p.read_bytes())
-        elif in_w and not in_r:
+            revised_sha = (
+                project.file_sha256(project.read_text(revised_tree, path))
+                if kind == "text"
+                else _sha_bytes(project.read_bytes(revised_tree, path))
+            )
+        elif in_work:
             status = "removed"
-            if kind == "text":
-                w_sha = ws.file_sha256(ws.read_text(work_side, path))
-            else:
-                w_sha = _sha_bytes(work_p.read_bytes())
+            work_sha = (
+                project.file_sha256(project.read_text(work_tree, path))
+                if kind == "text"
+                else _sha_bytes(project.read_bytes(work_tree, path))
+            )
         else:
             status = "merged_only"
 
         merged_equals_base = None
-        if in_m and kind == "text":
-            mc = ws.read_text("merged", path)
-            m_sha = ws.file_sha256(mc)
-            if in_w:
-                merged_equals_base = mc == ws.read_text(work_side, path)
-        elif in_m and kind == "binary":
-            m_sha = _sha_bytes(merged_p.read_bytes())
+        if in_merged:
+            if kind == "text":
+                merged_text = project.read_text(TreeRef.work(), path)
+                merged_sha = project.file_sha256(merged_text)
+                if in_work:
+                    merged_equals_base = merged_text == project.read_text(work_tree, path)
+            else:
+                merged_sha = _sha_bytes(project.read_bytes(TreeRef.work(), path))
 
         return {
             "status": status,
             "kind": kind,
-            "work_sha256": w_sha,
-            "zone_sha256": z_sha,
-            "base_sha256": w_sha,
-            "revised_sha256": z_sha,
-            "merged_sha256": m_sha,
+            "work_sha256": work_sha,
+            "zone_sha256": revised_sha,
+            "base_sha256": work_sha,
+            "revised_sha256": revised_sha,
+            "merged_sha256": merged_sha,
             "merged_equals_base": merged_equals_base,
         }
 
-    def ensure_init_states(self, ws: Workspace, meta: dict) -> dict:
-        """After import: mark all pending/skipped without comparing."""
-        work, right, merged, zid = self._sides(ws, meta)
+    def ensure_init_states(self, project: ProjectStorage, meta: dict) -> dict:
+        """After import, mark paths pending/skipped without comparing."""
+        work, right, merged, zone_id = self._sides(project, meta)
         include_dot = bool(meta.get("include_dot_paths"))
         compare: dict = {}
-        for p in sorted(work | right | merged):
-            if is_dot_path(p) and not include_dot:
+        for path in sorted(work | right | merged):
+            if is_dot_path(path) and not include_dot:
                 state = "skipped"
-            elif not zid and not right:
-                # work-only project: mark ready with status work (no async needed)
+            elif not zone_id and not right:
                 state = "ready"
             else:
                 state = "pending"
-            entry = {
+            compare[path] = {
                 "state": state,
                 "status": "work" if state == "ready" else None,
-                "kind": "text" if is_text_path(p) else "binary",
+                "kind": "text" if is_text_path(path) else "binary",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "error": None,
             }
-            compare[p] = entry
         meta["compare"] = compare
         return meta

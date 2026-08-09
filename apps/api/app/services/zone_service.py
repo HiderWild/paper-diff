@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
-import json
-import shutil
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.domain.aligner import is_text_path
-from app.domain.media import IMAGE_EXTS, looks_binary, sniff_text
-from app.infra.workspace_fs import Workspace
+from app.domain.media import IMAGE_EXTS, is_image_path, looks_binary, sniff_text
+from app.storage.archives import ArchiveTransfer
+from app.storage.errors import (
+    InvalidArchive,
+    InvalidStorageKey,
+    StorageNotFound,
+    StorageQuotaExceeded,
+)
+from app.storage.factory import ProjectStorageFactory
+from app.storage.project_store import ProjectStorage
+from app.storage.types import FileKind, StorageKey, TreeRef
 
-# re-export for callers (project_service etc.)
 __all__ = [
     "IMAGE_EXTS",
     "ZoneService",
@@ -37,40 +42,56 @@ def looks_like_text(data: bytes, path: str = "") -> bool:
 
 
 class ZoneService:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        storage: ProjectStorageFactory,
+    ):
         self.settings = settings
+        self.storage = storage
 
-    def _ws(self, project_id: str) -> Workspace:
-        return Workspace(self.settings.workspace_root, project_id)
-
-    def _require_project(self, project_id: str) -> Workspace:
-        ws = self._ws(project_id)
-        if not ws.meta_path.exists():
+    def _require_project(self, project_id: str) -> ProjectStorage:
+        project = self.storage.for_project(project_id)
+        if not project.exists():
             raise AppError("PROJECT_NOT_FOUND", "project not found", status_code=404)
-        return ws
+        return project
 
-    def _load_zone_meta(self, ws: Workspace, zone_id: str) -> dict:
-        path = ws.zone_meta_path(zone_id)
-        if not path.is_file():
-            raise AppError("ZONE_NOT_FOUND", f"zone not found: {zone_id}", status_code=404)
-        return json.loads(path.read_text(encoding="utf-8"))
+    @staticmethod
+    def _load_zone_meta(project: ProjectStorage, zone_id: str) -> dict:
+        try:
+            return project.load_zone_meta(zone_id)
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise AppError(
+                "ZONE_NOT_FOUND",
+                f"zone not found: {zone_id}",
+                status_code=404,
+            ) from exc
 
-    def _save_zone_meta(self, ws: Workspace, zone_id: str, meta: dict) -> None:
-        path = ws.zone_meta_path(zone_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    @staticmethod
+    def _save_zone_meta(project: ProjectStorage, zone_id: str, meta: dict) -> None:
+        try:
+            project.save_zone_meta(zone_id, meta)
+        except InvalidStorageKey as exc:
+            raise AppError(
+                "VALIDATION_ERROR",
+                f"invalid zone id: {zone_id}",
+                status_code=422,
+            ) from exc
+
+    @staticmethod
+    def _path_error(path: str, exc: Exception) -> AppError:
+        if isinstance(exc, InvalidStorageKey):
+            return AppError("PATH_TRAVERSAL", "path traversal denied", status_code=400)
+        return AppError("FILE_NOT_FOUND", f"file not found: {path}", status_code=404)
 
     def list_zones(self, project_id: str) -> dict:
-        ws = self._require_project(project_id)
-        pmeta = ws.load_meta()
-        # active_zone_id kept in meta for API compat only; UI no longer uses it.
-        active = pmeta.get("active_zone_id")
+        project = self._require_project(project_id)
+        active = project.load_project_meta().get("active_zone_id")
         zones = []
-        for zid in ws.list_zone_ids():
-            zm = self._load_zone_meta(ws, zid)
-            tree = ws.zone_dir(zid)
-            n = len(ws.list_files_in(tree)) if tree.exists() else 0
-            zones.append({**zm, "file_count": n, "active": False})
+        for zone_id in project.list_zone_ids():
+            meta = self._load_zone_meta(project, zone_id)
+            count = len(project.list_files(TreeRef.zone(zone_id)))
+            zones.append({**meta, "file_count": count, "active": False})
         return {"zones": zones, "active_zone_id": active}
 
     def create_zone(
@@ -79,80 +100,81 @@ class ZoneService:
         name: str | None = None,
         source: str = "empty",
     ) -> dict:
-        ws = self._require_project(project_id)
-        zid = uuid.uuid4().hex[:10]
-        tree = ws.zone_dir(zid)
-        tree.mkdir(parents=True, exist_ok=True)
-        zm = {
-            "id": zid,
+        project = self._require_project(project_id)
+        zone_id = uuid.uuid4().hex[:10]
+        project.ensure_zone(zone_id)
+        meta = {
+            "id": zone_id,
             "name": (name or "").strip() or default_zone_name(),
             "created_at": _now_iso(),
             "source": source or "empty",
             "path_prefix": None,
             "skipped": [],
         }
-        self._save_zone_meta(ws, zid, zm)
-        return zm
+        self._save_zone_meta(project, zone_id, meta)
+        return meta
 
     def delete_zone(self, project_id: str, zone_id: str) -> dict:
-        ws = self._require_project(project_id)
-        root = ws.zone_root(zone_id)
-        if not root.exists():
-            raise AppError("ZONE_NOT_FOUND", f"zone not found: {zone_id}", status_code=404)
-        shutil.rmtree(root)
+        project = self._require_project(project_id)
+        self._load_zone_meta(project, zone_id)
+        project.store.delete(project.layout.zone_root(zone_id), recursive=True)
 
-        def mut(meta: dict) -> dict:
+        def mutate(meta: dict) -> dict:
             if meta.get("active_zone_id") == zone_id:
                 meta["active_zone_id"] = None
             return meta
 
-        ws.mutate_meta(mut)
+        project.mutate_project_meta(mutate)
         return {"deleted": zone_id}
 
     def rename_zone(self, project_id: str, zone_id: str, name: str) -> dict:
-        ws = self._require_project(project_id)
-        zm = self._load_zone_meta(ws, zone_id)
+        project = self._require_project(project_id)
+        meta = self._load_zone_meta(project, zone_id)
         if not name or not str(name).strip():
             raise AppError("VALIDATION_ERROR", "name required", status_code=422)
-        zm["name"] = str(name).strip()
-        self._save_zone_meta(ws, zone_id, zm)
-        return zm
+        meta["name"] = str(name).strip()
+        self._save_zone_meta(project, zone_id, meta)
+        return meta
 
     def activate_zone(self, project_id: str, zone_id: str | None) -> dict:
-        """Deprecated no-op-ish stub.
-
-        Compare zones are isolated; there is no global "active zone" that drives
-        the explorer tree or auto-compare. Endpoint remains for older clients and
-        only stores the id without enqueuing work↔zone compare.
-        """
-        ws = self._require_project(project_id)
+        """Keep only the legacy last-touched id; zones stay isolated."""
+        project = self._require_project(project_id)
         if zone_id is not None:
-            self._load_zone_meta(ws, zone_id)
+            self._load_zone_meta(project, zone_id)
 
-        def mut(meta: dict) -> dict:
-            # Clear on None; otherwise still record last-touched id for legacy fields.
+        def mutate(meta: dict) -> dict:
             meta["active_zone_id"] = zone_id
             return meta
 
-        ws.mutate_meta(mut)
-        # Intentionally do NOT ensure_init_states / enqueue full tree compare.
+        project.mutate_project_meta(mutate)
         return self.list_zones(project_id)
 
     def import_zone_zip(
-        self, project_id: str, zone_id: str, data: bytes, label: str = "zone.zip"
+        self,
+        project_id: str,
+        zone_id: str,
+        data: bytes,
+        label: str = "zone.zip",
     ) -> dict:
-        from app.services.project_service import ProjectService
-
-        ws = self._require_project(project_id)
-        zm = self._load_zone_meta(ws, zone_id)
-        dest = ws.zone_dir(zone_id)
-        ProjectService(self.settings)._safe_extract_zip(data, dest, label=label)
-        zm["source"] = zm.get("source") if zm.get("source") not in (None, "empty") else "zip"
-        if zm["source"] == "empty":
-            zm["source"] = "zip"
-        zm["skipped"] = []
-        self._save_zone_meta(ws, zone_id, zm)
-        return {**zm, "file_count": len(ws.list_files_in(dest))}
+        project = self._require_project(project_id)
+        meta = self._load_zone_meta(project, zone_id)
+        try:
+            ArchiveTransfer.import_zip(
+                project,
+                TreeRef.zone(zone_id),
+                data,
+                label=label,
+                max_expanded_bytes=self.settings.max_upload_mb * 1024 * 1024,
+            )
+        except StorageQuotaExceeded as exc:
+            raise AppError("UPLOAD_TOO_LARGE", str(exc), status_code=413) from exc
+        except InvalidArchive as exc:
+            raise AppError("INVALID_ZIP", str(exc), status_code=400) from exc
+        if meta.get("source") in (None, "empty"):
+            meta["source"] = "zip"
+        meta["skipped"] = []
+        self._save_zone_meta(project, zone_id, meta)
+        return {**meta, "file_count": len(project.list_files(TreeRef.zone(zone_id)))}
 
     def import_zone_files(
         self,
@@ -162,81 +184,89 @@ class ZoneService:
         *,
         allow_binary: bool = True,
     ) -> dict:
-        ws = self._require_project(project_id)
-        zm = self._load_zone_meta(ws, zone_id)
-        dest = ws.zone_dir(zone_id)
-        dest.mkdir(parents=True, exist_ok=True)
+        project = self._require_project(project_id)
+        meta = self._load_zone_meta(project, zone_id)
         skipped: list[dict] = []
         written = 0
-        for rel, data in files:
-            path = rel.replace("\\", "/").lstrip("/")
-            parts = [p for p in path.split("/") if p and p != "."]
-            if not parts or any(p == ".." for p in parts):
-                skipped.append({"path": rel, "reason": "invalid_path"})
+        for raw_path, data in files:
+            try:
+                key = StorageKey(raw_path)
+            except InvalidStorageKey:
+                skipped.append({"path": raw_path, "reason": "invalid_path"})
                 continue
+            if key.is_root:
+                skipped.append({"path": raw_path, "reason": "invalid_path"})
+                continue
+            parts = key.value.split("/")
             if parts[0] == "__MACOSX" or parts[-1].startswith("._"):
                 continue
-            if parts[-1] in (".DS_Store", "Thumbs.db", "desktop.ini"):
+            if parts[-1] in ArchiveTransfer.SYSTEM_NAMES:
                 continue
-            is_img = Path(path).suffix.lower() in IMAGE_EXTS
-            is_txt = looks_like_text(data, path)
-            if not is_txt and not is_img and not allow_binary:
-                skipped.append({"path": path, "reason": "non_text"})
+            is_image = is_image_path(key.value)
+            is_text = looks_like_text(data, key.value)
+            if not is_text and not is_image and not allow_binary:
+                skipped.append({"path": key.value, "reason": "non_text"})
                 continue
-            target = dest.joinpath(*parts)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
+            project.write_bytes(TreeRef.zone(zone_id), key.value, data)
             written += 1
-        if zm.get("source") in (None, "empty"):
-            zm["source"] = "files"
-        zm["skipped"] = skipped
-        self._save_zone_meta(ws, zone_id, zm)
+        if meta.get("source") in (None, "empty"):
+            meta["source"] = "files"
+        meta["skipped"] = skipped
+        self._save_zone_meta(project, zone_id, meta)
         return {
-            **zm,
+            **meta,
             "written": written,
-            "file_count": len(ws.list_files_in(dest)),
+            "file_count": len(project.list_files(TreeRef.zone(zone_id))),
             "skipped": skipped,
         }
 
     def zone_tree(self, project_id: str, zone_id: str) -> dict:
-        ws = self._require_project(project_id)
-        zm = self._load_zone_meta(ws, zone_id)
-        files = ws.list_files_in(ws.zone_dir(zone_id))
+        project = self._require_project(project_id)
+        meta = self._load_zone_meta(project, zone_id)
+        files = project.list_files(TreeRef.zone(zone_id))
         nodes = [
             {
-                "path": p,
+                "path": path,
                 "type": "file",
-                "kind": "text" if is_text_path(p) else "binary",
+                "kind": "text" if is_text_path(path) else "binary",
             }
-            for p in files
+            for path in files
         ]
-        return {"zone": zm, "files": files, "nodes": nodes}
+        return {"zone": meta, "files": files, "nodes": nodes}
 
     def zone_file(self, project_id: str, zone_id: str, path: str) -> dict:
-        ws = self._require_project(project_id)
-        self._load_zone_meta(ws, zone_id)
-        p = ws.resolve_under(ws.zone_dir(zone_id), path)
-        if not p.is_file():
-            raise AppError("FILE_NOT_FOUND", f"file not found: {path}", status_code=404)
-        if is_text_path(path) and not looks_binary(p.read_bytes()[:8192]):
-            content = ws.read_text(f"zone:{zone_id}", path)
+        project = self._require_project(project_id)
+        self._load_zone_meta(project, zone_id)
+        tree = TreeRef.zone(zone_id)
+        try:
+            info = project.stat_file(tree, path)
+            if info is None or info.kind != FileKind.FILE:
+                raise StorageNotFound(path)
+            raw = project.read_bytes(tree, path)
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise self._path_error(path, exc) from exc
+        if is_text_path(path) and not looks_binary(raw[:8192]):
+            content = project.read_text(tree, path)
             return {
                 "path": path,
                 "kind": "text",
                 "content": content,
-                "sha256": ws.file_sha256(content),
+                "sha256": project.file_sha256(content),
             }
         return {
             "path": path,
             "kind": "binary",
             "content": None,
-            "size": p.stat().st_size,
+            "size": info.size,
         }
 
     def zone_file_meta(self, project_id: str, zone_id: str, path: str) -> dict:
-        ws = self._require_project(project_id)
-        self._load_zone_meta(ws, zone_id)
-        return ws.file_meta(f"zone:{zone_id}", path)
+        project = self._require_project(project_id)
+        self._load_zone_meta(project, zone_id)
+        try:
+            return project.file_meta(TreeRef.zone(zone_id), path)
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise self._path_error(path, exc) from exc
 
     def zone_file_slice(
         self,
@@ -246,25 +276,32 @@ class ZoneService:
         start_line: int,
         end_line: int,
     ) -> dict:
-        ws = self._require_project(project_id)
-        self._load_zone_meta(ws, zone_id)
+        project = self._require_project(project_id)
+        self._load_zone_meta(project, zone_id)
         max_lines = int(getattr(self.settings, "max_file_slice_lines", 4000) or 4000)
-        return ws.file_slice(f"zone:{zone_id}", path, start_line, end_line, max_lines)
+        try:
+            return project.file_slice(
+                TreeRef.zone(zone_id),
+                path,
+                start_line,
+                end_line,
+                max_lines,
+            )
+        except (StorageNotFound, InvalidStorageKey) as exc:
+            raise self._path_error(path, exc) from exc
 
     def clone_work_as_zone(self, project_id: str, name: str | None = None) -> dict:
-        ws = self._require_project(project_id)
-        zm = self.create_zone(
+        project = self._require_project(project_id)
+        meta = self.create_zone(
             project_id,
             name=name or f"snapshot {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             source="work_clone",
         )
-        dest = ws.zone_dir(zm["id"])
-        if dest.exists():
-            shutil.rmtree(dest)
-        if ws.work_dir.exists() and any(ws.work_dir.iterdir()):
-            shutil.copytree(ws.work_dir, dest)
-        else:
-            dest.mkdir(parents=True, exist_ok=True)
-        zm["source"] = "work_clone"
-        self._save_zone_meta(ws, zm["id"], zm)
-        return {**zm, "file_count": len(ws.list_files_in(dest))}
+        zone_id = meta["id"]
+        project.store.copy(
+            project.layout.tree(TreeRef.work()),
+            project.layout.tree(TreeRef.zone(zone_id)),
+        )
+        meta["source"] = "work_clone"
+        self._save_zone_meta(project, zone_id, meta)
+        return {**meta, "file_count": len(project.list_files(TreeRef.zone(zone_id)))}

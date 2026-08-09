@@ -14,6 +14,13 @@
 - Compile smoke: `cd apps/api && pytest tests/test_compile_smoke.py -v`
 - Git import API: `POST /api/v1/projects/{id}/versions/git`
 
+## 文档语言与代码导航
+
+- 仓库文档的主要语言是中文。自本规则生效后，新建文档以及新增的成段自然语言默认使用中文；术语、缩写、API、代码标识符、命令和必须保持原文的名称可以使用英文。
+- 不要求把已经完成或既有的英文文档整体翻译、重写为中文；修改旧文档时只需让本次新增内容遵循上述规则，除非任务明确要求统一语言。
+- 获取代码结构、符号关系、调用链和影响范围时优先使用 CodeGraph。进入仓库后若不存在 `.codegraph/`，直接运行 `codegraph init .` 完成初始化；若已存在但有待同步变更，运行 `codegraph sync .`。
+- 优先使用 `codegraph files`、`codegraph explore`、`codegraph node`、`codegraph query`、`codegraph callers/callees`、`codegraph impact` 和 `codegraph affected` 理解结构，再按需使用 `rg` 做精确文本或文件搜索。
+
 ## Env
 
 - `PAPER_DIFF_WORKSPACE_ROOT` — project storage (default `./data/projects`)
@@ -27,6 +34,9 @@
 - `PAPER_DIFF_AGENT_API_KEY` / `PAPER_DIFF_AGENT_HTTP_URL` — real provider when provider=http
 
 ## Architecture pointers
+
+- Storage abstraction / host integration: `docs/architecture/storage-host-integration.md`
+- Storage implementation plan: `docs/superpowers/plans/2026-07-19-file-access-layer-abstraction.md`
 
 - Spec: `docs/superpowers/specs/2026-07-15-paper-diff-design.md`（待 R0 补 v2 模型章节）
 - Plan status: `docs/superpowers/plans/2026-07-15-paper-diff-implementation.md`
